@@ -94,7 +94,7 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> config() {
     Map<String, Object> result = new LinkedHashMap<>();
-    result.put("version", "0.7.0");
+    result.put("version", "0.8.0");
     result.put("project_root", files.root().toString());
     result.put("transport", "stdio");
     result.put("read_only", !allowMutation);
@@ -224,6 +224,47 @@ final class HopMcpService implements AutoCloseable {
       throw new SecurityException(
           "Deep check disabled. Restart with --allow-deep-check; it may access configured external systems.");
     return HopNative.deepCheck(resolveDefinition(path), variables, metadataProvider);
+  }
+
+  Map<String, Object> testDefinition(
+      String path,
+      boolean requestDeepCheck,
+      boolean requestExecution,
+      String runConfiguration,
+      Map<String, String> parameters,
+      int timeoutSeconds)
+      throws Exception {
+    if (requestDeepCheck && !allowDeepCheck) {
+      throw new SecurityException(
+          "Deep check disabled. Restart with --allow-deep-check; it may access configured external systems.");
+    }
+    if (requestExecution) requireExecution();
+
+    Map<String, Object> structural = validate(path);
+    Map<String, Object> deep = null;
+    Map<String, Object> execution = null;
+    Map<String, Object> executionLogs = null;
+    String skippedReason = "";
+    if (!Boolean.TRUE.equals(structural.get("valid"))) {
+      skippedReason = "structural_validation_failed";
+    } else if (requestDeepCheck) {
+      deep = deepCheck(path);
+      if (!Boolean.TRUE.equals(deep.get("valid"))) skippedReason = "deep_check_failed";
+    }
+    if (requestExecution && skippedReason.isEmpty()) {
+      execution = execute(path, runConfiguration, parameters, timeoutSeconds);
+      String channel = String.valueOf(execution.getOrDefault("log_channel_id", ""));
+      if (!channel.isBlank()) executionLogs = logs(channel, false, -1, 0);
+    }
+    return HopDefinitionTestReport.build(
+        path,
+        structural,
+        requestDeepCheck,
+        deep,
+        requestExecution,
+        execution,
+        executionLogs,
+        skippedReason);
   }
 
   Map<String, Object> execute(

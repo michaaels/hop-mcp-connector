@@ -3,10 +3,10 @@ kind: hop-marketplace-catalog
 plugins:
   - groupId: io.github.michaaels
     artifactId: apache-hop-mcp
-    version: "0.7.0"
+    version: "0.8.0"
     name: Apache Hop MCP
     category: Community / AI
-    description: Native Java MCP server for Apache Hop with inspection, execution, and transactional semantic component authoring.
+    description: Native Java MCP server for Apache Hop with inspection, gated testing, execution, and transactional semantic authoring.
     minHopVersion: "2.19.0"
     maxHopVersion: "2.20.999"
     source: apache-hop-mcp
