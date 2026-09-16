@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 - 2026-09-15
+
+- Added `hop_test_definition`, a gated structural validation, native deep-check and local execution cycle.
+- Added bounded machine-readable diagnostics across validation, checking, execution results and redacted logs.
+- Added advisory correction candidates that identify relevant semantic tools without applying changes automatically.
+- Prevented later phases from running when structural validation or a requested deep check fails.
+- Kept deep checking and execution behind their existing independent server opt-ins.
+
 ## 0.7.0 - 2026-09-14
 
 - Added transactional `update_component` support for existing pipeline transforms and workflow actions.

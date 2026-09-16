@@ -122,6 +122,12 @@ class HopDefinitionMutatorTest {
     try {
       assertThrows(
           SecurityException.class, () -> service.execute("flow.hpl", "local", Map.of(), 30));
+      assertThrows(
+          SecurityException.class,
+          () -> service.testDefinition("flow.hpl", false, true, "local", Map.of(), 30));
+      assertThrows(
+          SecurityException.class,
+          () -> service.testDefinition("flow.hpl", true, false, "local", Map.of(), 30));
       assertThrows(SecurityException.class, () -> service.logs(null, true, -1, 0));
       assertThrows(
           SecurityException.class,
@@ -244,6 +250,9 @@ class HopDefinitionMutatorTest {
     assertEquals(List.of("pipeline", "workflow"), capabilities.get("definition_kinds"));
     assertTrue(((List<?>) capabilities.get("semantic_operations")).size() >= 8);
     assertEquals(List.of("2.19.0", "2.20.0-SNAPSHOT"), capabilities.get("tested_hop_versions"));
+    Map<?, ?> testCycle = (Map<?, ?>) capabilities.get("test_cycle");
+    assertEquals("advisory_only", testCycle.get("correction_mode"));
+    assertEquals(false, testCycle.get("auto_apply"));
     assertEquals(false, capabilities.get("live_ui_available"));
     assertEquals("headless_not_connected", capabilities.get("live_ui_status"));
   }

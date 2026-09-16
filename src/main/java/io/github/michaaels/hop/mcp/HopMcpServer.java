@@ -35,7 +35,7 @@ final class HopMcpServer implements AutoCloseable {
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("apache-hop-mcp", "0.7.0")
+            .serverInfo("apache-hop-mcp", "0.8.0")
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
                 "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")
@@ -177,6 +177,32 @@ final class HopMcpServer implements AutoCloseable {
         "Run Apache Hop's native checker. Disabled unless hop mcp starts with --allow-deep-check; may access external systems.",
         schema(Map.of("path", str("Definition path")), List.of("path")),
         a -> service.deepCheck(s(a, "path")));
+    add(
+        "hop_test_definition",
+        "Run a gated validate/check/execute cycle and return normalized diagnostics plus advisory semantic correction candidates. Never applies changes.",
+        schema(
+            Map.of(
+                "path",
+                str("Project-relative .hpl/.hwf path"),
+                "deep_check",
+                bool("Run the opt-in native Hop checker, default false"),
+                "execute",
+                bool("Execute locally only after requested validation phases pass, default false"),
+                "run_configuration",
+                str("Local run configuration name, default local"),
+                "parameters",
+                stringMapSchema("Optional named parameter values"),
+                "timeout_seconds",
+                executionTimeout("Maximum execution time in seconds, default 120")),
+            List.of("path")),
+        a ->
+            service.testDefinition(
+                s(a, "path"),
+                boolDefault(a, "deep_check", false),
+                boolDefault(a, "execute", false),
+                sDefault(a, "run_configuration", "local"),
+                stringMap(a.get("parameters"), "parameters"),
+                iDefault(a, "timeout_seconds", 120)));
     add(
         "hop_read_text",
         "Read a UTF-8 project file, confined to project root and size limits.",

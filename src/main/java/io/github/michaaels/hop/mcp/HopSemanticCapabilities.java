@@ -32,6 +32,17 @@ final class HopSemanticCapabilities {
     result.put("sha256_precondition", true);
     result.put("native_reload_validation", true);
     result.put("rollback", "same_mcp_session");
+    result.put(
+        "test_cycle",
+        Map.of(
+            "phases",
+            List.of("structural_validation", "deep_check", "execution"),
+            "gated",
+            true,
+            "correction_mode",
+            "advisory_only",
+            "auto_apply",
+            false));
     result.put("live_ui_available", liveUiAvailable);
     result.put("live_ui_status", liveUiAvailable ? "connected" : "headless_not_connected");
     result.put("live_ui_adapter", "project_event_bridge");
