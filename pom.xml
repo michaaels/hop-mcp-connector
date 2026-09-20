@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.michaaels</groupId>
   <artifactId>apache-hop-mcp</artifactId>
-  <version>0.8.0</version>
+  <version>0.9.0</version>
   <name>Apache Hop MCP</name>
   <description>Community MCP server plugin for Apache Hop 2.19.x</description>
   <url>https://github.com/michaaels/apache-hop-mcp</url>

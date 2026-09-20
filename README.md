@@ -1,12 +1,12 @@
-# Apache Hop MCP 0.8.0
+# Apache Hop MCP 0.9.0
 
 Native semantic Model Context Protocol (MCP) server plugin for **Apache Hop 2.19.x and 2.20.x**.
 
 > This is a community project and is not an official Apache Software Foundation project.
 
-## What changed in 0.8.0
+## What changed in 0.9.0
 
-Version 0.8.0 adds a gated testing cycle to the **Apache Hop Native Semantic MCP**. A client can structurally validate a pipeline or workflow, optionally run Hop's native deep checker, optionally execute it, and receive one bounded machine-readable report with normalized diagnostics and advisory correction candidates. The cycle never changes a definition automatically. Inspection remains enabled by default; deep checks, execution, and writes require separate command-line flags.
+Version 0.9.0 adds explicit semantic correction plans to the **Apache Hop Native Semantic MCP**. A client can prepare and inspect an immutable native mutation preview, then explicitly apply that exact SHA-256-bound plan. Plans are single-use, expire after one hour, are limited to 100 per MCP session, and keep a bounded audit trail. They never apply automatically. Inspection remains enabled by default; deep checks, execution, and writes require separate command-line flags.
 
 ```text
 Codex / Claude / Qwen
@@ -67,11 +67,11 @@ Until Hop 2.20.0 is published, compatibility can be checked against a locally in
 mvn -B -P hop-2.20 clean verify
 ```
 
-The Marketplace artifact is `target/apache-hop-mcp-0.8.0.zip`, containing:
+The Marketplace artifact is `target/apache-hop-mcp-0.9.0.zip`, containing:
 
 ```text
 plugins/misc/apache-hop-mcp/
-  apache-hop-mcp-0.8.0.jar
+  apache-hop-mcp-0.9.0.jar
   version.xml
   lib/...
 ```
@@ -80,10 +80,10 @@ Apache Hop jars are `provided` and are not bundled.
 
 ## Marketplace installation
 
-After the `v0.8.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
+After the `v0.9.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
 
 ```bash
-./hop marketplace install io.github.michaaels:apache-hop-mcp:0.8.0 --repo apache-hop-mcp
+./hop marketplace install io.github.michaaels:apache-hop-mcp:0.9.0 --repo apache-hop-mcp
 ```
 
 Restart Hop after installation. Releases are served directly from GitHub through Hop 2.19's `urlTemplate` and `catalogUrl` support.
@@ -137,6 +137,8 @@ Only include the opt-in flags that the MCP client should be authorized to use.
 
 For a single gated test report, call `hop_test_definition`. Structural validation always runs first. Native deep checking and execution run only when requested, authorized at server startup, and all preceding gates pass. Diagnostics and execution logs are bounded and redacted. Suggested corrections identify relevant MCP tools or semantic operations but remain advisory; the client must preview and explicitly apply any mutation.
 
+For a correction with a reviewable lifecycle, call `hop_prepare_correction_plan` with the same bounded semantic operations accepted by `hop_mutate_definition`. The returned preview is retained only in the current MCP session and bound to a plan SHA-256 plus the definition's current SHA-256. After review, call `hop_apply_correction_plan` with both plan identifiers. Applying requires `--allow-mutation`, consumes the plan even when application fails, and delegates the write to the existing transactional mutator. Use `hop_correction_plan_status` to inspect its bounded audit trail. A changed definition, altered plan digest, expired plan, or reused plan is rejected.
+
 `add_component` requires `plugin_id` and `name`; `properties`, `property_groups`, `x`, and `y` are optional. `properties` contains scalar values. `property_groups` maps a schema group key to an array of row objects, for example `{"fields":[{"name":"id","type":"Integer","length":9}]}`. Component identity, secret-looking fields, unknown keys, and nested collections cannot be overridden through these maps.
 
 `update_component` requires the existing `component` name plus at least one non-empty `properties` or `property_groups` object. Scalar keys update only the requested values. Each requested tabular group replaces that complete group; groups and properties omitted from the operation remain unchanged.
@@ -169,6 +171,9 @@ For a single gated test report, call `hop_test_definition`. Structural validatio
 | `hop_execution_status` | read asynchronous execution state/result |
 | `hop_stop_execution` | request asynchronous execution cancellation |
 | `hop_logs` | read bounded, redacted Hop execution logs |
+| `hop_prepare_correction_plan` | validate and retain an immutable, SHA-bound semantic mutation preview |
+| `hop_apply_correction_plan` | explicitly apply one prepared single-use correction plan |
+| `hop_correction_plan_status` | inspect session-scoped plan state and bounded audit events |
 | `hop_mutate_definition` | preview/apply transactional native semantic changes |
 | `hop_rollback_mutation` | roll back an applied mutation from this MCP session |
 | `hop_web_request` | bounded GET/HEAD request to a configured Hop Web API |

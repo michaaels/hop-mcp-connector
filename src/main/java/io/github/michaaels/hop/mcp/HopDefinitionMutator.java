@@ -96,6 +96,7 @@ final class HopDefinitionMutator {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("path", relative.replace('\\', '/'));
     result.put("kind", kind);
+    result.put("target_exists", existed);
     result.put("preview", !apply);
     result.put("applied", false);
     result.put("changed", !oldHash.equals(newHash));

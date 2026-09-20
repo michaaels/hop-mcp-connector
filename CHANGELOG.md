@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 - 2026-09-20
+
+- Added immutable, session-scoped semantic correction plans with native previews.
+- Bound each plan to its own SHA-256 and the definition SHA-256 observed during preparation.
+- Added explicit single-use plan application through the existing transactional semantic mutator.
+- Added bounded per-plan audit events, one-hour expiration and a 100-plan session limit.
+- Rejected altered, expired, reused and stale-definition plans without weakening mutation authorization.
+
 ## 0.8.0 - 2026-09-15
 
 - Added `hop_test_definition`, a gated structural validation, native deep-check and local execution cycle.
