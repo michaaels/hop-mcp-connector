@@ -253,6 +253,10 @@ class HopDefinitionMutatorTest {
     Map<?, ?> testCycle = (Map<?, ?>) capabilities.get("test_cycle");
     assertEquals("advisory_only", testCycle.get("correction_mode"));
     assertEquals(false, testCycle.get("auto_apply"));
+    Map<?, ?> correctionPlans = (Map<?, ?>) capabilities.get("correction_plans");
+    assertEquals(true, correctionPlans.get("single_use"));
+    assertEquals(true, correctionPlans.get("sha256_bound"));
+    assertEquals(false, correctionPlans.get("auto_apply"));
     assertEquals(false, capabilities.get("live_ui_available"));
     assertEquals("headless_not_connected", capabilities.get("live_ui_status"));
   }

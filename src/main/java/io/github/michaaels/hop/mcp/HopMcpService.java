@@ -25,6 +25,7 @@ final class HopMcpService implements AutoCloseable {
   private final HopExecutionManager executionManager;
   private final HopComponentAuthoring componentAuthoring;
   private final HopDefinitionMutator definitionMutator;
+  private final HopCorrectionPlanManager correctionPlans;
   private final HopSemanticEventSink semanticEventSink;
 
   HopMcpService(
@@ -90,11 +91,12 @@ final class HopMcpService implements AutoCloseable {
         semanticEventSink == null ? HopSemanticEventSink.NONE : semanticEventSink;
     this.definitionMutator =
         new HopDefinitionMutator(files, variables, metadataProvider, this.semanticEventSink);
+    this.correctionPlans = new HopCorrectionPlanManager(definitionMutator);
   }
 
   Map<String, Object> config() {
     Map<String, Object> result = new LinkedHashMap<>();
-    result.put("version", "0.8.0");
+    result.put("version", "0.9.0");
     result.put("project_root", files.root().toString());
     result.put("transport", "stdio");
     result.put("read_only", !allowMutation);
@@ -355,6 +357,21 @@ final class HopMcpService implements AutoCloseable {
     if (apply && !allowMutation)
       throw new SecurityException("Native mutation disabled. Restart with --allow-mutation.");
     return definitionMutator.mutate(path, kind, operations, expectedSha256, apply);
+  }
+
+  Map<String, Object> prepareCorrectionPlan(
+      String path, String kind, List<Map<String, Object>> operations) throws Exception {
+    return correctionPlans.prepare(path, kind, operations);
+  }
+
+  Map<String, Object> applyCorrectionPlan(String planId, String planSha256) throws Exception {
+    if (!allowMutation)
+      throw new SecurityException("Native mutation disabled. Restart with --allow-mutation.");
+    return correctionPlans.apply(planId, planSha256);
+  }
+
+  Map<String, Object> correctionPlanStatus(String planId) {
+    return correctionPlans.status(planId);
   }
 
   Map<String, Object> rollbackMutation(String transactionId, String expectedSha256)

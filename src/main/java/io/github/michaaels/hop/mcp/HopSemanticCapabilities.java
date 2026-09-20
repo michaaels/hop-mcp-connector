@@ -43,6 +43,23 @@ final class HopSemanticCapabilities {
             "advisory_only",
             "auto_apply",
             false));
+    result.put(
+        "correction_plans",
+        Map.of(
+            "scope",
+            "same_mcp_session",
+            "max_retained",
+            HopCorrectionPlanManager.MAX_PLANS,
+            "ttl_seconds",
+            HopCorrectionPlanManager.PLAN_TTL.toSeconds(),
+            "single_use",
+            true,
+            "sha256_bound",
+            true,
+            "explicit_apply",
+            true,
+            "auto_apply",
+            false));
     result.put("live_ui_available", liveUiAvailable);
     result.put("live_ui_status", liveUiAvailable ? "connected" : "headless_not_connected");
     result.put("live_ui_adapter", "project_event_bridge");

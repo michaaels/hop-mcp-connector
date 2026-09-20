@@ -35,7 +35,7 @@ final class HopMcpServer implements AutoCloseable {
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("apache-hop-mcp", "0.8.0")
+            .serverInfo("apache-hop-mcp", "0.9.0")
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
                 "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")
@@ -295,6 +295,37 @@ final class HopMcpServer implements AutoCloseable {
                 boolDefault(a, "include_general", true),
                 iDefault(a, "from", -1),
                 iDefault(a, "to", 0)));
+    add(
+        "hop_prepare_correction_plan",
+        "Validate and retain an immutable single-use semantic correction plan. This only previews changes and never writes the definition.",
+        schema(
+            Map.of(
+                "path",
+                str("Project-relative .hpl/.hwf path"),
+                "kind",
+                enumStr("pipeline", "workflow"),
+                "operations",
+                operationsSchema()),
+            List.of("path", "operations")),
+        a ->
+            service.prepareCorrectionPlan(
+                s(a, "path"), sDefault(a, "kind", null), operations(a.get("operations"))));
+    add(
+        "hop_apply_correction_plan",
+        "Apply one prepared correction plan through the transactional native mutator. Requires --allow-mutation and the plan SHA-256.",
+        schema(
+            Map.of(
+                "plan_id",
+                str("Session correction plan ID"),
+                "plan_sha256",
+                str("SHA-256 returned when the plan was prepared")),
+            List.of("plan_id", "plan_sha256")),
+        a -> service.applyCorrectionPlan(s(a, "plan_id"), s(a, "plan_sha256")));
+    add(
+        "hop_correction_plan_status",
+        "Read the bounded audit status of a correction plan retained in this MCP session.",
+        schema(Map.of("plan_id", str("Session correction plan ID")), List.of("plan_id")),
+        a -> service.correctionPlanStatus(s(a, "plan_id")));
     add(
         "hop_mutate_definition",
         "Preview or apply transactional native semantic changes to a pipeline/workflow. Call hop_capabilities for the supported operation contract. Existing files require expected_sha256 when apply=true.",
