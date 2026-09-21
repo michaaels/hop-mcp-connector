@@ -415,6 +415,40 @@ class HopDefinitionMutatorTest {
   }
 
   @Test
+  void previewsNewDefinitionWithinBoundedNativeMutation() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+
+    Map<String, Object> preview =
+        mutator.mutate(
+            "native-preview.hpl",
+            "pipeline",
+            List.of(
+                Map.of(
+                    "operation",
+                    "add_component",
+                    "plugin_id",
+                    "Dummy",
+                    "name",
+                    "Fixture input",
+                    "x",
+                    160,
+                    "y",
+                    120)),
+            null,
+            false);
+
+    assertEquals(false, preview.get("target_exists"));
+    assertEquals(true, preview.get("preview"));
+    assertEquals(false, preview.get("applied"));
+    assertEquals(
+        1, preview.get("after") instanceof Map<?, ?> after ? after.get("component_count") : -1);
+    assertFalse(Files.exists(project.resolve("native-preview.hpl")));
+  }
+
+  @Test
   void replacesExistingTabularFieldsWhilePreservingPipelineStructureAndSupportsRollback()
       throws Exception {
     Variables variables = new Variables();

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0 - 2026-09-21
+
+- Promoted the native semantic MCP tool contract to its first stable release.
+- Added an in-process STDIO integration test covering initialization, the required initialized notification, configuration discovery, and consecutive validation calls.
+- Derived the protocol, configuration, and startup-log version from one Maven-filtered resource instead of duplicated Java literals.
+- Hardened correction-plan SHA-256 validation and diagnostics without exposing expected or received digests.
+- Added preview coverage for creating a new native Hop definition without writing it.
+- Added external-runtime smoke coverage for the MCP handshake and consecutive definition validations.
+- Added an explicit, auditable 1.0 release gate for Hop 2.19, the Hop 2.20 compatibility profile, Marketplace packaging, and security invariants.
+
 ## 0.9.0 - 2026-09-20
 
 - Added immutable, session-scoped semantic correction plans with native previews.

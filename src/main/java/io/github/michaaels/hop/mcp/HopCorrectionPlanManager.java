@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -59,9 +60,15 @@ final class HopCorrectionPlanManager {
     expirePlans();
     Plan plan = requirePlan(planId);
     plan.requirePrepared();
+    String suppliedSha256 = required(planSha256, "plan_sha256").trim().toLowerCase(Locale.ROOT);
+    if (!suppliedSha256.matches("[0-9a-f]{64}")) {
+      throw new SecurityException(
+          "Correction plan SHA-256 must contain exactly 64 hexadecimal characters; received_length="
+              + suppliedSha256.length());
+    }
     if (!MessageDigest.isEqual(
         plan.planSha256.getBytes(StandardCharsets.US_ASCII),
-        required(planSha256, "plan_sha256").getBytes(StandardCharsets.US_ASCII))) {
+        suppliedSha256.getBytes(StandardCharsets.US_ASCII))) {
       throw new SecurityException("Correction plan SHA-256 does not match");
     }
     try {

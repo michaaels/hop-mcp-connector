@@ -2,7 +2,7 @@
 
 ## Supported version
 
-The current supported development line is 0.4.x on Apache Hop 2.19.x and 2.20.x / Java 21. Apache Hop 2.19.0 remains the release compile baseline until 2.20.0 is published.
+The current supported line is 1.0.x on Apache Hop 2.19.x and 2.20.x / Java 21. Apache Hop 2.19.0 remains the release compile baseline until 2.20.0 is published.
 
 ## Design assumptions
 

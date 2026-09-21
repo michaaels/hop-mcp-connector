@@ -69,6 +69,29 @@ class HopCorrectionPlanManagerTest {
   }
 
   @Test
+  void explainsMalformedAndMismatchedPlanDigestsWithoutConsumingPlan() throws Exception {
+    HopCorrectionPlanManager manager = manager();
+    Map<String, Object> prepared =
+        manager.prepare("digest-diagnostics.hwf", "workflow", workflowOperations());
+    String planId = String.valueOf(prepared.get("plan_id"));
+
+    SecurityException malformed =
+        assertThrows(SecurityException.class, () -> manager.apply(planId, "not-a-sha"));
+    assertTrue(malformed.getMessage().contains("64 hexadecimal"));
+    assertEquals("prepared", manager.status(planId).get("state"));
+
+    SecurityException mismatch =
+        assertThrows(SecurityException.class, () -> manager.apply(planId, "0".repeat(64)));
+    assertEquals("Correction plan SHA-256 does not match", mismatch.getMessage());
+    assertFalse(mismatch.getMessage().contains(String.valueOf(prepared.get("plan_sha256"))));
+    assertEquals("prepared", manager.status(planId).get("state"));
+
+    Map<String, Object> applied =
+        manager.apply(planId, String.valueOf(prepared.get("plan_sha256")).toUpperCase());
+    assertEquals("applied", applied.get("state"));
+  }
+
+  @Test
   void bindsExistingDefinitionShaAndAuditsStalePlanFailure() throws Exception {
     HopDefinitionMutator mutator = mutator();
     Map<String, Object> created =

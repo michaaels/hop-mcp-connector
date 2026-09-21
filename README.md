@@ -1,12 +1,12 @@
-# Apache Hop MCP 0.9.0
+# Apache Hop MCP 1.0.0
 
 Native semantic Model Context Protocol (MCP) server plugin for **Apache Hop 2.19.x and 2.20.x**.
 
 > This is a community project and is not an official Apache Software Foundation project.
 
-## What changed in 0.9.0
+## What changed in 1.0.0
 
-Version 0.9.0 adds explicit semantic correction plans to the **Apache Hop Native Semantic MCP**. A client can prepare and inspect an immutable native mutation preview, then explicitly apply that exact SHA-256-bound plan. Plans are single-use, expire after one hour, are limited to 100 per MCP session, and keep a bounded audit trail. They never apply automatically. Inspection remains enabled by default; deep checks, execution, and writes require separate command-line flags.
+Version 1.0.0 promotes the **Apache Hop Native Semantic MCP** to its first stable contract. It combines safe project inspection, gated validation and execution, native semantic authoring, immutable correction plans, transactional writes and optional Desktop/Hop Web live synchronization. A real STDIO integration test now protects the complete MCP initialization handshake and consecutive tool calls. Inspection remains enabled by default; deep checks, execution, writes and Hop Web access require separate command-line flags.
 
 ```text
 Codex / Claude / Qwen
@@ -67,11 +67,11 @@ Until Hop 2.20.0 is published, compatibility can be checked against a locally in
 mvn -B -P hop-2.20 clean verify
 ```
 
-The Marketplace artifact is `target/apache-hop-mcp-0.9.0.zip`, containing:
+The Marketplace artifact is `target/apache-hop-mcp-1.0.0.zip`, containing:
 
 ```text
 plugins/misc/apache-hop-mcp/
-  apache-hop-mcp-0.9.0.jar
+  apache-hop-mcp-1.0.0.jar
   version.xml
   lib/...
 ```
@@ -80,10 +80,10 @@ Apache Hop jars are `provided` and are not bundled.
 
 ## Marketplace installation
 
-After the `v0.9.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
+After the `v1.0.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
 
 ```bash
-./hop marketplace install io.github.michaaels:apache-hop-mcp:0.9.0 --repo apache-hop-mcp
+./hop marketplace install io.github.michaaels:apache-hop-mcp:1.0.0 --repo apache-hop-mcp
 ```
 
 Restart Hop after installation. Releases are served directly from GitHub through Hop 2.19's `urlTemplate` and `catalogUrl` support.

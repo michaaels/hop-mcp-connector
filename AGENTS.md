@@ -54,7 +54,7 @@ mvn -B clean verify
 For packaging changes additionally inspect the ZIP:
 
 ```bash
-unzip -l target/apache-hop-mcp-0.9.0.zip
+unzip -l target/apache-hop-mcp-1.0.0.zip
 ```
 
 It must contain `plugins/misc/apache-hop-mcp/` and must not contain Apache Hop runtime jars.

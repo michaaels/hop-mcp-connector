@@ -1,4 +1,4 @@
-name: Release 0.9.0
+name: Release 1.0.0
 
 on:
   push:
@@ -24,9 +24,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP="target/apache-hop-mcp-0.9.0.zip"
+          ZIP="target/apache-hop-mcp-1.0.0.zip"
           test -f "$ZIP"
-          unzip -l "$ZIP" | grep 'plugins/misc/apache-hop-mcp/apache-hop-mcp-0.9.0.jar'
+          unzip -l "$ZIP" | grep 'plugins/misc/apache-hop-mcp/apache-hop-mcp-1.0.0.jar'
           if unzip -l "$ZIP" | grep -E 'plugins/misc/apache-hop-mcp/lib/hop-(core|engine|ui)-'; then exit 1; fi
           sha256sum "$ZIP" > SHA256SUMS.txt
       - name: Create GitHub Release
@@ -35,8 +35,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view v0.9.0 >/dev/null 2>&1; then
-            echo "v0.9.0 already exists; leaving immutable release unchanged."
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            echo "v1.0.0 already exists; leaving immutable release unchanged."
             exit 0
           fi
-          gh release create v0.9.0 target/apache-hop-mcp-0.9.0.zip SHA256SUMS.txt --target "$GITHUB_SHA" --title "Apache Hop MCP 0.9.0" --notes-file RELEASE_NOTES.md
+          gh release create v1.0.0 target/apache-hop-mcp-1.0.0.zip SHA256SUMS.txt --target "$GITHUB_SHA" --title "Apache Hop MCP 1.0.0" --notes-file RELEASE_NOTES.md

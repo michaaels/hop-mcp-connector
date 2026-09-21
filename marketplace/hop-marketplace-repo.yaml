@@ -15,7 +15,7 @@ description: Community Apache Hop MCP plugin releases hosted on GitHub.
 plugins:
   - groupId: io.github.michaaels
     artifactId: apache-hop-mcp
-    version: "0.9.0"
+    version: "1.0.0"
     minHopVersion: "2.19.0"
     maxHopVersion: "2.20.999"
     name: Apache Hop MCP

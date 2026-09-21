@@ -164,7 +164,8 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
 
   private void logStartup(
       ProjectFiles files, HopWebClient webClient, HopLiveUiEventBroker liveUiEventBroker) {
-    log.logBasic("Apache Hop MCP 0.9.0 started (stdio) root=" + files.root());
+    log.logBasic(
+        "Apache Hop MCP " + HopMcpVersion.current() + " started (stdio) root=" + files.root());
     if (allowDeepCheck) {
       log.logBasic("Native deep check enabled; checks can contact configured external systems.");
     }
