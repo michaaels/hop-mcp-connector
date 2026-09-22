@@ -11,6 +11,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +39,7 @@ final class HopMcpServer implements AutoCloseable {
             .serverInfo("hop-mcp-connector", HopMcpVersion.current())
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
-                "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")
+                "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, protected backups, atomic filesystem replacement when supported (with a safe replace fallback), native reload validation and rollback.")
             .build();
     add(
         "hop_config",
@@ -56,7 +57,8 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "transaction_id",
-                str("Optional mutation transaction ID used to filter acknowledgements")),
+                boundedString(
+                    36, "Optional mutation transaction ID used to filter acknowledgements")),
             List.of()),
         a -> service.liveUiStatus(sDefault(a, "transaction_id", null)));
     add(
@@ -65,22 +67,22 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "type",
-                str("Optional plugin type short name or fully qualified class name"),
+                boundedString(512, "Optional plugin type short name or fully qualified class name"),
                 "query",
-                str("Optional case-insensitive text in plugin IDs, name, description or category"),
+                boundedString(
+                    256,
+                    "Optional case-insensitive text in plugin IDs, name, description or category"),
                 "offset",
-                nonNegativeInteger("Number of matching plugins to skip"),
+                boundedInteger(0, 100_000, "Number of matching plugins to skip"),
                 "limit",
-                integer("Maximum plugins to return")),
+                boundedInteger(1, 50, "Maximum plugins to return")),
             List.of()),
         a ->
-            a.isEmpty()
-                ? service.plugins()
-                : service.plugins(
-                    sDefault(a, "type", null),
-                    sDefault(a, "query", null),
-                    iDefault(a, "offset", 0),
-                    iDefault(a, "limit", 50)));
+            service.plugins(
+                sDefault(a, "type", null),
+                sDefault(a, "query", null),
+                iDefault(a, "offset", 0),
+                iDefault(a, "limit", 50)));
     add(
         "hop_component_types",
         "List native Hop transforms or workflow actions available for semantic authoring.",
@@ -89,9 +91,11 @@ final class HopMcpServer implements AutoCloseable {
                 "kind",
                 enumStr("pipeline", "workflow"),
                 "query",
-                str("Optional case-insensitive text in plugin IDs, name, description or category"),
+                boundedString(
+                    1024,
+                    "Optional case-insensitive text in plugin IDs, name, description or category"),
                 "offset",
-                nonNegativeInteger("Number of matching components to skip"),
+                boundedInteger(0, 100_000, "Number of matching components to skip"),
                 "limit",
                 integer("Maximum components to return")),
             List.of("kind")),
@@ -107,7 +111,10 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "kind", enumStr("pipeline", "workflow"),
-                "plugin_id", str("Native Hop transform/action plugin ID")),
+                "plugin_id",
+                    boundedString(
+                        HopComponentAuthoring.MAX_PLUGIN_ID_LENGTH,
+                        "Native Hop transform/action plugin ID")),
             List.of("kind", "plugin_id")),
         a -> service.componentSchema(s(a, "kind"), s(a, "plugin_id")));
     add(
@@ -116,9 +123,11 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "glob",
-                str("Optional case-insensitive glob, default **"),
+                boundedString(
+                    256,
+                    "Optional case-insensitive glob, default **; at most 16 wildcard operators"),
                 "offset",
-                nonNegativeInteger("Number of matching files to skip"),
+                boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of matching files to skip"),
                 "limit",
                 catalogLimit("Maximum files to return")),
             List.of()),
@@ -127,24 +136,37 @@ final class HopMcpServer implements AutoCloseable {
                 sDefault(a, "glob", "**"), iDefault(a, "offset", 0), iDefault(a, "limit", 100)));
     add(
         "hop_list_definitions",
-        "List .hpl pipelines and .hwf workflows under the project root.",
-        schema(Map.of(), List.of()),
-        a -> service.listDefinitions());
+        "List a bounded page of .hpl pipelines and .hwf workflows under the project root.",
+        schema(
+            Map.of(
+                "offset",
+                    boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of definitions to skip"),
+                "limit",
+                    boundedInteger(
+                        1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum definitions to return")),
+            List.of()),
+        a -> service.listDefinitions(iDefault(a, "offset", 0), iDefault(a, "limit", 50)));
     add(
         "hop_inspect",
         "Inspect a Hop pipeline/workflow structure, SQL tables and references.",
-        schema(Map.of("path", str("Project-relative .hpl/.hwf path")), List.of("path")),
+        schema(
+            Map.of("path", boundedString(4096, "Project-relative .hpl/.hwf path")),
+            List.of("path")),
         a -> service.inspect(s(a, "path")));
     add(
         "hop_context",
         "Build a consolidated safe context containing structure, validation and project-local dependencies.",
-        schema(Map.of("path", str("Project-relative .hpl/.hwf path")), List.of("path")),
+        schema(
+            Map.of("path", boundedString(4096, "Project-relative .hpl/.hwf path")),
+            List.of("path")),
         a -> service.context(s(a, "path")));
     add(
         "hop_component",
         "Inspect one transform/action; secret-looking fields are redacted.",
         schema(
-            Map.of("path", str("Definition path"), "component", str("Transform or action name")),
+            Map.of(
+                "path", boundedString(4096, "Project-relative definition path"),
+                "component", boundedString(1024, "Transform or action name")),
             List.of("path", "component")),
         a -> service.component(s(a, "path"), s(a, "component")));
     add(
@@ -153,29 +175,36 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "path",
-                str("Definition path"),
+                boundedString(4096, "Project-relative definition path"),
                 "component",
-                str("Start component"),
+                boundedString(1024, "Start component"),
                 "direction",
                 enumStr("upstream", "downstream"),
                 "max_depth",
-                integer("Maximum traversal depth, default 10")),
+                boundedInteger(1, 50, "Maximum traversal depth, default 10"),
+                "max_edges",
+                boundedInteger(1, 500, "Maximum lineage edges to return, default 200")),
             List.of("path", "component")),
         a ->
             service.lineage(
                 s(a, "path"),
                 s(a, "component"),
                 sDefault(a, "direction", "downstream"),
-                iDefault(a, "max_depth", 10)));
+                iDefault(a, "max_depth", 10),
+                iDefault(a, "max_edges", 200)));
     add(
         "hop_validate",
         "Run safe structural validation without field/database resolution.",
-        schema(Map.of("path", str("Definition path")), List.of("path")),
+        schema(
+            Map.of("path", boundedString(4096, "Project-relative definition path")),
+            List.of("path")),
         a -> service.validate(s(a, "path")));
     add(
         "hop_deep_check",
         "Run Apache Hop's native checker. Disabled unless hop mcp starts with --allow-deep-check; may access external systems.",
-        schema(Map.of("path", str("Definition path")), List.of("path")),
+        schema(
+            Map.of("path", boundedString(4096, "Project-relative definition path")),
+            List.of("path")),
         a -> service.deepCheck(s(a, "path")));
     add(
         "hop_test_definition",
@@ -183,13 +212,13 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "path",
-                str("Project-relative .hpl/.hwf path"),
+                boundedString(4096, "Project-relative .hpl/.hwf path"),
                 "deep_check",
                 bool("Run the opt-in native Hop checker, default false"),
                 "execute",
                 bool("Execute locally only after requested validation phases pass, default false"),
                 "run_configuration",
-                str("Local run configuration name, default local"),
+                boundedString(256, "Local run configuration name, default local"),
                 "parameters",
                 stringMapSchema("Optional named parameter values"),
                 "timeout_seconds",
@@ -205,25 +234,66 @@ final class HopMcpServer implements AutoCloseable {
                 iDefault(a, "timeout_seconds", 120)));
     add(
         "hop_read_text",
-        "Read a UTF-8 project file, confined to project root and size limits.",
-        schema(Map.of("path", str("Project-relative path")), List.of("path")),
-        a -> service.readText(s(a, "path")));
+        "Read one bounded UTF-8 chunk of a project file, confined to the project root.",
+        schema(
+            Map.of(
+                "path", boundedString(4096, "Project-relative path"),
+                "offset",
+                    boundedInteger(
+                        0,
+                        ProjectFiles.MAX_REDACTED_FILE_BYTES,
+                        "UTF-8 byte offset into the redacted view, default 0"),
+                "max_bytes",
+                    boundedInteger(
+                        4,
+                        ProjectFiles.MAX_TEXT_RESPONSE_BYTES,
+                        "Maximum chunk bytes, default 65536")),
+            List.of("path")),
+        a ->
+            service.readText(
+                s(a, "path"),
+                iDefault(a, "offset", 0),
+                iDefault(a, "max_bytes", ProjectFiles.DEFAULT_TEXT_RESPONSE_BYTES)));
     add(
         "hop_search",
-        "Search text within the project with scan/result limits.",
+        "Search text within the project with bounded scans and paginated results.",
         schema(
-            Map.of("query", str("Case-insensitive text"), "glob", str("Optional glob, default **")),
+            Map.of(
+                "query", boundedString(256, "Case-insensitive text"),
+                "glob",
+                    boundedString(256, "Optional glob, default **; at most 16 wildcard operators"),
+                "offset",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_SCAN_FILES, "Number of matching lines to skip"),
+                "limit",
+                    boundedInteger(
+                        1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum matches to return")),
             List.of("query")),
-        a -> service.search(s(a, "query"), sDefault(a, "glob", "**")));
+        a ->
+            service.search(
+                s(a, "query"),
+                sDefault(a, "glob", "**"),
+                iDefault(a, "offset", 0),
+                iDefault(a, "limit", 50)));
     add(
         "hop_find_table",
-        "Find SQL table references across Hop definitions.",
-        schema(Map.of("table", str("Table name or substring")), List.of("table")),
-        a -> service.findTable(s(a, "table")));
+        "Find SQL table references across Hop definitions with bounded pagination.",
+        schema(
+            Map.of(
+                "table", boundedString(512, "Table name or substring"),
+                "offset",
+                    boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of matches to skip"),
+                "limit",
+                    boundedInteger(
+                        1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum matches to return")),
+            List.of("table")),
+        a -> service.findTable(s(a, "table"), iDefault(a, "offset", 0), iDefault(a, "limit", 50)));
     add(
         "hop_dependencies",
         "Extract referenced .hpl/.hwf definitions and resolve those inside project root.",
-        schema(Map.of("path", str("Definition path")), List.of("path")),
+        schema(
+            Map.of("path", boundedString(4096, "Project-relative definition path")),
+            List.of("path")),
         a -> service.dependencies(s(a, "path")));
     add(
         "hop_execute",
@@ -231,9 +301,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "path",
-                str("Project-relative .hpl/.hwf path"),
+                boundedString(4096, "Project-relative .hpl/.hwf path"),
                 "run_configuration",
-                str("Local run configuration name, default local"),
+                boundedString(256, "Local run configuration name, default local"),
                 "parameters",
                 stringMapSchema("Optional named parameter values"),
                 "timeout_seconds",
@@ -251,9 +321,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "path",
-                str("Project-relative .hpl/.hwf path"),
+                boundedString(4096, "Project-relative .hpl/.hwf path"),
                 "run_configuration",
-                str("Local run configuration name, default local"),
+                boundedString(256, "Local run configuration name, default local"),
                 "parameters",
                 stringMapSchema("Optional named parameter values"),
                 "timeout_seconds",
@@ -268,12 +338,16 @@ final class HopMcpServer implements AutoCloseable {
     add(
         "hop_execution_status",
         "Get the state and result of an asynchronous execution.",
-        schema(Map.of("operation_id", str("Execution operation ID")), List.of("operation_id")),
+        schema(
+            Map.of("operation_id", boundedString(64, "Execution operation ID")),
+            List.of("operation_id")),
         a -> service.executionStatus(s(a, "operation_id")));
     add(
         "hop_stop_execution",
         "Request cancellation of an asynchronous execution.",
-        schema(Map.of("operation_id", str("Execution operation ID")), List.of("operation_id")),
+        schema(
+            Map.of("operation_id", boundedString(64, "Execution operation ID")),
+            List.of("operation_id")),
         a -> service.stopExecution(s(a, "operation_id")));
     add(
         "hop_logs",
@@ -281,7 +355,7 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "channel_id",
-                str("Optional execution log channel ID"),
+                boundedString(256, "Optional execution log channel ID"),
                 "include_general",
                 bool("Include general log messages, default true"),
                 "from",
@@ -301,7 +375,7 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "path",
-                str("Project-relative .hpl/.hwf path"),
+                boundedString(4096, "Project-relative .hpl/.hwf path"),
                 "kind",
                 enumStr("pipeline", "workflow"),
                 "operations",
@@ -316,15 +390,16 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "plan_id",
-                str("Session correction plan ID"),
+                boundedString(36, "Session correction plan ID"),
                 "plan_sha256",
-                str("SHA-256 returned when the plan was prepared")),
+                boundedString(64, "SHA-256 returned when the plan was prepared")),
             List.of("plan_id", "plan_sha256")),
         a -> service.applyCorrectionPlan(s(a, "plan_id"), s(a, "plan_sha256")));
     add(
         "hop_correction_plan_status",
         "Read the bounded audit status of a correction plan retained in this MCP session.",
-        schema(Map.of("plan_id", str("Session correction plan ID")), List.of("plan_id")),
+        schema(
+            Map.of("plan_id", boundedString(36, "Session correction plan ID")), List.of("plan_id")),
         a -> service.correctionPlanStatus(s(a, "plan_id")));
     add(
         "hop_mutate_definition",
@@ -332,13 +407,14 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "path",
-                str("Project-relative .hpl/.hwf path"),
+                boundedString(4096, "Project-relative .hpl/.hwf path"),
                 "kind",
                 enumStr("pipeline", "workflow"),
                 "operations",
                 operationsSchema(),
                 "expected_sha256",
-                str("Current SHA-256; required to apply changes to an existing definition"),
+                boundedString(
+                    64, "Current SHA-256; required to apply changes to an existing definition"),
                 "apply",
                 bool("Apply the mutation; default false")),
             List.of("path", "operations")),
@@ -355,9 +431,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "transaction_id",
-                str("Mutation transaction ID"),
+                boundedString(36, "Mutation transaction ID"),
                 "expected_sha256",
-                str("Current definition SHA-256")),
+                boundedString(64, "Current definition SHA-256")),
             List.of("transaction_id", "expected_sha256")),
         a -> service.rollbackMutation(s(a, "transaction_id"), s(a, "expected_sha256")));
     add(
@@ -368,7 +444,7 @@ final class HopMcpServer implements AutoCloseable {
                 "method",
                 enumStr("GET", "HEAD"),
                 "path",
-                str("Relative REST path, optionally including a query string"),
+                boundedString(2048, "Relative REST path, optionally including a query string"),
                 "headers",
                 headersSchema()),
             List.of("path")),
@@ -399,9 +475,37 @@ final class HopMcpServer implements AutoCloseable {
                     Map<String, Object> args =
                         request.arguments() == null ? Map.of() : request.arguments();
                     Map<String, Object> data = handler.call(args);
+                    if (!name.equals("hop_read_text") && !name.equals("hop_web_request")) {
+                      data = SensitiveData.redactMap(data);
+                    }
+                    boolean responseTooLarge = false;
+                    String json = JsonUtil.toJson(data);
+                    String responseJson =
+                        JsonUtil.toJson(
+                            Map.of(
+                                "content",
+                                List.of(Map.of("type", "text", "text", json)),
+                                "structuredContent",
+                                data));
+                    if (responseJson.getBytes(StandardCharsets.UTF_8).length + 128
+                        > ProjectFiles.MAX_RESPONSE_BYTES) {
+                      data =
+                          Map.of(
+                              "code",
+                              "RESPONSE_TOO_LARGE",
+                              "category",
+                              "VALIDATION",
+                              "message",
+                              "Tool response exceeded the server response budget. Request a smaller page or narrower result set.",
+                              "retryable",
+                              true);
+                      json = JsonUtil.toJson(data);
+                      responseTooLarge = true;
+                    }
                     return McpSchema.CallToolResult.builder()
-                        .content(List.of(new McpSchema.TextContent(JsonUtil.toJson(data))))
+                        .content(List.of(new McpSchema.TextContent(json)))
                         .structuredContent(data)
+                        .isError(responseTooLarge)
                         .build();
                   } catch (Exception e) {
                     Map<String, Object> error = service.errorPayload(e);
@@ -461,15 +565,33 @@ final class HopMcpServer implements AutoCloseable {
         switch (name) {
           case "hop_config" -> configOutputSchema();
           case "hop_capabilities" -> capabilitiesOutputSchema();
+          case "hop_live_ui_status" -> liveUiStatusOutputSchema();
+          case "hop_context" -> contextOutputSchema();
           case "hop_validate" -> validationOutputSchema();
           case "hop_inspect" -> inspectOutputSchema();
           case "hop_catalog" -> catalogOutputSchema();
+          case "hop_list_definitions" -> definitionsOutputSchema();
+          case "hop_read_text" -> readTextOutputSchema();
+          case "hop_search" -> searchOutputSchema();
+          case "hop_find_table" -> findTableOutputSchema();
+          case "hop_dependencies" -> dependenciesOutputSchema();
+          case "hop_component" -> componentOutputSchema();
+          case "hop_component_lineage" -> lineageOutputSchema();
+          case "hop_plugins" -> pluginsOutputSchema();
           case "hop_component_types" -> componentTypesOutputSchema();
           case "hop_component_schema" -> componentSchemaOutputSchema();
           case "hop_execute" -> executionOutputSchema();
+          case "hop_start_execution", "hop_stop_execution" -> executionStatusOutputSchema();
           case "hop_execution_status" -> executionStatusOutputSchema();
+          case "hop_deep_check" -> deepCheckOutputSchema();
+          case "hop_test_definition" -> testDefinitionOutputSchema();
+          case "hop_logs" -> logsOutputSchema();
+          case "hop_web_request" -> webRequestOutputSchema();
           case "hop_mutate_definition" -> mutationOutputSchema();
           case "hop_prepare_correction_plan" -> correctionPlanOutputSchema();
+          case "hop_apply_correction_plan" -> correctionPlanApplyOutputSchema();
+          case "hop_correction_plan_status" -> correctionPlanStatusOutputSchema();
+          case "hop_rollback_mutation" -> rollbackOutputSchema();
           default -> null;
         };
     return result == null ? null : errorAwareOutputSchema(result);
@@ -483,7 +605,9 @@ final class HopMcpServer implements AutoCloseable {
             "version", boundedString(64, "Connector version"),
             "project_root", boundedString(4096, "Canonical configured project root"),
             "transport", enumStr("stdio"),
-            "read_only", bool("Whether semantic mutation is disabled"),
+            "read_only",
+                bool("Whether mutation, execution, deep checks and web requests are all disabled"),
+            "definition_write_enabled", bool("Whether native definition writes are enabled"),
             "allow_deep_check", bool("Whether native deep checks are authorized"),
             "allow_execution", bool("Whether local execution is authorized"),
             "allow_mutation", bool("Whether semantic mutation is authorized"),
@@ -497,6 +621,7 @@ final class HopMcpServer implements AutoCloseable {
             "project_root",
             "transport",
             "read_only",
+            "definition_write_enabled",
             "allow_deep_check",
             "allow_execution",
             "allow_mutation",
@@ -505,6 +630,548 @@ final class HopMcpServer implements AutoCloseable {
             "web_api_base",
             "max_read_bytes",
             "max_scan_files"));
+  }
+
+  private static Map<String, Object> definitionsOutputSchema() {
+    Map<String, Object> definition =
+        schema(
+            fields(
+                "path", boundedString(4096, "Project-relative definition path"),
+                "type", enumStr("pipeline", "workflow")),
+            List.of("path", "type"));
+    return toolOutputSchema(
+        fields(
+            "offset", nonNegativeInteger("First returned definition offset"),
+            "limit",
+                boundedInteger(
+                    1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum definitions requested"),
+            "scanned", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Regular files scanned"),
+            "visited",
+                boundedInteger(
+                    0, BoundedProjectWalker.MAX_VISITED_ENTRIES, "Directory entries visited"),
+            "scan_limit_reached", bool("Whether a traversal bound stopped the scan"),
+            "results_truncated", bool("Whether more matching definitions were found"),
+            "count", nonNegativeInteger("Definitions found so far in the bounded scan"),
+            "count_complete", bool("Whether count includes the complete bounded scan"),
+            "returned",
+                boundedInteger(0, ProjectFiles.MAX_STRUCTURED_RESULTS, "Definitions returned"),
+            "has_more", bool("Whether more definitions may be available"),
+            "definitions", arrayOf(definition, ProjectFiles.MAX_STRUCTURED_RESULTS)),
+        List.of(
+            "offset",
+            "limit",
+            "scanned",
+            "visited",
+            "scan_limit_reached",
+            "results_truncated",
+            "count",
+            "count_complete",
+            "returned",
+            "has_more",
+            "definitions"));
+  }
+
+  private static Map<String, Object> readTextOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative path"),
+            "offset",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_REDACTED_FILE_BYTES,
+                    "UTF-8 byte offset into the redacted view"),
+            "returned_bytes",
+                boundedInteger(0, ProjectFiles.MAX_TEXT_RESPONSE_BYTES, "Bytes in this chunk"),
+            "total_bytes",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_REDACTED_FILE_BYTES,
+                    "UTF-8 byte size of the redacted file view"),
+            "truncated", bool("Whether more content follows"),
+            "next_offset",
+                boundedInteger(
+                    0, ProjectFiles.MAX_REDACTED_FILE_BYTES, "Next offset in the redacted view"),
+            "eof", bool("Whether this chunk reaches end of file"),
+            "text",
+                boundedString(
+                    ProjectFiles.MAX_TEXT_RESPONSE_BYTES,
+                    "UTF-8 text chunk with secret values redacted")),
+        List.of(
+            "path",
+            "offset",
+            "returned_bytes",
+            "total_bytes",
+            "truncated",
+            "next_offset",
+            "eof",
+            "text"));
+  }
+
+  private static Map<String, Object> searchOutputSchema() {
+    Map<String, Object> match =
+        schema(
+            fields(
+                "path",
+                boundedString(4096, "Project-relative file path"),
+                "line",
+                boundedInteger(1, ProjectFiles.MAX_FILE_BYTES, "One-based line number"),
+                "text",
+                boundedString(501, "Bounded matching line snippet")),
+            List.of("path", "line", "text"));
+    return toolOutputSchema(
+        fields(
+            "query", boundedString(256, "Search text"),
+            "glob", boundedString(256, "Applied file glob"),
+            "offset", nonNegativeInteger("First matching line offset"),
+            "limit",
+                boundedInteger(1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum matches requested"),
+            "count",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_SCAN_FILES + ProjectFiles.MAX_STRUCTURED_RESULTS + 1,
+                    "Matches found during this bounded scan, including one lookahead"),
+            "count_complete", bool("Whether count includes the full bounded scan"),
+            "returned", boundedInteger(0, ProjectFiles.MAX_STRUCTURED_RESULTS, "Matches returned"),
+            "scanned_files", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Text files scanned"),
+            "visited_entries",
+                boundedInteger(
+                    0, BoundedProjectWalker.MAX_VISITED_ENTRIES, "Directory entries visited"),
+            "scanned_bytes",
+                boundedInteger(0, ProjectFiles.MAX_TOTAL_SCAN_BYTES, "Bytes read during search"),
+            "scan_limit_reached", bool("Whether a scan budget stopped the search"),
+            "result_limit_reached", bool("Whether another match exists past this page"),
+            "results_truncated", bool("Whether matches were omitted"),
+            "has_more", bool("Whether more matches may be available"),
+            "results", arrayOf(match, ProjectFiles.MAX_STRUCTURED_RESULTS)),
+        List.of(
+            "query",
+            "glob",
+            "offset",
+            "limit",
+            "count",
+            "count_complete",
+            "returned",
+            "scanned_files",
+            "visited_entries",
+            "scanned_bytes",
+            "scan_limit_reached",
+            "result_limit_reached",
+            "results_truncated",
+            "has_more",
+            "results"));
+  }
+
+  private static Map<String, Object> findTableOutputSchema() {
+    Map<String, Object> match =
+        schema(
+            fields(
+                "path", boundedString(4096, "Project-relative definition path"),
+                "table", boundedString(2048, "SQL table reference")),
+            List.of("path", "table"));
+    return toolOutputSchema(
+        fields(
+            "table", boundedString(512, "Requested table substring"),
+            "offset", nonNegativeInteger("First returned match offset"),
+            "limit",
+                boundedInteger(1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum matches requested"),
+            "count",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_SCAN_FILES + ProjectFiles.MAX_STRUCTURED_RESULTS + 1,
+                    "Matches found during this bounded scan, including one lookahead"),
+            "count_complete", bool("Whether count includes the full bounded scan"),
+            "returned", boundedInteger(0, ProjectFiles.MAX_STRUCTURED_RESULTS, "Matches returned"),
+            "scanned_files",
+                boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Definition files scanned"),
+            "visited_entries",
+                boundedInteger(
+                    0, BoundedProjectWalker.MAX_VISITED_ENTRIES, "Directory entries visited"),
+            "scanned_bytes",
+                boundedInteger(0, ProjectFiles.MAX_TOTAL_SCAN_BYTES, "Bytes read during search"),
+            "scan_limit_reached", bool("Whether a scan budget stopped the search"),
+            "result_limit_reached", bool("Whether another match exists past this page"),
+            "results_truncated", bool("Whether matches were omitted"),
+            "has_more", bool("Whether more matches may be available"),
+            "matches", arrayOf(match, ProjectFiles.MAX_STRUCTURED_RESULTS)),
+        List.of(
+            "table",
+            "offset",
+            "limit",
+            "count",
+            "count_complete",
+            "returned",
+            "scanned_files",
+            "visited_entries",
+            "scanned_bytes",
+            "scan_limit_reached",
+            "result_limit_reached",
+            "results_truncated",
+            "has_more",
+            "matches"));
+  }
+
+  private static Map<String, Object> dependenciesOutputSchema() {
+    Map<String, Object> dependency =
+        schema(
+            fields(
+                "reference", boundedString(4096, "Definition reference"),
+                "resolved", boundedString(4096, "Resolved project-relative path"),
+                "exists", bool("Whether the dependency exists"),
+                "error", boundedString(1000, "Safe resolution error")),
+            List.of("reference", "exists"));
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "dependencies", arrayOf(dependency, ProjectFiles.MAX_STRUCTURED_RESULTS),
+            "count",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_STRUCTURED_RESULTS + 1,
+                    "References discovered or one-item truncation lookahead"),
+            "count_complete", bool("Whether all references were counted"),
+            "returned",
+                boundedInteger(0, ProjectFiles.MAX_STRUCTURED_RESULTS, "References returned"),
+            "truncated", bool("Whether references were omitted")),
+        List.of("path", "dependencies", "count", "count_complete", "returned", "truncated"));
+  }
+
+  private static Map<String, Object> componentOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "name", boundedString(1024, "Component name"),
+            "kind", enumStr("transform", "action"),
+            "config", componentConfigObjectSchema(0),
+            "config_truncated", bool("Whether the component configuration was bounded"),
+            "tables",
+                arrayOf(
+                    boundedString(2048, "SQL table reference"),
+                    ProjectFiles.MAX_STRUCTURED_RESULTS),
+            "references",
+                arrayOf(
+                    boundedString(4096, "Project-relative definition reference"),
+                    ProjectFiles.MAX_STRUCTURED_RESULTS)),
+        List.of("path", "name", "kind", "config", "config_truncated", "tables", "references"));
+  }
+
+  private static Map<String, Object> componentConfigObjectSchema(int depth) {
+    return Map.of(
+        "type",
+        "object",
+        "additionalProperties",
+        componentConfigValueSchema(depth),
+        "propertyNames",
+        boundedString(256, "Bounded component configuration key"),
+        "maxProperties",
+        HopXml.MAX_COMPONENT_CONFIG_PROPERTIES);
+  }
+
+  private static Map<String, Object> componentConfigValueSchema(int depth) {
+    Map<String, Object> text = boundedString(1024, "Bounded component configuration value");
+    if (depth >= HopXml.MAX_COMPONENT_CONFIG_DEPTH)
+      return Map.of("anyOf", List.of(text, arrayOf(text, HopXml.MAX_COMPONENT_CONFIG_VALUES)));
+    return Map.of(
+        "anyOf",
+        List.of(
+            text,
+            componentConfigObjectSchema(depth + 1),
+            arrayOf(componentConfigValueSchema(depth + 1), HopXml.MAX_COMPONENT_CONFIG_VALUES)));
+  }
+
+  private static Map<String, Object> contextOutputSchema() {
+    Map<String, Object> safeError =
+        schema(
+            fields(
+                "ok", Map.of("const", false),
+                "operation", enumStr("inspect", "validate"),
+                "code", boundedString(64, "Stable error code"),
+                "category", boundedString(32, "Error category"),
+                "message", boundedString(1000, "Safe error message"),
+                "retryable", bool("Whether retrying may succeed")),
+            List.of("ok", "operation", "code", "category", "message", "retryable"));
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "type", enumStr("pipeline", "workflow"),
+            "inspection", Map.of("anyOf", List.of(inspectOutputSchema(), safeError)),
+            "validation", Map.of("anyOf", List.of(validationOutputSchema(), safeError)),
+            "dependencies", dependenciesOutputSchema()),
+        List.of("path", "type", "inspection", "validation", "dependencies"));
+  }
+
+  private static Map<String, Object> deepCheckOutputSchema() {
+    Map<String, Object> counts =
+        schema(
+            fields(
+                "errors", nonNegativeInteger("Error count"),
+                "warnings", nonNegativeInteger("Warning count"),
+                "comments", nonNegativeInteger("Comment count"),
+                "ok", nonNegativeInteger("Successful check count"),
+                "none", nonNegativeInteger("Unclassified check count")),
+            List.of("errors", "warnings", "comments", "ok", "none"));
+    Map<String, Object> issue =
+        schema(
+            fields(
+                "type",
+                    boundedInteger(
+                        Integer.MIN_VALUE, Integer.MAX_VALUE, "Apache Hop check result type"),
+                "text",
+                    boundedString(SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Sanitized diagnostic")),
+            List.of("type", "text"));
+    return toolOutputSchema(
+        fields(
+            "checker", enumStr("apache-hop"),
+            "deep", bool("Whether Apache Hop deep checking ran"),
+            "may_access_external_systems",
+                bool("Whether the checker may access configured external systems"),
+            "valid", bool("Whether Apache Hop reported errors"),
+            "summary", counts,
+            "issues_truncated", bool("Whether diagnostic rows were capped"),
+            "issues", arrayOf(issue, ProjectFiles.MAX_STRUCTURED_RESULTS)),
+        List.of(
+            "checker",
+            "deep",
+            "may_access_external_systems",
+            "valid",
+            "summary",
+            "issues_truncated",
+            "issues"));
+  }
+
+  private static Map<String, Object> testDefinitionOutputSchema() {
+    Map<String, Object> phase =
+        schema(
+            fields(
+                "requested", bool("Whether this phase was requested"),
+                "performed", bool("Whether this phase ran"),
+                "passed", bool("Whether this phase passed"),
+                "skipped_reason", boundedString(64, "Reason a requested phase was skipped")),
+            List.of("requested", "performed", "passed"));
+    Map<String, Object> phases =
+        schema(
+            fields(
+                "structural_validation", phase,
+                "deep_check", phase,
+                "execution", phase),
+            List.of("structural_validation", "deep_check", "execution"));
+    Map<String, Object> diagnostic =
+        schema(
+            fields(
+                "phase", enumStr("structural", "deep_check", "execution", "execution_log"),
+                "severity", enumStr("error", "warning", "info"),
+                "code", boundedString(128, "Diagnostic code"),
+                "message",
+                    boundedString(SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Redacted diagnostic")),
+            List.of("phase", "severity", "code", "message"));
+    Map<String, Object> suggestion =
+        schema(
+            fields(
+                "code", boundedString(128, "Suggested recovery action"),
+                "reason", boundedString(1024, "Safe suggestion"),
+                "tool", boundedString(128, "Suggested MCP tool"),
+                "operation_candidates", stringArray(10),
+                "requires_preview", bool("Whether the suggested action requires preview"),
+                "auto_applied", bool("Whether the suggestion was applied automatically")),
+            List.of(
+                "code",
+                "reason",
+                "tool",
+                "operation_candidates",
+                "requires_preview",
+                "auto_applied"));
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "passed", bool("Whether all requested test phases passed"),
+            "correction_mode", enumStr("advisory_only"),
+            "corrections_applied", bool("Whether corrections were applied automatically"),
+            "phases", phases,
+            "structural_validation", validationOutputSchema(),
+            "deep_check", deepCheckOutputSchema(),
+            "execution", executionOutputSchema(),
+            "execution_logs", logsOutputSchema(),
+            "diagnostic_count",
+                boundedInteger(0, HopDefinitionTestReport.MAX_DIAGNOSTICS, "Diagnostics returned"),
+            "diagnostics", arrayOf(diagnostic, HopDefinitionTestReport.MAX_DIAGNOSTICS),
+            "suggestions", arrayOf(suggestion, 10)),
+        List.of(
+            "path",
+            "passed",
+            "correction_mode",
+            "corrections_applied",
+            "phases",
+            "structural_validation",
+            "diagnostic_count",
+            "diagnostics",
+            "suggestions"));
+  }
+
+  private static Map<String, Object> logsOutputSchema() {
+    Map<String, Object> event =
+        schema(
+            fields(
+                "timestamp", nonNegativeInteger("Hop log event timestamp"),
+                "level", boundedString(32, "Hop log level"),
+                "message",
+                    boundedString(
+                        ProjectFiles.MAX_LOG_MESSAGE_CHARS + 1, "Sanitized bounded log message")),
+            List.of("timestamp", "level", "message"));
+    return toolOutputSchema(
+        fields(
+            "from", nonNegativeInteger("First log cursor"),
+            "to", nonNegativeInteger("Last log cursor"),
+            "last_line", boundedInteger(-1, Integer.MAX_VALUE, "Latest Hop log cursor"),
+            "count", boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Events returned"),
+            "returned_bytes",
+                boundedInteger(0, ProjectFiles.MAX_LOG_BYTES, "Approximate returned log bytes"),
+            "truncated", bool("Whether the event or byte bound omitted events"),
+            "events", arrayOf(event, ProjectFiles.MAX_LOG_EVENTS)),
+        List.of("from", "to", "last_line", "count", "returned_bytes", "truncated", "events"));
+  }
+
+  private static Map<String, Object> webRequestOutputSchema() {
+    Map<String, Object> headers =
+        Map.of(
+            "type",
+            "object",
+            "maxProperties",
+            32,
+            "additionalProperties",
+            boundedString(1024, "Redacted response header value"));
+    return toolOutputSchema(
+        fields(
+            "method", enumStr("GET", "HEAD"),
+            "url", boundedString(4096, "Hop Web URL without query values"),
+            "query_present", bool("Whether a query string was present"),
+            "status", boundedInteger(100, 599, "HTTP response status"),
+            "ok", bool("Whether the response status is 2xx"),
+            "headers", headers,
+            "body",
+                boundedString(
+                    ProjectFiles.MAX_WEB_BODY_RETURN_BYTES, "Redacted bounded response body"),
+            "body_bytes",
+                boundedInteger(0, HopWebClient.MAX_HTTP_READ_BYTES, "Bytes read from the response"),
+            "returned_bytes",
+                boundedInteger(
+                    0, ProjectFiles.MAX_WEB_BODY_RETURN_BYTES, "Bytes in the returned body"),
+            "body_truncated", bool("Whether the response body was truncated")),
+        List.of(
+            "method",
+            "url",
+            "query_present",
+            "status",
+            "ok",
+            "headers",
+            "body",
+            "body_bytes",
+            "returned_bytes",
+            "body_truncated"));
+  }
+
+  private static Map<String, Object> lineageOutputSchema() {
+    Map<String, Object> edge =
+        schema(
+            fields(
+                "from", boundedString(1024, "Source component"),
+                "to", boundedString(1024, "Target component"),
+                "enabled", bool("Whether the hop is enabled"),
+                "depth", boundedInteger(1, 50, "Traversal depth")),
+            List.of("from", "to", "depth"));
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "component", boundedString(1024, "Starting component"),
+            "direction", enumStr("upstream", "downstream"),
+            "edges", arrayOf(edge, 500),
+            "edges_truncated", bool("Whether the edge bound stopped traversal"),
+            "visited_nodes", boundedInteger(0, ProjectFiles.MAX_READ_BYTES, "Nodes visited"),
+            "max_depth_applied", boundedInteger(1, 50, "Depth bound applied")),
+        List.of(
+            "path",
+            "component",
+            "direction",
+            "edges",
+            "edges_truncated",
+            "visited_nodes",
+            "max_depth_applied"));
+  }
+
+  private static Map<String, Object> pluginsOutputSchema() {
+    Map<String, Object> type =
+        schema(
+            fields(
+                "type", boundedString(512, "Plugin type class"),
+                "count", nonNegativeInteger("Plugins registered for this type")),
+            List.of("type", "count"));
+    return toolOutputSchema(
+        fields(
+            "plugin_registry", boundedString(1024, "Native Hop registry class"),
+            "plugin_type_count", nonNegativeInteger("Plugin type count"),
+            "plugin_count", nonNegativeInteger("Total registered plugins"),
+            "matched_plugin_count", nonNegativeInteger("Plugins matching filters"),
+            "returned_plugin_count", boundedInteger(0, 50, "Plugins returned"),
+            "offset", nonNegativeInteger("First returned plugin offset"),
+            "limit", boundedInteger(1, 50, "Maximum plugins requested"),
+            "has_more", bool("Whether more matching plugins exist"),
+            "plugin_types_truncated", bool("Whether the plugin type summary was capped"),
+            "type_filter", boundedString(512, "Plugin type filter"),
+            "query", boundedString(256, "Plugin text filter"),
+            "plugin_types", arrayOf(type, 100),
+            "plugins", arrayOf(pluginInventoryRowSchema(), 50)),
+        List.of(
+            "plugin_registry",
+            "plugin_type_count",
+            "plugin_count",
+            "matched_plugin_count",
+            "returned_plugin_count",
+            "offset",
+            "limit",
+            "has_more",
+            "plugin_types_truncated",
+            "plugin_types",
+            "plugins"));
+  }
+
+  private static Map<String, Object> liveUiStatusOutputSchema() {
+    Map<String, Object> activeClients =
+        Map.of(
+            "type",
+            "object",
+            "maxProperties",
+            2,
+            "additionalProperties",
+            boundedInteger(0, 100, "Active sessions for this client type"));
+    Map<String, Object> acknowledgement =
+        schema(
+            fields(
+                "event_id", boundedString(36, "Semantic event ID"),
+                "acknowledged_at", nonNegativeInteger("Acknowledgement time in epoch milliseconds"),
+                "status", boundedString(32, "Acknowledgement status"),
+                "client_type", enumStr("desktop", "web"),
+                "message", boundedString(512, "Sanitized acknowledgement message")),
+            List.of("event_id", "acknowledged_at", "status", "client_type", "message"));
+    return toolOutputSchema(
+        fields(
+            "available", bool("Whether a live-UI session is available"),
+            "adapter", enumStr("none", "project_event_bridge"),
+            "active_sessions", boundedInteger(0, 100, "Active live-UI sessions"),
+            "active_clients", activeClients,
+            "transaction_id", boundedString(64, "Optional filtered mutation transaction ID"),
+            "acknowledgements", arrayOf(acknowledgement, 100),
+            "acknowledgement_count", boundedInteger(0, 100, "Acknowledgements returned"),
+            "session_ttl_seconds", nonNegativeInteger("Live-UI session lifetime in seconds")),
+        List.of("available", "adapter", "transaction_id", "acknowledgements"));
+  }
+
+  private static Map<String, Object> pluginInventoryRowSchema() {
+    return schema(
+        fields(
+            "type", boundedString(1024, "Plugin type class"),
+            "ids", stringArray(64),
+            "name", boundedString(2048, "Plugin display name"),
+            "description", boundedString(8192, "Plugin description"),
+            "category", boundedString(1024, "Plugin category")),
+        List.of("type", "ids", "name", "description", "category"));
   }
 
   private static Map<String, Object> capabilitiesOutputSchema() {
@@ -662,9 +1329,16 @@ final class HopMcpServer implements AutoCloseable {
             "offset", nonNegativeInteger("First returned match offset"),
             "limit", catalogLimit("Maximum requested files"),
             "scanned", nonNegativeInteger("Files scanned"),
+            "scanned_bytes",
+                boundedInteger(0, ProjectFiles.MAX_TOTAL_SCAN_BYTES, "Bytes read for file hashes"),
+            "visited",
+                boundedInteger(
+                    0, BoundedProjectWalker.MAX_VISITED_ENTRIES, "Directory entries visited"),
             "scan_limit_reached", bool("Whether the project scan limit was reached"),
             "count", nonNegativeInteger("Matched file count"),
+            "count_complete", bool("Whether count includes the complete bounded scan"),
             "returned", boundedInteger(0, 200, "Returned file count"),
+            "results_truncated", bool("Whether matching files were omitted"),
             "has_more", bool("Whether another page or scan remains"),
             "files", arrayOf(file, 200)),
         List.of(
@@ -672,9 +1346,13 @@ final class HopMcpServer implements AutoCloseable {
             "offset",
             "limit",
             "scanned",
+            "scanned_bytes",
+            "visited",
             "scan_limit_reached",
             "count",
+            "count_complete",
             "returned",
+            "results_truncated",
             "has_more",
             "files"));
   }
@@ -685,10 +1363,14 @@ final class HopMcpServer implements AutoCloseable {
             "kind", enumStr("pipeline", "workflow"),
             "matched_component_count", nonNegativeInteger("Matching plugin count"),
             "returned_component_count", boundedInteger(0, 50, "Returned plugin count"),
-            "offset", nonNegativeInteger("First returned plugin offset"),
+            "offset",
+                boundedInteger(
+                    0, HopComponentAuthoring.MAX_PLUGIN_OFFSET, "First returned plugin offset"),
             "limit", boundedInteger(1, 50, "Maximum requested plugins"),
             "has_more", bool("Whether another page remains"),
-            "query", boundedString(1024, "Applied search query"),
+            "query",
+                boundedString(
+                    HopComponentAuthoring.MAX_PLUGIN_QUERY_LENGTH, "Applied search query"),
             "components", arrayOf(pluginRowSchema(), 50)),
         List.of(
             "kind",
@@ -817,6 +1499,26 @@ final class HopMcpServer implements AutoCloseable {
             "rollback_available"));
   }
 
+  private static Map<String, Object> rollbackOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "transaction_id", boundedString(64, "Mutation transaction ID"),
+            "path", boundedString(4096, "Project-relative definition path"),
+            "rolled_back", bool("Whether the mutation was rolled back"),
+            "restored_existing_file", bool("Whether rollback restored a prior file"),
+            "restored_sha256", boundedString(64, "Restored definition SHA-256"),
+            "atomic_replace_used", bool("Whether the filesystem supported atomic replacement"),
+            "semantic_event_published", bool("Whether a semantic UI event was accepted")),
+        List.of(
+            "transaction_id",
+            "path",
+            "rolled_back",
+            "restored_existing_file",
+            "restored_sha256",
+            "atomic_replace_used",
+            "semantic_event_published"));
+  }
+
   private static Map<String, Object> correctionPlanOutputSchema() {
     return toolOutputSchema(
         fields(
@@ -860,6 +1562,81 @@ final class HopMcpServer implements AutoCloseable {
             "single_use",
             "auto_apply",
             "preview"));
+  }
+
+  private static Map<String, Object> correctionPlanApplyOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "plan_id", boundedString(64, "Session correction plan ID"),
+            "plan_sha256", boundedString(64, "Immutable plan SHA-256"),
+            "state", enumStr("applied"),
+            "path", boundedString(4096, "Project-relative definition path"),
+            "kind", enumStr("pipeline", "workflow"),
+            "target_exists", bool("Whether a definition existed when the plan was prepared"),
+            "bound_sha256", boundedString(64, "SHA-256 of the original definition or empty"),
+            "operation_count",
+                boundedInteger(0, HopDefinitionMutator.MAX_OPERATIONS, "Number of operations"),
+            "created_at", boundedString(64, "Creation time in RFC 3339 format"),
+            "expires_at", boundedString(64, "Expiry time in RFC 3339 format"),
+            "single_use", bool("Whether the correction plan can be applied once"),
+            "auto_apply", bool("Whether the correction plan applies automatically"),
+            "mutation", mutationSuccessSchema()),
+        List.of(
+            "plan_id",
+            "plan_sha256",
+            "state",
+            "path",
+            "kind",
+            "target_exists",
+            "bound_sha256",
+            "operation_count",
+            "created_at",
+            "expires_at",
+            "single_use",
+            "auto_apply",
+            "mutation"));
+  }
+
+  private static Map<String, Object> correctionPlanStatusOutputSchema() {
+    Map<String, Object> auditEvent =
+        schema(
+            fields(
+                "timestamp", boundedString(64, "Audit timestamp in RFC 3339 format"),
+                "event", enumStr("prepared", "applied", "failed"),
+                "message",
+                    boundedString(
+                        SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Sanitized audit message")),
+            List.of("timestamp", "event", "message"));
+    return toolOutputSchema(
+        fields(
+            "plan_id", boundedString(64, "Session correction plan ID"),
+            "plan_sha256", boundedString(64, "Immutable plan SHA-256"),
+            "state", enumStr("prepared", "applied", "failed"),
+            "path", boundedString(4096, "Project-relative definition path"),
+            "kind", enumStr("pipeline", "workflow"),
+            "target_exists", bool("Whether a definition existed when the plan was prepared"),
+            "bound_sha256", boundedString(64, "SHA-256 of the original definition or empty"),
+            "operation_count",
+                boundedInteger(0, HopDefinitionMutator.MAX_OPERATIONS, "Number of operations"),
+            "created_at", boundedString(64, "Creation time in RFC 3339 format"),
+            "expires_at", boundedString(64, "Expiry time in RFC 3339 format"),
+            "single_use", bool("Whether the correction plan can be applied once"),
+            "auto_apply", bool("Whether the correction plan applies automatically"),
+            "audit", arrayOf(auditEvent, 10)),
+        List.of(
+            "plan_id",
+            "plan_sha256",
+            "state",
+            "path",
+            "kind",
+            "target_exists",
+            "bound_sha256",
+            "operation_count",
+            "created_at",
+            "expires_at",
+            "single_use",
+            "auto_apply",
+            "audit"));
   }
 
   private static Map<String, Object> executionResultFields() {
@@ -918,9 +1695,11 @@ final class HopMcpServer implements AutoCloseable {
         "after", definitionSummarySchema(),
         "changes", arrayOf(semanticChangeSchema(), HopDefinitionMutator.MAX_OPERATIONS),
         "native_reload_valid", bool("Whether native Hop reload validation succeeded"),
-        "backup", boundedString(4096, "Backup path or empty when not applicable"),
+        "backup", enumStr("", "protected"),
         "transaction_id", boundedString(64, "Rollback transaction ID or empty when not applied"),
         "rollback_available", bool("Whether rollback is available in this session"),
+        "expires_at", boundedString(64, "Rollback transaction expiry time in RFC 3339 format"),
+        "atomic_replace_used", bool("Whether the filesystem supported atomic replacement"),
         "semantic_event_published", bool("Whether a semantic UI event was accepted"));
   }
 
@@ -998,11 +1777,21 @@ final class HopMcpServer implements AutoCloseable {
   private static Map<String, Object> pluginRowSchema() {
     return schema(
         fields(
-            "id", boundedString(512, "Canonical Hop plugin ID"),
-            "ids", stringArray(64),
-            "name", boundedString(2048, "Plugin display name"),
-            "description", boundedString(8192, "Plugin description"),
-            "category", boundedString(1024, "Plugin category")),
+            "id",
+                boundedString(
+                    HopComponentAuthoring.MAX_PLUGIN_ID_OUTPUT_LENGTH, "Canonical Hop plugin ID"),
+            "ids",
+                arrayOf(
+                    boundedString(
+                        HopComponentAuthoring.MAX_PLUGIN_ID_VALUE_LENGTH, "Hop plugin ID"),
+                    HopComponentAuthoring.MAX_PLUGIN_IDS),
+            "name",
+                boundedString(HopComponentAuthoring.MAX_PLUGIN_NAME_LENGTH, "Plugin display name"),
+            "description",
+                boundedString(
+                    HopComponentAuthoring.MAX_PLUGIN_DESCRIPTION_LENGTH, "Plugin description"),
+            "category",
+                boundedString(HopComponentAuthoring.MAX_PLUGIN_CATEGORY_LENGTH, "Plugin category")),
         List.of("id", "ids", "name", "description", "category"));
   }
 
@@ -1090,8 +1879,7 @@ final class HopMcpServer implements AutoCloseable {
   }
 
   private static Map<String, Object> nonNegativeInteger(String d) {
-    return Map.of(
-        "type", "integer", "description", d, "minimum", 0, "maximum", ProjectFiles.MAX_SCAN_FILES);
+    return Map.of("type", "integer", "description", d, "minimum", 0, "maximum", Long.MAX_VALUE);
   }
 
   private static Map<String, Object> catalogLimit(String d) {
@@ -1115,7 +1903,7 @@ final class HopMcpServer implements AutoCloseable {
   }
 
   private static Map<String, Object> logCursor(String d) {
-    return Map.of("type", "integer", "description", d, "minimum", -1);
+    return boundedInteger(-1, Integer.MAX_VALUE, d);
   }
 
   private static Map<String, Object> stringMapSchema(String d) {
@@ -1125,7 +1913,9 @@ final class HopMcpServer implements AutoCloseable {
         "description",
         d,
         "additionalProperties",
-        Map.of("type", "string"),
+        boundedString(2048, "Header value"),
+        "propertyNames",
+        Map.of("type", "string", "maxLength", 128),
         "maxProperties",
         100);
   }
@@ -1137,18 +1927,26 @@ final class HopMcpServer implements AutoCloseable {
                 Map.entry(
                     "operation",
                     enumStr(HopSemanticCapabilities.OPERATION_NAMES.toArray(String[]::new))),
-                Map.entry("value", str("Value for set_name or set_description")),
-                Map.entry("plugin_id", str("Native Hop plugin ID for add_component")),
-                Map.entry("name", str("New transform/action name for add_component")),
+                Map.entry("value", boundedString(8192, "Value for set_name or set_description")),
+                Map.entry(
+                    "plugin_id",
+                    boundedString(
+                        HopComponentAuthoring.MAX_PLUGIN_ID_LENGTH,
+                        "Native Hop plugin ID for add_component")),
+                Map.entry(
+                    "name",
+                    boundedString(
+                        HopComponentAuthoring.MAX_COMPONENT_NAME_LENGTH,
+                        "New transform/action name for add_component")),
                 Map.entry(
                     "properties",
                     componentPropertiesSchema(
                         "Safe scalar properties returned by hop_component_schema")),
                 Map.entry("property_groups", componentPropertyGroupsSchema()),
-                Map.entry("component", str("Existing transform/action name")),
-                Map.entry("new_name", str("New transform/action name")),
-                Map.entry("from", str("Hop source component")),
-                Map.entry("to", str("Hop target component")),
+                Map.entry("component", boundedString(1024, "Existing transform/action name")),
+                Map.entry("new_name", boundedString(1024, "New transform/action name")),
+                Map.entry("from", boundedString(1024, "Hop source component")),
+                Map.entry("to", boundedString(1024, "Hop target component")),
                 Map.entry("enabled", bool("Desired hop state")),
                 Map.entry("x", coordinate("Canvas X coordinate")),
                 Map.entry("y", coordinate("Canvas Y coordinate")),
@@ -1177,9 +1975,20 @@ final class HopMcpServer implements AutoCloseable {
         "description",
         d,
         "additionalProperties",
-        Map.of("type", List.of("string", "number", "boolean")),
+        boundedScalarInputSchema(),
+        "propertyNames",
+        boundedString(HopComponentAuthoring.MAX_PLUGIN_ID_LENGTH, "Native component property key"),
         "maxProperties",
         HopComponentAuthoring.MAX_PROPERTIES);
+  }
+
+  private static Map<String, Object> boundedScalarInputSchema() {
+    return Map.of(
+        "anyOf",
+        List.of(
+            boundedString(8192, "Native component property text"),
+            Map.of("type", "number", "minimum", -1_000_000_000L, "maximum", 1_000_000_000L),
+            bool("Native component property boolean")));
   }
 
   private static Map<String, Object> componentPropertyGroupsSchema() {
@@ -1188,7 +1997,10 @@ final class HopMcpServer implements AutoCloseable {
             "type",
             "object",
             "additionalProperties",
-            Map.of("type", List.of("string", "number", "boolean")),
+            boundedScalarInputSchema(),
+            "propertyNames",
+            boundedString(
+                HopComponentAuthoring.MAX_PLUGIN_ID_LENGTH, "Native component row property key"),
             "minProperties",
             1,
             "maxProperties",
@@ -1208,6 +2020,9 @@ final class HopMcpServer implements AutoCloseable {
             HopComponentAuthoring.MAX_ROWS_PER_GROUP,
             "items",
             row),
+        "propertyNames",
+        boundedString(
+            HopComponentAuthoring.MAX_PLUGIN_ID_LENGTH, "Native component property group key"),
         "maxProperties",
         HopComponentAuthoring.MAX_PROPERTY_GROUPS);
   }
@@ -1219,7 +2034,9 @@ final class HopMcpServer implements AutoCloseable {
         "description",
         "Optional request headers; authentication headers are managed by MCP.",
         "additionalProperties",
-        Map.of("type", "string"),
+        boundedString(2048, "Request header value"),
+        "propertyNames",
+        Map.of("type", "string", "maxLength", 128),
         "maxProperties",
         32);
   }
@@ -1228,11 +2045,16 @@ final class HopMcpServer implements AutoCloseable {
     if (value == null) return Map.of();
     if (!(value instanceof Map<?, ?> map))
       throw new IllegalArgumentException("headers must be an object");
+    if (map.size() > 32) throw new IllegalArgumentException("headers cannot exceed 32 entries");
     Map<String, String> out = new LinkedHashMap<>();
     for (Map.Entry<?, ?> entry : map.entrySet()) {
       if (entry.getKey() == null || entry.getValue() == null)
         throw new IllegalArgumentException("headers cannot contain null keys or values");
-      out.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+      String key = String.valueOf(entry.getKey());
+      String headerValue = String.valueOf(entry.getValue());
+      if (key.length() > 128 || headerValue.length() > 2048)
+        throw new IllegalArgumentException("header names and values exceed their size limits");
+      out.put(key, headerValue);
     }
     return out;
   }

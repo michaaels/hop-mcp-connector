@@ -36,6 +36,16 @@ Keep `hop mcp` as the CLI command. Do not rename Java packages solely for brandi
 11. Do not weaken file-size, scan-count, result-count, input-size, operation-count, or traversal-depth bounds without a documented reason and tests.
 12. Preserve and verify Jandex plugin metadata generation.
 
+## Bounded operation contract
+
+- Keep project file reads at or below 4 MiB per file; content scans and catalog hashing are bounded to 32 MiB.
+- Project traversal is capped at 50,000 visited entries, 5,000 files, and depth 64. Keep pagination stable and preserve `count_complete`, `has_more`, and truncation signals when a scan ends early.
+- A structured page contains at most 200 results, and the combined MCP tool response is capped at 512 KiB. Do not solve response pressure by removing bounds; return a safe error asking for a smaller page or narrower query.
+- `hop_read_text` defaults to 64 KiB and allows at most 128 KiB per chunk. Redact the complete bounded file before slicing; offsets count UTF-8 bytes in that redacted view. Search must redact before matching snippets.
+- Hop Web reads at most 4 MiB and returns at most 64 KiB of redacted response body. Preserve GET/HEAD-only access, configured-base-path confinement, disabled redirects, credential handling, and response bounds.
+- Mutation backup storage is under `.hop-mcp/backups/`, is not exposed through project tools, and is capped at 32 MiB and 100 transactions. Rollback expires after one hour; expired backup files are pruned during a later mutation or expiry check. Return only a protected-backup marker, never the local path.
+- `atomic_replace_used` reports whether the filesystem supported an atomic move. Preserve the fallback, native Hop reload validation, recovery attempt, and hash-checked rollback; do not describe every filesystem write as atomic.
+
 ## New-tool completion checklist
 
 A new MCP tool is complete only when it has a stable name, concise description, strict bounded input schema, output schema where applicable, accurate annotations, a capability group, server-side authorization, bounds and redaction, unit and STDIO integration tests, documented error behavior, performance consideration, and user documentation.
@@ -56,7 +66,7 @@ For compatibility changes run:
 rtk mvn -B -P hop-2.20 clean verify
 ```
 
-For packaging changes inspect `target/hop-mcp-connector-${version}.zip`. It must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+For packaging changes inspect `target/hop-mcp-connector-${version}.zip`. It must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, include the generated Jandex index inside the plugin jar, and must not contain Hop runtime jars. The build must also produce CycloneDX SBOM files in `target/`. CI is configured for a checksum-verified clean Hop 2.19.0 install smoke and the separate Hop 2.20.0-SNAPSHOT compatibility build; describe configured coverage without asserting a run passed unless you inspected its result.
 
 Update tests when adding or changing a tool. Preserve coverage for protocol handshake, schema failures, unknown tools, error results, security bounds, package layout, and clean shutdown.
 
@@ -65,10 +75,11 @@ Update tests when adding or changing a tool. Preserve coverage for protocol hand
 - The project is independent of the Apache Software Foundation. Keep the complete Apache License 2.0 text and attribution/mark notice in source and ZIP.
 - Keep Maven, Marketplace catalog, `version.xml`, server metadata, release notes, ZIP filename, and release tag consistent.
 - Artifact and ZIP name: `hop-mcp-connector-${version}`; GitHub tag: `v${version}`.
-- Keep Marketplace minimum Hop version aligned with a verified baseline.
+- Keep Marketplace minimum Hop version aligned with the verified stable Hop 2.19.0 baseline; describe Hop 2.20.0-SNAPSHOT only as a compatibility profile.
 - Release workflows are tag-controlled and must validate tag/POM consistency; never publish solely because a commit message contains `[release]`.
+- Release gates must validate the verified package and Jandex index, retain the CycloneDX SBOM, create SHA-256 checksums, and produce archive-provenance and SBOM attestations for the release artifact. A workflow definition is not evidence of a successful run.
 - Do not push, tag, release, or publish artifacts unless the user explicitly asks.
 
 ## Semantic mutation rules
 
-Native writes must use Hop semantic objects, not arbitrary XML string replacement. Each applied mutation must provide expected SHA-256, preview, backup, atomic write, native reload validation, recovery, transaction ID, and rollback.
+Native writes must use Hop semantic objects, not arbitrary XML string replacement. Existing-definition apply requires an expected SHA-256; every write must preserve preview, protected backup where an existing file is replaced, temporary-file replacement with an atomic-move status, native reload validation, recovery attempt, transaction ID, and hash-checked rollback.

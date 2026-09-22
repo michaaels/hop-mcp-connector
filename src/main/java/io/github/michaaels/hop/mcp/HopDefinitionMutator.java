@@ -4,11 +4,13 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.apache.hop.core.variables.IVariables;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
 import org.apache.hop.pipeline.PipelineHopMeta;
@@ -31,7 +34,11 @@ import org.apache.hop.workflow.action.ActionMeta;
  */
 final class HopDefinitionMutator {
   static final int MAX_OPERATIONS = 50;
-  private static final int MAX_TRANSACTIONS = 100;
+  static final int MAX_TRANSACTIONS = 100;
+  static final long MAX_BACKUP_BYTES = 32L * 1024 * 1024;
+  static final Duration TRANSACTION_TTL = Duration.ofHours(1);
+  private static final int MAX_BACKUP_SCAN_ENTRIES = 1_000;
+  private static final String BACKUP_FILE_NAME = "definition.backup";
 
   private final ProjectFiles files;
   private final IVariables variables;
@@ -114,37 +121,58 @@ final class HopDefinitionMutator {
       return result;
     }
 
-    Path backup = null;
-    if (existed) {
-      backup =
-          target.resolveSibling(
-              target.getFileName()
-                  + ".mcp-backup-"
-                  + Instant.now().toEpochMilli()
-                  + "-"
-                  + UUID.randomUUID().toString().substring(0, 8));
-      Files.copy(target, backup, StandardCopyOption.COPY_ATTRIBUTES);
-    }
-
-    try {
-      atomicReplace(target, serialized);
-      validateFile(kind, target);
-    } catch (Exception writeFailure) {
-      rollbackFailedWrite(target, backup, existed);
+    Instant createdAt = Instant.now();
+    expireTransactions(createdAt);
+    if (transactions.size() >= MAX_TRANSACTIONS) {
       throw new IOException(
-          "Native validation failed after write; the original definition was restored",
-          writeFailure);
+          "Mutation transaction limit reached; retry after a transaction expires");
+    }
+    BackupUsage backupUsage = inspectBackupStore(createdAt);
+    if (existed && backupUsage.bytes > MAX_BACKUP_BYTES - previous.length) {
+      throw new IOException("Mutation backup storage byte limit reached");
+    }
+    if (existed && backupUsage.directories >= MAX_TRANSACTIONS) {
+      throw new IOException("Mutation backup storage transaction limit reached");
     }
 
     String transactionId = UUID.randomUUID().toString();
+    Path backup = null;
+    if (existed) {
+      backup = createBackup(transactionId, previous);
+    }
+
+    try {
+      boolean atomicReplaceUsed = atomicReplace(target, serialized);
+      validateFile(kind, target);
+      result.put("atomic_replace_used", atomicReplaceUsed);
+    } catch (Exception writeFailure) {
+      try {
+        rollbackFailedWrite(target, backup, existed, transactionId, oldHash);
+        if (backup != null) deleteBackupDirectory(transactionId);
+      } catch (Exception recoveryFailure) {
+        writeFailure.addSuppressed(recoveryFailure);
+      }
+      throw new IOException(
+          "Native validation failed after write; recovery was attempted", writeFailure);
+    }
+
     retainTransaction(
         new MutationRecord(
-            transactionId, relative, kind, target, backup, existed, oldHash, newHash));
+            transactionId,
+            relative,
+            kind,
+            target,
+            backup,
+            existed,
+            oldHash,
+            newHash,
+            createdAt.plus(TRANSACTION_TTL)));
     result.put("applied", true);
     result.put("preview", false);
-    result.put("backup", backup == null ? "" : files.relative(backup));
+    result.put("backup", backup == null ? "" : "protected");
     result.put("transaction_id", transactionId);
     result.put("rollback_available", true);
+    result.put("expires_at", createdAt.plus(TRANSACTION_TTL).toString());
     result.put(
         "semantic_event_published",
         publishEvent(
@@ -161,6 +189,7 @@ final class HopDefinitionMutator {
 
   synchronized Map<String, Object> rollback(String transactionId, String expectedSha256)
       throws Exception {
+    expireTransactions(Instant.now());
     if (transactionId == null || transactionId.isBlank()) {
       throw new IllegalArgumentException("transaction_id is required");
     }
@@ -177,33 +206,53 @@ final class HopDefinitionMutator {
     if (expectedSha256 == null
         || expectedSha256.isBlank()
         || !expectedSha256.equalsIgnoreCase(currentHash)) {
-      throw new IOException("File hash precondition failed for rollback");
+      throw McpException.precondition(
+          "ROLLBACK_STALE_SHA256",
+          "Definition changed after the mutation; refresh its SHA-256 before rollback.",
+          true);
     }
 
+    boolean atomicReplaceUsed = false;
     if (record.existed) {
-      if (record.backup == null
-          || !Files.isRegularFile(record.backup, LinkOption.NOFOLLOW_LINKS)
-          || Files.isSymbolicLink(record.backup)) {
+      if (record.backup == null || !isSafeBackupFile(record.id, record.backup)) {
         throw new IOException("Mutation backup is unavailable");
       }
-      atomicReplace(record.target, files.readBytes(record.backup));
-      validateFile(record.kind, record.target);
+      byte[] original = files.readBytes(record.backup);
+      if (!record.oldHash.equals(ProjectFiles.sha256(original))) {
+        throw new IOException("Mutation backup integrity check failed");
+      }
+      atomicReplaceUsed = atomicReplace(record.target, original);
+      try {
+        validateFile(record.kind, record.target);
+      } catch (Exception rollbackFailure) {
+        try {
+          atomicReplace(record.target, current);
+          validateFile(record.kind, record.target);
+        } catch (Exception recoveryFailure) {
+          rollbackFailure.addSuppressed(recoveryFailure);
+        }
+        throw rollbackFailure;
+      }
     } else {
-      Path tombstone =
-          Files.createTempFile(
-              record.target.getParent(), "." + record.target.getFileName() + ".rollback-", ".tmp");
-      Files.deleteIfExists(tombstone);
-      move(record.target, tombstone);
-      Files.deleteIfExists(tombstone);
+      Files.delete(record.target);
     }
 
     record.rolledBack = true;
+    if (record.backup != null) {
+      try {
+        deleteBackupDirectory(record.id);
+      } catch (IOException ignored) {
+        // A completed rollback must remain successful if only backup cleanup failed.
+      }
+    }
+    transactions.remove(transactionId);
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("transaction_id", transactionId);
     result.put("path", record.relative.replace('\\', '/'));
     result.put("rolled_back", true);
     result.put("restored_existing_file", record.existed);
     result.put("restored_sha256", record.oldHash);
+    result.put("atomic_replace_used", atomicReplaceUsed);
     result.put(
         "semantic_event_published",
         publishEvent(
@@ -236,16 +285,21 @@ final class HopDefinitionMutator {
   private static void verifyPrecondition(
       boolean existed, String oldHash, String expectedSha256, boolean apply) throws IOException {
     if (!existed && expectedSha256 != null && !expectedSha256.isBlank()) {
-      throw new IOException("expected_sha256 must be empty when creating a definition");
+      throw new IllegalArgumentException(
+          "expected_sha256 must be empty when creating a definition");
     }
     if (existed
         && expectedSha256 != null
         && !expectedSha256.isBlank()
         && !expectedSha256.equalsIgnoreCase(oldHash)) {
-      throw new IOException("File hash precondition failed");
+      throw McpException.precondition(
+          "STALE_SHA256",
+          "Definition changed since it was read; refresh its SHA-256 and retry.",
+          true);
     }
     if (apply && existed && (expectedSha256 == null || expectedSha256.isBlank())) {
-      throw new IOException("expected_sha256 is required when mutating an existing definition");
+      throw new IllegalArgumentException(
+          "expected_sha256 is required when mutating an existing definition");
     }
   }
 
@@ -305,41 +359,242 @@ final class HopDefinitionMutator {
     return inferred;
   }
 
-  private static void atomicReplace(Path target, byte[] content) throws IOException {
+  private static boolean atomicReplace(Path target, byte[] content) throws IOException {
     Path temporary =
         Files.createTempFile(target.getParent(), "." + target.getFileName() + ".mcp-", ".tmp");
     try {
       Files.write(temporary, content, StandardOpenOption.TRUNCATE_EXISTING);
-      move(temporary, target);
+      boolean atomicMoveUsed = move(temporary, target);
+      return atomicMoveUsed;
     } finally {
       Files.deleteIfExists(temporary);
     }
   }
 
-  private static void move(Path source, Path target) throws IOException {
+  private static boolean move(Path source, Path target) throws IOException {
     try {
       Files.move(
           source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+      return true;
     } catch (AtomicMoveNotSupportedException e) {
       Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+      return false;
     }
   }
 
-  private static void rollbackFailedWrite(Path target, Path backup, boolean existed)
+  private void rollbackFailedWrite(
+      Path target, Path backup, boolean existed, String transactionId, String expectedHash)
       throws IOException {
-    if (existed && backup != null && Files.exists(backup, LinkOption.NOFOLLOW_LINKS)) {
-      atomicReplace(target, Files.readAllBytes(backup));
+    if (existed && backup != null && isSafeBackupFile(transactionId, backup)) {
+      byte[] original = files.readBytes(backup);
+      if (!expectedHash.equals(ProjectFiles.sha256(original))) {
+        throw new IOException("Mutation backup integrity check failed during recovery");
+      }
+      atomicReplace(target, original);
     } else if (!existed) {
       Files.deleteIfExists(target);
+    } else {
+      throw new IOException("Mutation backup is unavailable during recovery");
     }
   }
 
   private void retainTransaction(MutationRecord record) {
-    if (transactions.size() >= MAX_TRANSACTIONS) {
-      String oldest = transactions.keySet().iterator().next();
-      transactions.remove(oldest);
-    }
     transactions.put(record.id, record);
+  }
+
+  private void expireTransactions(Instant now) {
+    var iterator = transactions.entrySet().iterator();
+    while (iterator.hasNext()) {
+      MutationRecord record = iterator.next().getValue();
+      if (!now.isBefore(record.expiresAt)) {
+        if (record.backup != null) {
+          try {
+            deleteBackupDirectory(record.id);
+          } catch (IOException ignored) {
+            // Expired transactions are no longer rollback-capable; leave unsafe state untouched.
+          }
+        }
+        iterator.remove();
+      }
+    }
+  }
+
+  private Path createBackup(String transactionId, byte[] previous) throws IOException {
+    Path directory = ensureBackupRoot().resolve(transactionId);
+    try {
+      Files.createDirectory(directory);
+    } catch (FileAlreadyExistsException e) {
+      throw new IOException("Mutation backup transaction directory already exists", e);
+    }
+    Path backup = directory.resolve(BACKUP_FILE_NAME);
+    try {
+      Files.write(backup, previous, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+      return backup;
+    } catch (IOException failure) {
+      try {
+        deleteBackupDirectory(transactionId);
+      } catch (IOException cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
+      throw failure;
+    }
+  }
+
+  private BackupUsage inspectBackupStore(Instant now) throws IOException {
+    Path root = backupRootIfPresent();
+    if (root == null) return new BackupUsage(0, 0);
+    int directories = 0;
+    long bytes = 0;
+    int scanned = 0;
+    List<String> expiredDirectories = new ArrayList<>();
+    try (Stream<Path> entries = Files.list(root)) {
+      for (Path directory : (Iterable<Path>) entries::iterator) {
+        if (++scanned > MAX_BACKUP_SCAN_ENTRIES) {
+          throw new IOException("Mutation backup storage scan limit reached");
+        }
+        String id = directory.getFileName().toString();
+        if (!isTransactionId(id)
+            || Files.isSymbolicLink(directory)
+            || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+          throw new IOException("Mutation backup storage contains malformed state");
+        }
+        Path backup = directory.resolve(BACKUP_FILE_NAME);
+        int childCount = 0;
+        try (Stream<Path> children = Files.list(directory)) {
+          for (Path child : (Iterable<Path>) children::iterator) {
+            if (++childCount > 1
+                || !child.getFileName().toString().equals(BACKUP_FILE_NAME)
+                || Files.isSymbolicLink(child)
+                || !Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
+              throw new IOException("Mutation backup storage contains malformed state");
+            }
+          }
+        }
+        if (childCount == 1) {
+          long size = Files.size(backup);
+          if (size > ProjectFiles.MAX_READ_BYTES) {
+            throw new IOException("Mutation backup storage contains an oversized backup");
+          }
+          bytes = Math.addExact(bytes, size);
+        }
+
+        MutationRecord record = transactions.get(id);
+        if (record != null && !record.rolledBack && (record.backup == null || childCount != 1)) {
+          throw new IOException("Mutation backup storage contains malformed state");
+        }
+        boolean active = record != null && !record.rolledBack && now.isBefore(record.expiresAt);
+        boolean rolledBack = record != null && record.rolledBack;
+        boolean expired =
+            !now.isBefore(
+                Files.getLastModifiedTime(directory, LinkOption.NOFOLLOW_LINKS)
+                    .toInstant()
+                    .plus(TRANSACTION_TTL));
+        if ((rolledBack || (expired && !active))) {
+          expiredDirectories.add(id);
+          if (childCount == 1) bytes -= Files.size(backup);
+          continue;
+        }
+        directories++;
+      }
+    } catch (ArithmeticException e) {
+      throw new IOException("Mutation backup storage byte count overflowed", e);
+    }
+    for (String id : expiredDirectories) deleteBackupDirectory(id);
+    if (directories > MAX_TRANSACTIONS || bytes > MAX_BACKUP_BYTES) {
+      throw new IOException("Mutation backup storage limit exceeded");
+    }
+    return new BackupUsage(directories, bytes);
+  }
+
+  private Path ensureBackupRoot() throws IOException {
+    Path control = files.root().resolve(HopLiveUiEventBroker.CONTROL_DIRECTORY);
+    ensureDirectory(control);
+    Path backups = control.resolve("backups");
+    ensureDirectory(backups);
+    return backups;
+  }
+
+  private Path backupRootIfPresent() throws IOException {
+    Path control = files.root().resolve(HopLiveUiEventBroker.CONTROL_DIRECTORY);
+    if (!Files.exists(control, LinkOption.NOFOLLOW_LINKS)) return null;
+    requireSafeDirectory(control);
+    Path backups = control.resolve("backups");
+    if (!Files.exists(backups, LinkOption.NOFOLLOW_LINKS)) return null;
+    requireSafeDirectory(backups);
+    return backups;
+  }
+
+  private static void ensureDirectory(Path directory) throws IOException {
+    if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+      try {
+        Files.createDirectory(directory);
+      } catch (FileAlreadyExistsException ignored) {
+        // Validate the concurrently created entry below.
+      }
+    }
+    requireSafeDirectory(directory);
+  }
+
+  private static void requireSafeDirectory(Path directory) throws IOException {
+    if (Files.isSymbolicLink(directory)
+        || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+      throw new IOException("Mutation backup storage path is not a safe directory");
+    }
+  }
+
+  private boolean isSafeBackupFile(String transactionId, Path backup) throws IOException {
+    if (!isTransactionId(transactionId)) return false;
+    Path root = backupRootIfPresent();
+    if (root == null) return false;
+    Path directory = root.resolve(transactionId);
+    return !Files.isSymbolicLink(directory)
+        && Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)
+        && backup.equals(directory.resolve(BACKUP_FILE_NAME))
+        && !Files.isSymbolicLink(backup)
+        && Files.isRegularFile(backup, LinkOption.NOFOLLOW_LINKS);
+  }
+
+  private void deleteBackupDirectory(String transactionId) throws IOException {
+    if (!isTransactionId(transactionId)) throw new IOException("Invalid mutation transaction id");
+    Path root = backupRootIfPresent();
+    if (root == null) return;
+    Path directory = root.resolve(transactionId);
+    if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return;
+    if (Files.isSymbolicLink(directory)
+        || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+      throw new IOException("Mutation backup transaction directory is unsafe");
+    }
+    List<Path> childrenToDelete = new ArrayList<>();
+    try (Stream<Path> children = Files.list(directory)) {
+      for (Path child : (Iterable<Path>) children::iterator) {
+        if (!child.getFileName().toString().equals(BACKUP_FILE_NAME)
+            || Files.isSymbolicLink(child)
+            || !Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
+          throw new IOException("Mutation backup transaction directory is malformed");
+        }
+        childrenToDelete.add(child);
+      }
+    }
+    for (Path child : childrenToDelete) Files.delete(child);
+    Files.deleteIfExists(directory);
+  }
+
+  private static boolean isTransactionId(String value) {
+    try {
+      return UUID.fromString(value).toString().equals(value);
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  private static final class BackupUsage {
+    private final int directories;
+    private final long bytes;
+
+    private BackupUsage(int directories, long bytes) {
+      this.directories = directories;
+      this.bytes = bytes;
+    }
   }
 
   private interface Definition {
@@ -373,7 +628,8 @@ final class HopDefinitionMutator {
         case "add_component" -> {
           String componentName = required(operation, "name");
           if (meta.findTransform(componentName, null) != null) {
-            throw new IllegalArgumentException("Transform name already exists: " + componentName);
+            throw McpException.conflict(
+                "SEMANTIC_ENTITY_EXISTS", "Transform name already exists: " + componentName);
           }
           int x = optionalCoordinate(operation, "x", 50);
           int y = optionalCoordinate(operation, "y", 50);
@@ -418,7 +674,7 @@ final class HopDefinitionMutator {
           yield change(name, "from", previous, "to", next);
         }
         case "set_description" -> {
-          meta.setDescription(stringValue(operation, "value"));
+          meta.setDescription(stringValue(operation, "value", 8192));
           yield Map.of("operation", name, "description_changed", true);
         }
         case "rename_component" -> {
@@ -428,7 +684,8 @@ final class HopDefinitionMutator {
           if (transform == null)
             throw new IllegalArgumentException("Unknown transform: " + component);
           if (meta.findTransform(next, transform) != null) {
-            throw new IllegalArgumentException("Transform name already exists: " + next);
+            throw McpException.conflict(
+                "SEMANTIC_ENTITY_EXISTS", "Transform name already exists: " + next);
           }
           transform.setName(next);
           yield change(name, "from", component, "to", next);
@@ -448,7 +705,8 @@ final class HopDefinitionMutator {
           TransformMeta toMeta = requireTransform(meta, to);
           if (fromMeta == toMeta) throw new IllegalArgumentException("A hop cannot target itself");
           if (meta.findPipelineHop(fromMeta, toMeta, true) != null) {
-            throw new IllegalArgumentException("Hop already exists: " + from + " -> " + to);
+            throw McpException.conflict(
+                "SEMANTIC_ENTITY_EXISTS", "Hop already exists: " + from + " -> " + to);
           }
           boolean enabled = optionalBoolean(operation, "enabled", true);
           meta.addPipelineHop(
@@ -517,7 +775,8 @@ final class HopDefinitionMutator {
         case "add_component" -> {
           String componentName = required(operation, "name");
           if (meta.findAction(componentName) != null) {
-            throw new IllegalArgumentException("Action name already exists: " + componentName);
+            throw McpException.conflict(
+                "SEMANTIC_ENTITY_EXISTS", "Action name already exists: " + componentName);
           }
           int x = optionalCoordinate(operation, "x", 50);
           int y = optionalCoordinate(operation, "y", 50);
@@ -561,7 +820,7 @@ final class HopDefinitionMutator {
           yield change(name, "from", previous, "to", next);
         }
         case "set_description" -> {
-          meta.setDescription(stringValue(operation, "value"));
+          meta.setDescription(stringValue(operation, "value", 8192));
           yield Map.of("operation", name, "description_changed", true);
         }
         case "rename_component" -> {
@@ -571,7 +830,8 @@ final class HopDefinitionMutator {
           if (action == null) throw new IllegalArgumentException("Unknown action: " + component);
           ActionMeta existing = meta.findAction(next);
           if (existing != null && existing != action) {
-            throw new IllegalArgumentException("Action name already exists: " + next);
+            throw McpException.conflict(
+                "SEMANTIC_ENTITY_EXISTS", "Action name already exists: " + next);
           }
           action.setName(next);
           yield change(name, "from", component, "to", next);
@@ -679,9 +939,16 @@ final class HopDefinitionMutator {
   }
 
   private static String stringValue(Map<String, Object> values, String key) {
+    return stringValue(values, key, 1024);
+  }
+
+  private static String stringValue(Map<String, Object> values, String key, int maxLength) {
     Object value = values.get(key);
     if (value == null) throw new IllegalArgumentException(key + " is required");
-    return String.valueOf(value);
+    String text = String.valueOf(value);
+    if (text.length() > maxLength)
+      throw new IllegalArgumentException(key + " cannot exceed " + maxLength + " characters");
+    return text;
   }
 
   private static boolean booleanValue(Map<String, Object> values, String key) {
@@ -756,6 +1023,8 @@ final class HopDefinitionMutator {
     @SuppressWarnings("unused")
     private final String newHash;
 
+    private final Instant expiresAt;
+
     private boolean rolledBack;
 
     private MutationRecord(
@@ -766,7 +1035,8 @@ final class HopDefinitionMutator {
         Path backup,
         boolean existed,
         String oldHash,
-        String newHash) {
+        String newHash,
+        Instant expiresAt) {
       this.id = id;
       this.relative = relative;
       this.kind = kind;
@@ -775,6 +1045,7 @@ final class HopDefinitionMutator {
       this.existed = existed;
       this.oldHash = oldHash;
       this.newHash = newHash;
+      this.expiresAt = expiresAt;
     }
   }
 }

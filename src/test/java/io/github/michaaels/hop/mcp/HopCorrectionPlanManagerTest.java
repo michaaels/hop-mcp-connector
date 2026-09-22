@@ -48,12 +48,15 @@ class HopCorrectionPlanManagerTest {
     assertEquals(true, ((Map<?, ?>) applied.get("mutation")).get("applied"));
     Map<String, Object> status = manager.status(String.valueOf(prepared.get("plan_id")));
     assertEquals(2, ((List<?>) status.get("audit")).size());
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            manager.apply(
-                String.valueOf(prepared.get("plan_id")),
-                String.valueOf(prepared.get("plan_sha256"))));
+    McpException alreadyApplied =
+        assertThrows(
+            McpException.class,
+            () ->
+                manager.apply(
+                    String.valueOf(prepared.get("plan_id")),
+                    String.valueOf(prepared.get("plan_sha256"))));
+    assertEquals("CORRECTION_PLAN_NOT_PREPARED", alreadyApplied.code());
+    assertEquals("CONFLICT", alreadyApplied.category());
   }
 
   @Test
@@ -61,9 +64,12 @@ class HopCorrectionPlanManagerTest {
     HopCorrectionPlanManager manager = manager();
     Map<String, Object> prepared = manager.prepare("digest.hwf", "workflow", workflowOperations());
 
-    assertThrows(
-        SecurityException.class,
-        () -> manager.apply(String.valueOf(prepared.get("plan_id")), "0".repeat(64)));
+    McpException mismatch =
+        assertThrows(
+            McpException.class,
+            () -> manager.apply(String.valueOf(prepared.get("plan_id")), "0".repeat(64)));
+    assertEquals("PLAN_DIGEST_MISMATCH", mismatch.code());
+    assertEquals("PRECONDITION_FAILED", mismatch.category());
     assertEquals("prepared", manager.status(String.valueOf(prepared.get("plan_id"))).get("state"));
     assertFalse(Files.exists(project.resolve("digest.hwf")));
   }
@@ -75,14 +81,18 @@ class HopCorrectionPlanManagerTest {
         manager.prepare("digest-diagnostics.hwf", "workflow", workflowOperations());
     String planId = String.valueOf(prepared.get("plan_id"));
 
-    SecurityException malformed =
-        assertThrows(SecurityException.class, () -> manager.apply(planId, "not-a-sha"));
+    McpException malformed =
+        assertThrows(McpException.class, () -> manager.apply(planId, "not-a-sha"));
+    assertEquals("INVALID_PLAN_SHA256", malformed.code());
+    assertEquals("VALIDATION", malformed.category());
     assertTrue(malformed.getMessage().contains("64 hexadecimal"));
     assertEquals("prepared", manager.status(planId).get("state"));
 
-    SecurityException mismatch =
-        assertThrows(SecurityException.class, () -> manager.apply(planId, "0".repeat(64)));
-    assertEquals("Correction plan SHA-256 does not match", mismatch.getMessage());
+    McpException mismatch =
+        assertThrows(McpException.class, () -> manager.apply(planId, "0".repeat(64)));
+    assertEquals("PLAN_DIGEST_MISMATCH", mismatch.code());
+    assertEquals("PRECONDITION_FAILED", mismatch.category());
+    assertTrue(mismatch.getMessage().contains("digest does not match"));
     assertFalse(mismatch.getMessage().contains(String.valueOf(prepared.get("plan_sha256"))));
     assertEquals("prepared", manager.status(planId).get("state"));
 

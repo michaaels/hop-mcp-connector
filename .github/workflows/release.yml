@@ -8,7 +8,13 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   release:
+    needs: verify
     permissions:
       contents: write
       id-token: write
@@ -16,41 +22,61 @@ jobs:
       artifact-metadata: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@v6
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-      - name: Read and validate Maven coordinates
+          name: hop-mcp-connector-${{ needs.verify.outputs.version }}
+          path: target
+      - name: Ensure release tag still points to the triggered commit
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$GITHUB_SHA"
+      # Repository rules must protect v* tags and main: tag events load this workflow from the tagged commit.
+      - name: Require release commit to be reachable from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "Release tags must point to a commit reachable from main" >&2
+            exit 1
+          fi
+      - name: Read and validate release coordinates
         id: maven
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          ARTIFACT: ${{ needs.verify.outputs.artifact }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import os
+          import re
           import xml.etree.ElementTree as ET
+
           root = ET.parse("pom.xml").getroot()
           ns = {"m": "http://maven.apache.org/POM/4.0.0"}
           version = root.findtext("m:version", namespaces=ns)
           artifact = root.findtext("m:artifactId", namespaces=ns)
           tag = os.environ["RELEASE_TAG"]
-          if tag != "v" + version:
-              raise SystemExit(f"Release tag {tag} does not match Maven version {version}")
-          if artifact != "hop-mcp-connector":
-              raise SystemExit(f"Unexpected release artifactId: {artifact}")
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit(f"Release tag must be vMAJOR.MINOR.PATCH: {tag}")
+          if tag != "v" + version or version != os.environ["VERSION"]:
+              raise SystemExit(f"Release tag {tag}, POM version {version}, and verified version {os.environ['VERSION']} must match")
+          if artifact != "hop-mcp-connector" or artifact != os.environ["ARTIFACT"]:
+              raise SystemExit(f"Unexpected or unverified release artifactId: {artifact}")
           print("version=" + version)
           print("artifact=" + artifact)
           PY
-          if grep -Eiq 'unreleased|pending' RELEASE_NOTES.md; then
-            echo "Release notes must describe a completed release, not pending work" >&2
+          if grep -Eiq 'unreleased|pending|prepared|not published|not released' RELEASE_NOTES.md; then
+            echo "Release notes must describe a completed release, not prepared or pending work" >&2
             exit 1
           fi
-      - name: Build and verify
-        run: mvn -B clean verify
-      - name: Validate package and generate checksum
+      - name: Validate verified Marketplace package and create checksums
         env:
           VERSION: ${{ steps.maven.outputs.version }}
           ARTIFACT: ${{ steps.maven.outputs.artifact }}
@@ -60,19 +86,26 @@ jobs:
           ZIP="target/${ARTIFACT}-${VERSION}.zip"
           ROOT="plugins/misc/${ARTIFACT}"
           test -f "$ZIP"
-          unzip -l "$ZIP" | grep -F "$ROOT/${ARTIFACT}-${VERSION}.jar"
-          unzip -l "$ZIP" | grep -F "$ROOT/LICENSE"
-          unzip -l "$ZIP" | grep -F "$ROOT/NOTICE"
-          if unzip -l "$ZIP" | grep -E "$ROOT/lib/hop-(core|engine|ui)-"; then exit 1; fi
           test -f target/bom.json
           test -f target/bom.xml
+          unzip -l "$ZIP" | grep -F "$ROOT/${ARTIFACT}-${VERSION}.jar"
+          unzip -l "$ZIP" | grep -F "$ROOT/version.xml"
+          unzip -p "$ZIP" "$ROOT/version.xml" | grep -F "<version>${VERSION}</version>"
+          unzip -l "$ZIP" | grep -F "$ROOT/LICENSE"
+          unzip -l "$ZIP" | grep -F "$ROOT/NOTICE"
+          unzip -p "$ZIP" "$ROOT/${ARTIFACT}-${VERSION}.jar" > "$RUNNER_TEMP/${ARTIFACT}-${VERSION}.jar"
+          jar tf "$RUNNER_TEMP/${ARTIFACT}-${VERSION}.jar" | grep -Fx 'META-INF/jandex.idx'
+          if unzip -l "$ZIP" | grep -E "$ROOT/lib/hop-(core|engine|ui)-"; then
+            echo "Apache Hop runtime jars must not be bundled" >&2
+            exit 1
+          fi
           sha256sum "$ZIP" target/bom.json target/bom.xml > SHA256SUMS.txt
       - name: Attest release archive provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: target/${{ steps.maven.outputs.artifact }}-${{ steps.maven.outputs.version }}.zip
       - name: Attest CycloneDX SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: target/${{ steps.maven.outputs.artifact }}-${{ steps.maven.outputs.version }}.zip
           sbom-path: target/bom.json
@@ -87,5 +120,5 @@ jobs:
           set -euo pipefail
           gh release create "$TAG" "target/${ARTIFACT}-${VERSION}.zip" \
             target/bom.json target/bom.xml SHA256SUMS.txt \
-            --target "$GITHUB_SHA" --title "MCP Connector for Apache Hop ${VERSION}" \
+            --verify-tag --title "MCP Connector for Apache Hop ${VERSION}" \
             --notes-file RELEASE_NOTES.md

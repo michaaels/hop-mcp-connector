@@ -4,6 +4,7 @@ import java.lang.reflect.Array;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,6 +39,14 @@ final class HopComponentAuthoring {
   static final int MAX_PROPERTY_VALUE_LENGTH = 8_192;
   static final int MAX_COMPONENT_NAME_LENGTH = 200;
   static final int MAX_PLUGIN_ID_LENGTH = 200;
+  static final int MAX_PLUGIN_OFFSET = 100_000;
+  static final int MAX_PLUGIN_QUERY_LENGTH = 1_024;
+  static final int MAX_PLUGIN_IDS = 64;
+  static final int MAX_PLUGIN_ID_OUTPUT_LENGTH = 512;
+  static final int MAX_PLUGIN_ID_VALUE_LENGTH = 4_096;
+  static final int MAX_PLUGIN_NAME_LENGTH = 2_048;
+  static final int MAX_PLUGIN_DESCRIPTION_LENGTH = 8_192;
+  static final int MAX_PLUGIN_CATEGORY_LENGTH = 1_024;
 
   private static final Pattern SENSITIVE_KEY =
       Pattern.compile(
@@ -72,7 +81,11 @@ final class HopComponentAuthoring {
 
   Map<String, Object> types(String requestedKind, String query, int offset, int limit) {
     Kind kind = Kind.parse(requestedKind);
-    if (offset < 0) throw new IllegalArgumentException("offset must be zero or greater");
+    if (offset < 0 || offset > MAX_PLUGIN_OFFSET)
+      throw new IllegalArgumentException("offset must be between 0 and " + MAX_PLUGIN_OFFSET);
+    if (query != null && query.length() > MAX_PLUGIN_QUERY_LENGTH)
+      throw new IllegalArgumentException(
+          "query cannot exceed " + MAX_PLUGIN_QUERY_LENGTH + " characters");
     if (limit < 1 || limit > 50)
       throw new IllegalArgumentException("limit must be between 1 and 50");
     String normalizedQuery = normalize(query);
@@ -491,6 +504,12 @@ final class HopComponentAuthoring {
       throw new IllegalArgumentException(
           "property values cannot exceed " + MAX_PROPERTY_VALUE_LENGTH + " characters");
     }
+    if (value instanceof Number number) {
+      double numericValue = number.doubleValue();
+      if (!Double.isFinite(numericValue) || Math.abs(numericValue) > 1_000_000_000D)
+        throw new IllegalArgumentException(
+            "numeric property values must be finite and within ±1,000,000,000");
+    }
     return value;
   }
 
@@ -521,12 +540,28 @@ final class HopComponentAuthoring {
   }
 
   private static Map<String, Object> pluginRow(IPlugin plugin) {
+    String[] rawIds = plugin.getIds();
+    List<String> ids =
+        rawIds == null
+            ? List.of()
+            : Arrays.stream(rawIds)
+                .limit(MAX_PLUGIN_IDS)
+                .map(id -> boundedText(safe(id), MAX_PLUGIN_ID_VALUE_LENGTH))
+                .toList();
     return Map.of(
-        "id", canonicalId(plugin),
-        "ids", List.of(plugin.getIds()),
-        "name", safe(plugin.getName()),
-        "description", safe(plugin.getDescription()),
-        "category", safe(plugin.getCategory()));
+        "id", boundedText(canonicalId(plugin), MAX_PLUGIN_ID_OUTPUT_LENGTH),
+        "ids", ids,
+        "name", boundedText(safe(plugin.getName()), MAX_PLUGIN_NAME_LENGTH),
+        "description", boundedText(safe(plugin.getDescription()), MAX_PLUGIN_DESCRIPTION_LENGTH),
+        "category", boundedText(safe(plugin.getCategory()), MAX_PLUGIN_CATEGORY_LENGTH));
+  }
+
+  private static String boundedText(String value, int maxLength) {
+    if (value.length() <= maxLength) return value;
+    int end = maxLength;
+    if (Character.isHighSurrogate(value.charAt(end - 1))
+        && Character.isLowSurrogate(value.charAt(end))) end--;
+    return value.substring(0, end);
   }
 
   private static String canonicalId(IPlugin plugin) {

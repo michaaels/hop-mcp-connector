@@ -1,5 +1,6 @@
 package io.github.michaaels.hop.mcp;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -99,7 +100,8 @@ final class HopMcpService implements AutoCloseable {
     result.put("version", HopMcpVersion.current());
     result.put("project_root", files.root().toString());
     result.put("transport", "stdio");
-    result.put("read_only", !allowMutation);
+    result.put("read_only", !(allowMutation || allowExecution || allowDeepCheck || allowWebApi));
+    result.put("definition_write_enabled", allowMutation);
     result.put("allow_deep_check", allowDeepCheck);
     result.put("allow_execution", allowExecution);
     result.put("allow_mutation", allowMutation);
@@ -156,16 +158,8 @@ final class HopMcpService implements AutoCloseable {
     return files.catalog(glob, offset, limit);
   }
 
-  Map<String, Object> listDefinitions() throws Exception {
-    List<Map<String, Object>> defs = new ArrayList<>();
-    for (Path p : files.definitions())
-      defs.add(
-          Map.of(
-              "path",
-              files.relative(p),
-              "type",
-              p.toString().toLowerCase().endsWith(".hpl") ? "pipeline" : "workflow"));
-    return Map.of("definitions", defs, "count", defs.size());
+  Map<String, Object> listDefinitions(int offset, int limit) throws Exception {
+    return files.definitionsPage(offset, limit);
   }
 
   Map<String, Object> inspect(String path) throws Exception {
@@ -191,8 +185,11 @@ final class HopMcpService implements AutoCloseable {
     return HopXml.validate(path, readDefinition(path));
   }
 
-  Map<String, Object> lineage(String path, String component, String direction, int maxDepth)
+  Map<String, Object> lineage(
+      String path, String component, String direction, int maxDepth, int maxEdges)
       throws Exception {
+    Map<String, Object> traversal =
+        HopXml.lineageBounded(readDefinition(path), component, direction, maxDepth, maxEdges);
     return Map.of(
         "path",
         path,
@@ -201,36 +198,120 @@ final class HopMcpService implements AutoCloseable {
         "direction",
         direction,
         "edges",
-        HopXml.lineage(readDefinition(path), component, direction, maxDepth));
+        traversal.get("edges"),
+        "edges_truncated",
+        traversal.get("edges_truncated"),
+        "visited_nodes",
+        traversal.get("visited_nodes"),
+        "max_depth_applied",
+        traversal.get("max_depth_applied"));
   }
 
-  Map<String, Object> readText(String path) throws Exception {
-    return Map.of("path", path, "text", files.readText(path));
+  Map<String, Object> readText(String path, long offset, int maxBytes) throws Exception {
+    ProjectFiles.validateTextChunk(offset, maxBytes);
+    Path target = files.resolve(path);
+    String relative = files.relative(target);
+    String redacted = SensitiveData.redactSensitiveText(files.readText(relative));
+    return files.textChunk(relative, redacted, offset, maxBytes);
   }
 
-  Map<String, Object> search(String query, String glob) throws Exception {
-    var r = files.search(query, glob);
-    return Map.of("query", query, "results", r, "count", r.size());
+  Map<String, Object> search(String query, String glob, int offset, int limit) throws Exception {
+    return files.search(query, glob, offset, limit);
   }
 
-  Map<String, Object> findTable(String table) throws Exception {
+  Map<String, Object> findTable(String table, int offset, int limit) throws Exception {
     if (table == null || table.isBlank()) throw new IllegalArgumentException("table is required");
+    if (offset < 0 || offset > ProjectFiles.MAX_SCAN_FILES)
+      throw new IllegalArgumentException(
+          "offset must be between 0 and " + ProjectFiles.MAX_SCAN_FILES);
+    if (limit < 1 || limit > ProjectFiles.MAX_STRUCTURED_RESULTS)
+      throw new IllegalArgumentException(
+          "limit must be between 1 and " + ProjectFiles.MAX_STRUCTURED_RESULTS);
     List<Map<String, Object>> matches = new ArrayList<>();
-    String needle = table.toLowerCase();
-    for (Path p : files.definitions()) {
-      String rel = files.relative(p), text = files.readText(rel);
-      for (String t : HopXml.findTables(text))
-        if (t.toLowerCase().contains(needle)) matches.add(Map.of("path", rel, "table", t));
-      if (matches.size() >= ProjectFiles.MAX_RESULTS) break;
+    String needle = table.toLowerCase(Locale.ROOT);
+    BoundedProjectWalker.ScanResult scan = files.definitionScan(ProjectFiles.MAX_SCAN_FILES);
+    long scannedBytes = 0;
+    int scannedFiles = 0;
+    int matched = 0;
+    boolean scanLimitReached = scan.scanLimitReached();
+    boolean resultLimitReached = false;
+    int tableWindow =
+        Math.min(
+            ProjectFiles.MAX_SCAN_FILES + ProjectFiles.MAX_STRUCTURED_RESULTS + 1,
+            offset + limit + 1);
+    searchDefinitions:
+    for (Path path : scan.files()) {
+      long size;
+      try {
+        size = java.nio.file.Files.size(path);
+      } catch (java.io.IOException | RuntimeException e) {
+        scanLimitReached = true;
+        continue;
+      }
+      if (size > ProjectFiles.MAX_READ_BYTES
+          || size > ProjectFiles.MAX_TOTAL_SCAN_BYTES - scannedBytes) {
+        scanLimitReached = true;
+        continue;
+      }
+      byte[] content;
+      try {
+        content = files.readBytes(path);
+      } catch (java.io.IOException e) {
+        scanLimitReached = true;
+        continue;
+      }
+      scannedBytes += content.length;
+      scannedFiles++;
+      String relative = files.relative(path);
+      String definition;
+      try {
+        definition =
+            StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(content))
+                .toString();
+      } catch (java.nio.charset.CharacterCodingException e) {
+        scanLimitReached = true;
+        continue;
+      }
+      for (String found : HopXml.findTables(definition, needle, tableWindow)) {
+        matched++;
+        if (matched > offset && matches.size() < limit) {
+          matches.add(Map.of("path", relative, "table", found));
+        } else if (matched > offset + limit) {
+          resultLimitReached = true;
+          break searchDefinitions;
+        }
+      }
     }
-    return Map.of("table", table, "matches", matches, "count", matches.size());
+    boolean resultsTruncated = resultLimitReached || scanLimitReached || scan.resultsTruncated();
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("table", table);
+    result.put("offset", offset);
+    result.put("limit", limit);
+    result.put("count", matched);
+    result.put("count_complete", !resultsTruncated && !scanLimitReached);
+    result.put("returned", matches.size());
+    result.put("scanned_files", scannedFiles);
+    result.put("visited_entries", scan.visitedEntries());
+    result.put("scanned_bytes", scannedBytes);
+    result.put("scan_limit_reached", scanLimitReached);
+    result.put("result_limit_reached", resultLimitReached);
+    result.put("results_truncated", resultsTruncated);
+    result.put("has_more", resultLimitReached || scanLimitReached || scan.resultsTruncated());
+    result.put("matches", matches);
+    return result;
   }
 
   Map<String, Object> dependencies(String path) throws Exception {
     String xml = readDefinition(path);
-    Set<String> refs = new LinkedHashSet<>(HopXml.references(xml));
+    Set<String> refs =
+        new LinkedHashSet<>(HopXml.references(xml, ProjectFiles.MAX_STRUCTURED_RESULTS + 1));
     List<Map<String, Object>> resolved = new ArrayList<>();
-    for (String ref : refs) {
+    boolean truncated = refs.size() > ProjectFiles.MAX_STRUCTURED_RESULTS;
+    for (String ref : refs.stream().limit(ProjectFiles.MAX_STRUCTURED_RESULTS).toList()) {
       Map<String, Object> row = new LinkedHashMap<>();
       row.put("reference", ref);
       try {
@@ -243,7 +324,19 @@ final class HopMcpService implements AutoCloseable {
       }
       resolved.add(row);
     }
-    return Map.of("path", path, "dependencies", resolved, "count", resolved.size());
+    return Map.of(
+        "path",
+        path,
+        "dependencies",
+        resolved,
+        "count",
+        refs.size(),
+        "count_complete",
+        !truncated,
+        "returned",
+        resolved.size(),
+        "truncated",
+        truncated);
   }
 
   Map<String, Object> deepCheck(String path) throws Exception {
@@ -343,7 +436,8 @@ final class HopMcpService implements AutoCloseable {
     requireExecution();
     int last = HopLogStore.getLastBufferLineNr();
     int start = from < 0 ? Math.max(0, last - 200) : from;
-    int end = to <= 0 ? last : Math.min(to, start + 500);
+    int requestedEnd = to <= 0 ? last : Math.min(to, last);
+    int end = Math.min(requestedEnd, start + ProjectFiles.MAX_LOG_EVENTS);
     if (start < 0 || end < start) throw new IllegalArgumentException("Invalid log cursor range");
     List<HopLoggingEvent> events =
         HopLogStore.getLogBufferFromTo(
@@ -352,15 +446,42 @@ final class HopMcpService implements AutoCloseable {
             start,
             end);
     List<Map<String, Object>> rows = new ArrayList<>();
+    long returnedBytes = 0;
+    boolean truncated = end < requestedEnd;
     for (HopLoggingEvent event : events) {
       Map<String, Object> row = new LinkedHashMap<>();
       row.put("timestamp", event.getTimeStamp());
       row.put("level", event.getLevel() == null ? "" : event.getLevel().getCode());
-      row.put("message", HopXml.redact(String.valueOf(event.getMessage())));
+      String message =
+          ProjectFiles.truncate(
+              SensitiveData.sanitizeExceptionMessage(String.valueOf(event.getMessage())),
+              ProjectFiles.MAX_LOG_MESSAGE_CHARS);
+      long eventBytes =
+          message.getBytes(StandardCharsets.UTF_8).length
+              + String.valueOf(row.get("level")).getBytes(StandardCharsets.UTF_8).length
+              + 64;
+      if (eventBytes > ProjectFiles.MAX_LOG_BYTES - returnedBytes)
+        throw new IllegalStateException("Log page exceeded its bounded byte budget");
+      row.put("message", message);
       rows.add(row);
+      returnedBytes += eventBytes;
     }
+    if (rows.size() < events.size()) truncated = true;
     return Map.of(
-        "from", start, "to", end, "last_line", last, "count", rows.size(), "events", rows);
+        "from",
+        start,
+        "to",
+        end,
+        "last_line",
+        last,
+        "count",
+        rows.size(),
+        "returned_bytes",
+        returnedBytes,
+        "truncated",
+        truncated,
+        "events",
+        rows);
   }
 
   Map<String, Object> capabilities() {
@@ -463,7 +584,12 @@ final class HopMcpService implements AutoCloseable {
     String code;
     boolean retryable = false;
     String message;
-    if (exception instanceof SecurityException) {
+    if (exception instanceof McpException typed) {
+      category = typed.category();
+      code = typed.code();
+      retryable = typed.retryable();
+      message = safeExceptionMessage(exception);
+    } else if (exception instanceof SecurityException) {
       category = "AUTHORIZATION";
       code = "AUTHORIZATION_DENIED";
       message = "Operation is not authorized. Enable the matching server option.";
@@ -499,7 +625,8 @@ final class HopMcpService implements AutoCloseable {
   }
 
   private String safeExceptionMessage(Exception exception) {
-    String message = HopXml.redact(String.valueOf(exception.getMessage()));
+    String message = SensitiveData.sanitizeExceptionMessage(exception);
+    if (message == null) message = "Operation failed.";
     String projectRoot = files.root().toString();
     if (!projectRoot.isBlank()) message = message.replace(projectRoot, "<project>");
     return message.length() <= 512 ? message : message.substring(0, 512);

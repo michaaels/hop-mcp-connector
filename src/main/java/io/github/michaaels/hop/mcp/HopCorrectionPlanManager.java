@@ -62,14 +62,16 @@ final class HopCorrectionPlanManager {
     plan.requirePrepared();
     String suppliedSha256 = required(planSha256, "plan_sha256").trim().toLowerCase(Locale.ROOT);
     if (!suppliedSha256.matches("[0-9a-f]{64}")) {
-      throw new SecurityException(
-          "Correction plan SHA-256 must contain exactly 64 hexadecimal characters; received_length="
-              + suppliedSha256.length());
+      throw McpException.validation(
+          "INVALID_PLAN_SHA256", "plan_sha256 must contain exactly 64 hexadecimal characters");
     }
     if (!MessageDigest.isEqual(
         plan.planSha256.getBytes(StandardCharsets.US_ASCII),
         suppliedSha256.getBytes(StandardCharsets.US_ASCII))) {
-      throw new SecurityException("Correction plan SHA-256 does not match");
+      throw McpException.precondition(
+          "PLAN_DIGEST_MISMATCH",
+          "Correction plan digest does not match; read the plan status and retry with its current digest.",
+          false);
     }
     try {
       Map<String, Object> mutation =
@@ -229,9 +231,11 @@ final class HopCorrectionPlanManager {
       this.expiresAt = expiresAt;
     }
 
-    private void requirePrepared() {
+    private void requirePrepared() throws McpException {
       if (!"prepared".equals(state)) {
-        throw new IllegalStateException("Correction plan is single-use and is already " + state);
+        throw McpException.conflict(
+            "CORRECTION_PLAN_NOT_PREPARED",
+            "Correction plan is single-use and is already " + state + "; prepare a new plan.");
       }
     }
 

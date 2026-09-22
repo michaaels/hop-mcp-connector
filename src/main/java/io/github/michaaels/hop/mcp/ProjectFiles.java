@@ -1,6 +1,10 @@
 package io.github.michaaels.hop.mcp;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -8,19 +12,33 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 final class ProjectFiles {
-  static final long MAX_READ_BYTES = 4L * 1024 * 1024;
-  static final int MAX_SCAN_FILES = 5000;
-  static final int MAX_RESULTS = 500;
+  static final long MAX_FILE_BYTES = 4L * 1024 * 1024;
+  static final int MAX_HTTP_READ_BYTES = 4 * 1024 * 1024;
+  static final long MAX_READ_BYTES = MAX_FILE_BYTES;
+  static final long MAX_REDACTED_FILE_BYTES = MAX_FILE_BYTES * 8;
+  static final long MAX_TOTAL_SCAN_BYTES = 32L * 1024 * 1024;
+  static final int MAX_RESPONSE_BYTES = 512 * 1024;
+  static final int MAX_LOG_BYTES = 256 * 1024;
+  static final int MAX_LOG_EVENTS = 50;
+  static final int MAX_LOG_MESSAGE_CHARS = 1024;
+  static final int MAX_WEB_BODY_RETURN_BYTES = 64 * 1024;
+  static final int DEFAULT_TEXT_RESPONSE_BYTES = 64 * 1024;
+  static final int MAX_TEXT_RESPONSE_BYTES = 128 * 1024;
+  static final int MAX_RESPONSE_STRING_LENGTH = 8 * 1024;
+  static final int MAX_STRUCTURED_RESULTS = 200;
+  static final int MAX_SCAN_FILES = BoundedProjectWalker.MAX_FILES_SCANNED;
+  static final int MAX_RESULTS = MAX_STRUCTURED_RESULTS;
+
+  private record BoundedRead(byte[] bytes, boolean sourceChanged) {}
+
   private final Path root;
 
   ProjectFiles(Path root) throws IOException {
@@ -35,14 +53,19 @@ final class ProjectFiles {
   }
 
   Path resolve(String relative) throws IOException {
-    if (relative == null || relative.isBlank()) throw new IOException("path is required");
+    if (relative == null || relative.isBlank())
+      throw new IllegalArgumentException("path is required");
     Path candidate = root.resolve(relative).normalize();
     rejectInternalPath(candidate);
-    if (!candidate.startsWith(root)) throw new IOException("Path escapes project root");
+    if (!candidate.startsWith(root))
+      throw McpException.security(
+          "PATH_OUTSIDE_PROJECT", "Path must remain under the configured project root.");
     if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS))
-      throw new IOException("Path not found: " + relative);
+      throw new java.nio.file.NoSuchFileException(relative);
     Path real = candidate.toRealPath();
-    if (!real.startsWith(root)) throw new IOException("Resolved path escapes project root");
+    if (!real.startsWith(root))
+      throw McpException.security(
+          "PATH_OUTSIDE_PROJECT", "Resolved path must remain under the configured project root.");
     return real;
   }
 
@@ -55,48 +78,62 @@ final class ProjectFiles {
     if (!Files.isRegularFile(p)) throw new IOException("Not a regular file: " + relative);
     long size = Files.size(p);
     if (size > MAX_READ_BYTES) throw new IOException("File exceeds read limit: " + size + " bytes");
-    return Files.readString(p, StandardCharsets.UTF_8);
+    return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(readBytes(p))).toString();
   }
 
   List<Path> definitions() throws IOException {
-    try (Stream<Path> s = Files.walk(root)) {
-      return s.filter(p -> !isInternalPath(p))
-          .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
-          .filter(
-              p -> {
-                String n = p.getFileName().toString().toLowerCase(Locale.ROOT);
-                return n.endsWith(".hpl") || n.endsWith(".hwf");
-              })
-          .limit(MAX_SCAN_FILES)
-          .sorted(Comparator.comparing(this::relative))
-          .toList();
+    return definitionScan(MAX_SCAN_FILES).files();
+  }
+
+  Map<String, Object> definitionsPage(int offset, int limit) throws IOException {
+    validatePage(offset, limit, MAX_SCAN_FILES);
+    BoundedProjectWalker.ScanResult scan = definitionScan(MAX_SCAN_FILES);
+    List<Path> paths = scan.files();
+    int from = Math.min(offset, paths.size());
+    int to = Math.min(from + limit, paths.size());
+    List<Map<String, Object>> definitions = new ArrayList<>();
+    for (Path path : paths.subList(from, to)) {
+      String relative = relative(path);
+      definitions.add(
+          Map.of(
+              "path",
+              relative,
+              "type",
+              relative.toLowerCase(Locale.ROOT).endsWith(".hpl") ? "pipeline" : "workflow"));
     }
+    boolean moreKnown = to < paths.size();
+    boolean truncated = scan.resultsTruncated() || scan.scanLimitReached() || moreKnown;
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("offset", offset);
+    result.put("limit", limit);
+    result.put("scanned", scan.scannedFiles());
+    result.put("visited", scan.visitedEntries());
+    result.put("scan_limit_reached", scan.scanLimitReached());
+    result.put("results_truncated", truncated);
+    result.put("count", paths.size());
+    result.put("count_complete", !scan.scanLimitReached() && !scan.resultsTruncated());
+    result.put("returned", definitions.size());
+    result.put("has_more", moreKnown || scan.scanLimitReached() || scan.resultsTruncated());
+    result.put("definitions", definitions);
+    return result;
   }
 
   Map<String, Object> catalog(String glob, int offset, int limit) throws IOException {
-    if (offset < 0 || offset > MAX_SCAN_FILES)
-      throw new IllegalArgumentException("offset must be between 0 and " + MAX_SCAN_FILES);
-    if (limit < 1 || limit > 200)
-      throw new IllegalArgumentException("limit must be between 1 and 200");
+    validatePage(offset, limit, MAX_SCAN_FILES);
     Pattern filter = globToPattern(glob == null || glob.isBlank() ? "**" : glob);
-    List<Path> scannedPaths;
-    try (Stream<Path> stream = Files.walk(root)) {
-      scannedPaths =
-          new ArrayList<>(
-              stream
-                  .filter(path -> !isInternalPath(path))
-                  .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                  .limit(MAX_SCAN_FILES + 1L)
-                  .toList());
-    }
-    boolean scanLimitReached = scannedPaths.size() > MAX_SCAN_FILES;
-    if (scanLimitReached) scannedPaths = new ArrayList<>(scannedPaths.subList(0, MAX_SCAN_FILES));
-    scannedPaths.sort(Comparator.comparing(this::relative));
-    List<Path> matches =
-        scannedPaths.stream().filter(path -> filter.matcher(relative(path)).matches()).toList();
+    BoundedProjectWalker.ScanResult scan =
+        BoundedProjectWalker.scan(
+            root,
+            root.resolve(HopLiveUiEventBroker.CONTROL_DIRECTORY),
+            path -> filter.matcher(relative(path)).matches(),
+            MAX_SCAN_FILES);
+    List<Path> matches = scan.files();
     int from = Math.min(offset, matches.size());
     int to = Math.min(from + limit, matches.size());
     List<Map<String, Object>> entries = new ArrayList<>();
+    long hashedBytes = 0;
+    boolean scanLimitReached = scan.scanLimitReached();
+    boolean hashBudgetExhausted = false;
     for (Path path : matches.subList(from, to)) {
       Map<String, Object> entry = new LinkedHashMap<>();
       String relative = relative(path);
@@ -108,97 +145,284 @@ final class ProjectFiles {
       entry.put(
           "last_modified_epoch_ms",
           Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis());
-      if (size <= MAX_READ_BYTES) {
-        entry.put("sha256", sha256(Files.readAllBytes(path)));
-        entry.put("hash_skipped", false);
+      if (hashBudgetExhausted) {
+        entry.put("sha256", "");
+        entry.put("hash_skipped", true);
+        entry.put("hash_skip_reason", "catalog hash scan byte limit reached");
+        scanLimitReached = true;
+      } else if (size <= MAX_READ_BYTES
+          && size <= MAX_TOTAL_SCAN_BYTES - hashedBytes
+          && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+        try {
+          BoundedRead read = readBoundedBytes(path, MAX_TOTAL_SCAN_BYTES - hashedBytes);
+          hashedBytes += read.bytes().length;
+          if (read.sourceChanged()) {
+            entry.put("sha256", "");
+            entry.put("hash_skipped", true);
+            entry.put("hash_skip_reason", "file changed during catalog scan");
+            scanLimitReached = true;
+            hashBudgetExhausted = true;
+          } else {
+            entry.put("sha256", sha256(read.bytes()));
+            entry.put("hash_skipped", false);
+            hashBudgetExhausted = hashedBytes >= MAX_TOTAL_SCAN_BYTES;
+          }
+        } catch (IOException | RuntimeException ignored) {
+          entry.put("sha256", "");
+          entry.put("hash_skipped", true);
+          entry.put("hash_skip_reason", "file changed during catalog scan");
+          scanLimitReached = true;
+          hashBudgetExhausted = true;
+        }
       } else {
         entry.put("sha256", "");
         entry.put("hash_skipped", true);
-        entry.put("hash_skip_reason", "file exceeds read limit");
+        entry.put(
+            "hash_skip_reason",
+            size > MAX_READ_BYTES
+                ? "file exceeds read limit"
+                : "catalog hash scan byte limit reached");
+        if (size <= MAX_READ_BYTES) {
+          scanLimitReached = true;
+          hashBudgetExhausted = size > MAX_TOTAL_SCAN_BYTES - hashedBytes;
+        }
       }
       entries.add(entry);
     }
+    boolean moreKnown = to < matches.size();
+    boolean resultsTruncated = scan.resultsTruncated() || scan.scanLimitReached() || moreKnown;
+    boolean countComplete = !scanLimitReached && !scan.resultsTruncated();
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("glob", glob == null || glob.isBlank() ? "**" : glob);
     result.put("offset", offset);
     result.put("limit", limit);
-    result.put("scanned", scannedPaths.size());
+    result.put("scanned", scan.scannedFiles());
+    result.put("visited", scan.visitedEntries());
     result.put("scan_limit_reached", scanLimitReached);
     result.put("count", matches.size());
+    result.put("count_complete", countComplete);
     result.put("returned", entries.size());
-    result.put("has_more", to < matches.size() || scanLimitReached);
+    result.put("scanned_bytes", hashedBytes);
+    result.put("results_truncated", resultsTruncated);
+    result.put("has_more", moreKnown || scanLimitReached || scan.resultsTruncated());
     result.put("files", entries);
     return result;
   }
 
-  List<Map<String, Object>> search(String query, String glob) throws IOException {
+  Map<String, Object> search(String query, String glob, int offset, int limit) throws IOException {
     if (query == null || query.isBlank()) throw new IOException("query is required");
+    if (query.length() > 256) throw new IllegalArgumentException("query exceeds 256 characters");
+    validatePage(offset, limit, MAX_SCAN_FILES);
     String needle = query.toLowerCase(Locale.ROOT);
     Pattern filter = globToPattern(glob == null || glob.isBlank() ? "**" : glob);
     List<Map<String, Object>> out = new ArrayList<>();
-    int[] scanned = {0};
-    try (Stream<Path> s = Files.walk(root)) {
-      for (Path p :
-          (Iterable<Path>)
-              s.filter(path -> !isInternalPath(path))
-                      .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                  ::iterator) {
-        if (++scanned[0] > MAX_SCAN_FILES || out.size() >= MAX_RESULTS) break;
-        String rel = relative(p);
-        if (!filter.matcher(rel).matches()) continue;
-        long size;
-        try {
-          size = Files.size(p);
-        } catch (IOException e) {
-          continue;
+    BoundedProjectWalker.ScanResult scan =
+        BoundedProjectWalker.scan(
+            root,
+            root.resolve(HopLiveUiEventBroker.CONTROL_DIRECTORY),
+            path -> filter.matcher(relative(path)).matches(),
+            MAX_SCAN_FILES);
+    int matched = 0;
+    int scannedFiles = 0;
+    long scannedBytes = 0;
+    boolean scanLimitReached = scan.scanLimitReached();
+    boolean resultLimitReached = false;
+    searchFiles:
+    for (Path path : scan.files()) {
+      long size;
+      try {
+        size = Files.size(path);
+      } catch (IOException | RuntimeException ignored) {
+        scanLimitReached = true;
+        continue;
+      }
+      long remainingBytes = MAX_TOTAL_SCAN_BYTES - scannedBytes;
+      if (size > MAX_READ_BYTES || size > remainingBytes) {
+        scanLimitReached = true;
+        continue;
+      }
+      scannedFiles++;
+      String relative = relative(path);
+      BoundedRead read;
+      try {
+        read = readBoundedBytes(path, remainingBytes);
+        scannedBytes += read.bytes().length;
+        if (read.sourceChanged()) {
+          scanLimitReached = true;
+          break;
         }
-        if (size > MAX_READ_BYTES) continue;
-        List<String> lines;
-        try {
-          lines = Files.readAllLines(p, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-          continue;
+      } catch (IOException | RuntimeException ignored) {
+        scanLimitReached = true;
+        break;
+      }
+      try {
+        String text =
+            StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(read.bytes()))
+                .toString();
+        text = SensitiveData.redactSensitiveText(text);
+        try (BufferedReader reader = new BufferedReader(new StringReader(text))) {
+          String line;
+          int lineNumber = 0;
+          while ((line = reader.readLine()) != null) {
+            lineNumber++;
+            if (!line.toLowerCase(Locale.ROOT).contains(needle)) continue;
+            matched++;
+            if (matched > offset && out.size() < limit) {
+              out.add(
+                  Map.of(
+                      "path",
+                      relative,
+                      "line",
+                      lineNumber,
+                      "text",
+                      truncate(SensitiveData.redactText(line), 500)));
+            } else if (matched > offset + limit) {
+              resultLimitReached = true;
+              break searchFiles;
+            }
+          }
         }
-        for (int i = 0; i < lines.size() && out.size() < MAX_RESULTS; i++) {
-          if (lines.get(i).toLowerCase(Locale.ROOT).contains(needle))
-            out.add(Map.of("path", rel, "line", i + 1, "text", truncate(lines.get(i), 500)));
-        }
+      } catch (IOException | RuntimeException ignored) {
+        scanLimitReached = true;
       }
     }
-    return out;
+    boolean resultsTruncated = resultLimitReached || scanLimitReached || scan.resultsTruncated();
+    boolean countComplete = !resultsTruncated && !scanLimitReached;
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("query", query);
+    result.put("glob", glob == null || glob.isBlank() ? "**" : glob);
+    result.put("offset", offset);
+    result.put("limit", limit);
+    result.put("count", matched);
+    result.put("count_complete", countComplete);
+    result.put("returned", out.size());
+    result.put("scanned_files", scannedFiles);
+    result.put("visited_entries", scan.visitedEntries());
+    result.put("scanned_bytes", scannedBytes);
+    result.put("scan_limit_reached", scanLimitReached);
+    result.put("result_limit_reached", resultLimitReached);
+    result.put("results_truncated", resultsTruncated);
+    result.put("has_more", resultLimitReached || scanLimitReached || scan.resultsTruncated());
+    result.put("results", out);
+    return result;
+  }
+
+  Map<String, Object> readTextChunk(String relative, long offset, int maxBytes) throws IOException {
+    validateTextChunk(offset, maxBytes);
+    return textChunk(relative, readText(relative), offset, maxBytes);
+  }
+
+  Map<String, Object> textChunk(String relative, String text, long offset, int maxBytes) {
+    validateTextChunk(offset, maxBytes);
+    byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+    long totalBytes = bytes.length;
+    if (offset > totalBytes) throw new IllegalArgumentException("offset exceeds text size");
+    int start = Math.toIntExact(offset);
+    if (start < bytes.length && (bytes[start] & 0xc0) == 0x80)
+      throw new IllegalArgumentException("offset must be a UTF-8 code point boundary");
+    int safeLength = Math.min(maxBytes, bytes.length - start);
+    if (start + safeLength < bytes.length) {
+      int boundary = start + safeLength;
+      while (boundary > start && (bytes[boundary] & 0xc0) == 0x80) boundary--;
+      if (boundary < start + safeLength && (bytes[boundary] & 0xc0) == 0xc0)
+        safeLength = boundary - start;
+    }
+    long nextOffset = offset + safeLength;
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("path", relative);
+    result.put("offset", offset);
+    result.put("returned_bytes", safeLength);
+    result.put("total_bytes", totalBytes);
+    result.put("truncated", nextOffset < totalBytes);
+    result.put("next_offset", nextOffset);
+    result.put("eof", nextOffset >= totalBytes);
+    result.put("text", new String(bytes, start, safeLength, StandardCharsets.UTF_8));
+    return result;
+  }
+
+  static void validateTextChunk(long offset, int maxBytes) {
+    if (offset < 0 || offset > MAX_REDACTED_FILE_BYTES)
+      throw new IllegalArgumentException("offset must be between 0 and " + MAX_REDACTED_FILE_BYTES);
+    if (maxBytes < 4 || maxBytes > MAX_TEXT_RESPONSE_BYTES)
+      throw new IllegalArgumentException(
+          "max_bytes must be between 4 and " + MAX_TEXT_RESPONSE_BYTES);
+  }
+
+  BoundedProjectWalker.ScanResult definitionScan(int resultLimit) throws IOException {
+    return BoundedProjectWalker.scan(
+        root,
+        root.resolve(HopLiveUiEventBroker.CONTROL_DIRECTORY),
+        path -> {
+          String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+          return name.endsWith(".hpl") || name.endsWith(".hwf");
+        },
+        resultLimit);
+  }
+
+  private static void validatePage(int offset, int limit, int maxOffset) {
+    if (offset < 0 || offset > maxOffset)
+      throw new IllegalArgumentException("offset must be between 0 and " + maxOffset);
+    if (limit < 1 || limit > MAX_STRUCTURED_RESULTS)
+      throw new IllegalArgumentException("limit must be between 1 and " + MAX_STRUCTURED_RESULTS);
   }
 
   Path resolveForWrite(String relative) throws IOException {
-    if (relative == null || relative.isBlank()) throw new IOException("path is required");
+    if (relative == null || relative.isBlank())
+      throw new IllegalArgumentException("path is required");
     Path candidate = root.resolve(relative).normalize();
     rejectInternalPath(candidate);
-    if (!candidate.startsWith(root)) throw new IOException("Path escapes project root");
+    if (!candidate.startsWith(root))
+      throw McpException.security(
+          "PATH_OUTSIDE_PROJECT", "Path must remain under the configured project root.");
     Path parent = candidate.getParent();
     if (parent == null || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS))
-      throw new IOException("Parent directory not found: " + relative);
+      throw new java.nio.file.NoSuchFileException(relative);
     Path realParent = parent.toRealPath();
     if (!realParent.startsWith(root))
-      throw new IOException("Parent directory escapes project root");
+      throw McpException.security(
+          "PATH_OUTSIDE_PROJECT", "Resolved parent must remain under the configured project root.");
     if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
       if (Files.isSymbolicLink(candidate)
           || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS))
         throw new IOException("Not a regular file: " + relative);
       Path real = candidate.toRealPath();
-      if (!real.startsWith(root)) throw new IOException("Resolved path escapes project root");
+      if (!real.startsWith(root))
+        throw McpException.security(
+            "PATH_OUTSIDE_PROJECT", "Resolved path must remain under the configured project root.");
     }
     return candidate;
   }
 
   byte[] readBytes(Path path) throws IOException {
-    long size = Files.size(path);
-    if (size > MAX_READ_BYTES) throw new IOException("File exceeds read limit: " + size + " bytes");
-    return Files.readAllBytes(path);
+    BoundedRead read = readBoundedBytes(path, MAX_FILE_BYTES);
+    if (read.sourceChanged()) throw new IOException("File changed while reading");
+    return read.bytes();
+  }
+
+  private BoundedRead readBoundedBytes(Path path, long maximumBytes) throws IOException {
+    if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+      throw new IOException("Not a regular file");
+    long maximum = Math.min(MAX_FILE_BYTES, maximumBytes);
+    if (maximum < 0) throw new IOException("Read limit must be zero or greater");
+    long sizeBefore = Files.size(path);
+    if (sizeBefore > maximum)
+      throw new IOException("File exceeds read limit: " + sizeBefore + " bytes");
+    try (InputStream stream = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
+      byte[] bytes = stream.readNBytes(Math.toIntExact(maximum));
+      long sizeAfter = Files.size(path);
+      return new BoundedRead(bytes, sizeBefore != sizeAfter || bytes.length != sizeAfter);
+    }
   }
 
   private void rejectInternalPath(Path path) throws IOException {
     if (isInternalPath(path))
-      throw new IOException(
-          "The internal .hop-mcp control directory is not accessible through MCP project tools");
+      throw McpException.security(
+          "INTERNAL_PATH_DENIED",
+          "The internal connector control directory is not accessible through project tools.");
   }
 
   private boolean isInternalPath(Path path) {
@@ -234,6 +458,18 @@ final class ProjectFiles {
   }
 
   private static Pattern globToPattern(String glob) {
+    if (glob == null || glob.length() > 256)
+      throw new IllegalArgumentException("glob must contain at most 256 characters");
+    int wildcardOperators = 0;
+    for (int i = 0; i < glob.length(); i++) {
+      char current = glob.charAt(i);
+      if (current == '?' || current == '*') {
+        wildcardOperators++;
+        if (current == '*' && i + 1 < glob.length() && glob.charAt(i + 1) == '*') i++;
+      }
+    }
+    if (wildcardOperators > 16)
+      throw new IllegalArgumentException("glob cannot contain more than 16 wildcard operators");
     StringBuilder r = new StringBuilder("^");
     for (int i = 0; i < glob.length(); i++) {
       char c = glob.charAt(i);

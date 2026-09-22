@@ -15,7 +15,7 @@ description: Independent community MCP plugin for Apache Hop, distributed throug
 plugins:
   - groupId: io.github.michaaels
     artifactId: hop-mcp-connector
-    version: "2.0.0"
+    version: "2.1.0"
     minHopVersion: "2.19.0"
     maxHopVersion: "2.20.999"
     name: MCP Connector for Apache Hop

@@ -1,6 +1,14 @@
 name: CI
 
 on:
+  workflow_call:
+    outputs:
+      version:
+        description: Maven project version produced by the verification build.
+        value: ${{ jobs.build.outputs.version }}
+      artifact:
+        description: Maven artifactId produced by the verification build.
+        value: ${{ jobs.build.outputs.artifact }}
   push:
     branches: [main]
   pull_request:
@@ -11,9 +19,14 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.maven.outputs.version }}
+      artifact: ${{ steps.maven.outputs.artifact }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: '21'
@@ -42,13 +55,18 @@ jobs:
           test -f "$ZIP"
           unzip -l "$ZIP" | grep -F "$ROOT/${ARTIFACT}-${VERSION}.jar"
           unzip -l "$ZIP" | grep -F "$ROOT/version.xml"
+          unzip -p "$ZIP" "$ROOT/version.xml" | grep -F "<version>${VERSION}</version>"
           unzip -l "$ZIP" | grep -F "$ROOT/LICENSE"
           unzip -l "$ZIP" | grep -F "$ROOT/NOTICE"
+          test -f target/bom.json
+          test -f target/bom.xml
+          unzip -p "$ZIP" "$ROOT/${ARTIFACT}-${VERSION}.jar" > "$RUNNER_TEMP/${ARTIFACT}-${VERSION}.jar"
+          jar tf "$RUNNER_TEMP/${ARTIFACT}-${VERSION}.jar" | grep -Fx 'META-INF/jandex.idx'
           if unzip -l "$ZIP" | grep -E "$ROOT/lib/hop-(core|engine|ui)-"; then
             echo "Apache Hop runtime jars must not be bundled" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hop-mcp-connector-${{ steps.maven.outputs.version }}
           path: |
@@ -60,15 +78,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
       - name: Download and verify clean Apache Hop baseline
@@ -99,8 +119,10 @@ jobs:
   hop-220-compatibility:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: '21'

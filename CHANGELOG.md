@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.0 (prepared; not released)
+
+- Bound project traversal before visiting unbounded trees: at most 50,000 entries, 5,000 files, and depth 64; bounded content scans and catalog hashing to 32 MiB.
+- Added stable offset pagination and explicit count-completeness/truncation fields to project listings and searches; capped structured pages at 200 entries and complete MCP responses at 512 KiB.
+- Redacted bounded file content before `hop_read_text` chunking and `hop_search` matching, with byte offsets defined against the UTF-8 redacted view.
+- Added typed safe error results with stable codes, categories, and retryability, and advertised bounded output schemas for 30 tools.
+- Kept mutation backups inside `.hop-mcp/backups/`, hid their paths from MCP responses, capped the store at 32 MiB and 100 transactions, and made rollback expire after one hour; expired backup files are pruned during a later mutation or expiry check. Added `atomic_replace_used` to distinguish atomic filesystem moves from the replacement fallback.
+- Limited Hop Web response reads to 4 MiB and returned redacted bodies to 64 KiB.
+- Configured CI to validate the Hop 2.19.0 archive checksum and clean-install STDIO smoke, build the 2.20.0-SNAPSHOT compatibility profile, inspect the ZIP/Jandex metadata, and produce a CycloneDX SBOM. Tag releases validate tag/POM/artifact consistency, attach checksums, and publish archive-provenance and SBOM attestations through GitHub's attestation service.
+- Updated operational and security documentation for the current protocol, bounds, backup lifecycle, release gates, and conformance-suite limitations.
+
 ## 2.0.0 - 2026-09-22
 
 - Renamed the Maven, Marketplace, plugin installation, ZIP, and MCP server identifiers to `hop-mcp-connector`.

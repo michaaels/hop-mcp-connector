@@ -35,52 +35,31 @@ final class HopNative {
   private HopNative() {}
 
   static Map<String, Object> plugins() {
-    Map<String, Object> out = new LinkedHashMap<>();
-    List<Map<String, Object>> types = new ArrayList<>();
-    PluginRegistry registry = PluginRegistry.getInstance();
-    int total = 0;
-    for (Class<? extends IPluginType> type : registry.getPluginTypes()) {
-      List<IPlugin> plugins = registry.getPlugins(type);
-      total += plugins.size();
-      List<Map<String, Object>> sample = new ArrayList<>();
-      for (IPlugin plugin : plugins) {
-        if (sample.size() >= 50) break;
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("ids", List.of(plugin.getIds()));
-        row.put("name", String.valueOf(plugin.getName()));
-        row.put("description", String.valueOf(plugin.getDescription()));
-        row.put("category", String.valueOf(plugin.getCategory()));
-        sample.add(row);
-      }
-      Map<String, Object> row = new LinkedHashMap<>();
-      row.put("type", type.getName());
-      row.put("count", plugins.size());
-      row.put("plugins", sample);
-      types.add(row);
-    }
-    out.put("plugin_registry", registry.getClass().getName());
-    out.put("plugin_type_count", types.size());
-    out.put("plugin_count", total);
-    out.put("plugin_types", types);
-    return out;
+    return plugins(null, null, 0, 50);
   }
 
   static Map<String, Object> plugins(String typeFilter, String query, int offset, int limit) {
-    if (offset < 0) throw new IllegalArgumentException("offset must be zero or greater");
+    if (offset < 0 || offset > 100_000)
+      throw new IllegalArgumentException("offset must be between 0 and 100000");
     if (limit < 1 || limit > 50)
       throw new IllegalArgumentException("limit must be between 1 and 50");
+    if (typeFilter != null && typeFilter.length() > 512)
+      throw new IllegalArgumentException("type exceeds 512 characters");
+    if (query != null && query.length() > 256)
+      throw new IllegalArgumentException("query exceeds 256 characters");
     String normalizedType =
         typeFilter == null || typeFilter.isBlank() ? null : typeFilter.toLowerCase(Locale.ROOT);
     String normalizedQuery =
         query == null || query.isBlank() ? null : query.toLowerCase(Locale.ROOT);
     PluginRegistry registry = PluginRegistry.getInstance();
+    var registeredTypes = registry.getPluginTypes();
     List<Map<String, Object>> types = new ArrayList<>();
     List<Map<String, Object>> results = new ArrayList<>();
     int total = 0, matched = 0;
-    for (Class<? extends IPluginType> type : registry.getPluginTypes()) {
+    for (Class<? extends IPluginType> type : registeredTypes) {
       List<IPlugin> registered = registry.getPlugins(type);
       total += registered.size();
-      types.add(Map.of("type", type.getName(), "count", registered.size()));
+      if (types.size() < 100) types.add(Map.of("type", type.getName(), "count", registered.size()));
       if (!matchesType(type, normalizedType)) continue;
       for (IPlugin plugin : registered) {
         if (!matchesQuery(plugin, normalizedQuery)) continue;
@@ -91,13 +70,14 @@ final class HopNative {
     }
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("plugin_registry", registry.getClass().getName());
-    out.put("plugin_type_count", types.size());
+    out.put("plugin_type_count", registeredTypes.size());
     out.put("plugin_count", total);
     out.put("matched_plugin_count", matched);
     out.put("returned_plugin_count", results.size());
     out.put("offset", offset);
     out.put("limit", limit);
-    out.put("has_more", offset + results.size() < matched);
+    out.put("has_more", (long) offset + results.size() < matched);
+    out.put("plugin_types_truncated", types.size() < registeredTypes.size());
     if (normalizedType != null) out.put("type_filter", typeFilter);
     if (normalizedQuery != null) out.put("query", query);
     out.put("plugin_types", types);
@@ -127,12 +107,22 @@ final class HopNative {
 
   private static Map<String, Object> pluginRow(String type, IPlugin plugin) {
     Map<String, Object> row = new LinkedHashMap<>();
-    row.put("type", type);
-    row.put("ids", List.of(plugin.getIds()));
-    row.put("name", String.valueOf(plugin.getName()));
-    row.put("description", String.valueOf(plugin.getDescription()));
-    row.put("category", String.valueOf(plugin.getCategory()));
+    row.put("type", boundedPluginText(type, 1024));
+    List<String> ids = new ArrayList<>();
+    if (plugin.getIds() != null)
+      for (String id : plugin.getIds()) {
+        if (ids.size() == 64) break;
+        ids.add(boundedPluginText(String.valueOf(id), 512));
+      }
+    row.put("ids", ids);
+    row.put("name", boundedPluginText(String.valueOf(plugin.getName()), 2048));
+    row.put("description", boundedPluginText(String.valueOf(plugin.getDescription()), 8192));
+    row.put("category", boundedPluginText(String.valueOf(plugin.getCategory()), 1024));
     return row;
+  }
+
+  private static String boundedPluginText(String text, int maxLength) {
+    return text.length() <= maxLength ? text : text.substring(0, maxLength - 1) + "…";
   }
 
   static Map<String, Object> deepCheck(
@@ -148,6 +138,7 @@ final class HopNative {
     } else throw new IllegalArgumentException("Deep check supports .hpl and .hwf only");
     int errors = 0, warnings = 0, comments = 0, ok = 0, none = 0;
     List<Map<String, Object>> issues = new ArrayList<>();
+    boolean issuesTruncated = false;
     for (ICheckResult r : remarks) {
       int type = r.getType();
       if (type == ICheckResult.TYPE_RESULT_ERROR) errors++;
@@ -155,8 +146,11 @@ final class HopNative {
       else if (type == ICheckResult.TYPE_RESULT_COMMENT) comments++;
       else if (type == ICheckResult.TYPE_RESULT_OK) ok++;
       else none++;
-      if (type != ICheckResult.TYPE_RESULT_OK && issues.size() < 500)
-        issues.add(Map.of("type", type, "text", HopXml.redact(String.valueOf(r.getText()))));
+      if (type != ICheckResult.TYPE_RESULT_OK) {
+        if (issues.size() < ProjectFiles.MAX_STRUCTURED_RESULTS)
+          issues.add(Map.of("type", type, "text", HopXml.redact(String.valueOf(r.getText()))));
+        else issuesTruncated = true;
+      }
     }
     return Map.of(
         "checker",
@@ -170,6 +164,8 @@ final class HopNative {
         "summary",
         Map.of(
             "errors", errors, "warnings", warnings, "comments", comments, "ok", ok, "none", none),
+        "issues_truncated",
+        issuesTruncated,
         "issues",
         issues);
   }

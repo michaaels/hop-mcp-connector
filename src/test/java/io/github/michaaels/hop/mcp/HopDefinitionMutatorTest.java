@@ -1,16 +1,23 @@
 package io.github.michaaels.hop.mcp;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.apache.hop.core.HopEnvironment;
 import org.apache.hop.core.variables.Variables;
 import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
@@ -23,6 +30,7 @@ import org.apache.hop.pipeline.transforms.injector.InjectorMeta;
 import org.apache.hop.workflow.WorkflowMeta;
 import org.apache.hop.workflow.action.ActionMeta;
 import org.apache.hop.workflow.actions.dummy.ActionDummy;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -97,7 +105,17 @@ class HopDefinitionMutatorTest {
     assertEquals(oldHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve("flow.hwf"))));
 
     Map<String, Object> applied = mutator.mutate("flow.hwf", "workflow", operations, oldHash, true);
-    assertTrue(Files.isRegularFile(project.resolve(String.valueOf(applied.get("backup")))));
+    String transactionId = String.valueOf(applied.get("transaction_id"));
+    assertEquals("protected", applied.get("backup"));
+    assertFalse(String.valueOf(applied.get("backup")).contains(".hop-mcp"));
+    Path backup = project.resolve(".hop-mcp/backups/" + transactionId + "/definition.backup");
+    assertTrue(Files.isRegularFile(backup));
+    assertArrayEquals(originalXml, Files.readAllBytes(backup));
+    assertEquals(1, files.catalog("**", 0, 200).get("count"));
+    assertTrue(((List<?>) files.search("Original workflow", "**", 0, 20).get("results")).isEmpty());
+    assertThrows(
+        IOException.class,
+        () -> files.readText(".hop-mcp/backups/" + transactionId + "/definition.backup"));
     WorkflowMeta corrected =
         new WorkflowMeta(
             Files.newInputStream(project.resolve("flow.hwf")), metadataProvider, variables);
@@ -113,6 +131,229 @@ class HopDefinitionMutatorTest {
             Files.newInputStream(project.resolve("flow.hwf")), metadataProvider, variables);
     assertEquals("Original workflow", restored.getName());
     assertEquals(oldHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve("flow.hwf"))));
+  }
+
+  @Test
+  void refusesToEvictUnexpiredRollbackBackupsAtTransactionLimit() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    WorkflowMeta original = new WorkflowMeta();
+    original.setFilename(project.resolve("bounded.hwf").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Original");
+    byte[] originalXml = original.getXml(variables).getBytes(StandardCharsets.UTF_8);
+    Files.write(project.resolve("bounded.hwf"), originalXml);
+
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+    String oldestTransaction = null;
+    String oldestPath = null;
+    String oldestSha256 = null;
+    for (int i = 0; i < HopDefinitionMutator.MAX_TRANSACTIONS; i++) {
+      String relative = "bounded-" + i + ".hwf";
+      Files.write(project.resolve(relative), originalXml);
+      Map<String, Object> applied =
+          mutator.mutate(
+              relative,
+              "workflow",
+              List.of(Map.of("operation", "set_name", "value", "Version " + i)),
+              ProjectFiles.sha256(originalXml),
+              true);
+      if (i == 0) {
+        oldestPath = relative;
+        oldestTransaction = String.valueOf(applied.get("transaction_id"));
+        oldestSha256 = String.valueOf(applied.get("new_sha256"));
+      }
+    }
+    Files.write(project.resolve("bounded-over-limit.hwf"), originalXml);
+    assertThrows(
+        IOException.class,
+        () ->
+            mutator.mutate(
+                "bounded-over-limit.hwf",
+                "workflow",
+                List.of(Map.of("operation", "set_name", "value", "Over limit")),
+                ProjectFiles.sha256(originalXml),
+                true));
+
+    mutator.rollback(oldestTransaction, oldestSha256);
+    assertArrayEquals(originalXml, Files.readAllBytes(project.resolve(oldestPath)));
+  }
+
+  @Test
+  void reclaimsExpiredOrphanedBackupDirectories() throws Exception {
+    Path directory = project.resolve(".hop-mcp/backups/" + UUID.randomUUID());
+    Files.createDirectories(directory);
+    Path backup = directory.resolve("definition.backup");
+    Files.writeString(backup, "expired backup");
+    FileTime expired =
+        FileTime.from(Instant.now().minus(HopDefinitionMutator.TRANSACTION_TTL).minusSeconds(10));
+    Files.setLastModifiedTime(directory, expired);
+
+    WorkflowMeta original = new WorkflowMeta();
+    original.setFilename(project.resolve("expire.hwf").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Before");
+    byte[] originalXml = original.getXml(new Variables()).getBytes(StandardCharsets.UTF_8);
+    Files.write(project.resolve("expire.hwf"), originalXml);
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), new Variables(), new MemoryMetadataProvider());
+
+    mutator.mutate(
+        "expire.hwf",
+        "workflow",
+        List.of(Map.of("operation", "set_name", "value", "After")),
+        ProjectFiles.sha256(originalXml),
+        true);
+
+    assertFalse(Files.exists(directory, LinkOption.NOFOLLOW_LINKS));
+  }
+
+  @Test
+  void rejectsMutationWhenBackupStorageExceedsByteLimit() throws Exception {
+    Path root = project.resolve(".hop-mcp/backups");
+    long bytesPerBackup = ProjectFiles.MAX_READ_BYTES - 1;
+    int backupCount = (int) (HopDefinitionMutator.MAX_BACKUP_BYTES / bytesPerBackup);
+    for (int i = 0; i < backupCount; i++) {
+      Path directory = Files.createDirectories(root.resolve(UUID.randomUUID().toString()));
+      Path backup = directory.resolve("definition.backup");
+      try (RandomAccessFile backupFile = new RandomAccessFile(backup.toFile(), "rw")) {
+        backupFile.setLength(bytesPerBackup);
+      }
+    }
+
+    WorkflowMeta original = new WorkflowMeta();
+    original.setFilename(project.resolve("byte-limit.hwf").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Before");
+    byte[] originalXml = original.getXml(new Variables()).getBytes(StandardCharsets.UTF_8);
+    Path target = project.resolve("byte-limit.hwf");
+    Files.write(target, originalXml);
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), new Variables(), new MemoryMetadataProvider());
+
+    IOException failure =
+        assertThrows(
+            IOException.class,
+            () ->
+                mutator.mutate(
+                    "byte-limit.hwf",
+                    "workflow",
+                    List.of(Map.of("operation", "set_name", "value", "After")),
+                    ProjectFiles.sha256(originalXml),
+                    true));
+
+    assertTrue(failure.getMessage().contains("byte limit"));
+    assertArrayEquals(originalXml, Files.readAllBytes(target));
+  }
+
+  @Test
+  void rejectsMalformedBackupStateWithoutChangingDefinition() throws Exception {
+    Files.createDirectories(project.resolve(".hop-mcp/backups/not-a-transaction"));
+    WorkflowMeta original = new WorkflowMeta();
+    original.setFilename(project.resolve("malformed.hwf").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Before");
+    byte[] originalXml = original.getXml(new Variables()).getBytes(StandardCharsets.UTF_8);
+    Path target = project.resolve("malformed.hwf");
+    Files.write(target, originalXml);
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), new Variables(), new MemoryMetadataProvider());
+
+    IOException failure =
+        assertThrows(
+            IOException.class,
+            () ->
+                mutator.mutate(
+                    "malformed.hwf",
+                    "workflow",
+                    List.of(Map.of("operation", "set_name", "value", "After")),
+                    ProjectFiles.sha256(originalXml),
+                    true));
+
+    assertTrue(failure.getMessage().contains("malformed state"));
+    assertArrayEquals(originalXml, Files.readAllBytes(target));
+  }
+
+  @Test
+  void refusesToRestoreCorruptedBackupContents() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    WorkflowMeta original = new WorkflowMeta();
+    original.setFilename(project.resolve("corrupted-backup.hwf").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Before");
+    byte[] originalXml = original.getXml(variables).getBytes(StandardCharsets.UTF_8);
+    Path target = project.resolve("corrupted-backup.hwf");
+    Files.write(target, originalXml);
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+    Map<String, Object> applied =
+        mutator.mutate(
+            "corrupted-backup.hwf",
+            "workflow",
+            List.of(Map.of("operation", "set_name", "value", "After")),
+            ProjectFiles.sha256(originalXml),
+            true);
+    Path backup =
+        project.resolve(
+            ".hop-mcp/backups/"
+                + String.valueOf(applied.get("transaction_id"))
+                + "/definition.backup");
+    Files.writeString(backup, "tampered backup");
+    byte[] mutatedXml = Files.readAllBytes(target);
+
+    IOException failure =
+        assertThrows(
+            IOException.class,
+            () ->
+                mutator.rollback(
+                    String.valueOf(applied.get("transaction_id")),
+                    String.valueOf(applied.get("new_sha256"))));
+
+    assertTrue(failure.getMessage().contains("integrity"));
+    assertArrayEquals(mutatedXml, Files.readAllBytes(target));
+  }
+
+  @Test
+  void rejectsSymbolicLinkBackupRoot() throws Exception {
+    Path control = Files.createDirectories(project.resolve(".hop-mcp"));
+    Path outside = Files.createDirectory(project.resolve("outside"));
+    Path backupRoot = control.resolve("backups");
+    try {
+      Files.createSymbolicLink(backupRoot, outside);
+    } catch (IOException | UnsupportedOperationException | SecurityException e) {
+      Assumptions.assumeTrue(false, "Symbolic links are unavailable: " + e.getMessage());
+      return;
+    }
+
+    WorkflowMeta original = new WorkflowMeta();
+    original.setFilename(project.resolve("symlink.hwf").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Before");
+    byte[] originalXml = original.getXml(new Variables()).getBytes(StandardCharsets.UTF_8);
+    Path target = project.resolve("symlink.hwf");
+    Files.write(target, originalXml);
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), new Variables(), new MemoryMetadataProvider());
+
+    assertThrows(
+        IOException.class,
+        () ->
+            mutator.mutate(
+                "symlink.hwf",
+                "workflow",
+                List.of(Map.of("operation", "set_name", "value", "After")),
+                ProjectFiles.sha256(originalXml),
+                true));
+    assertArrayEquals(originalXml, Files.readAllBytes(target));
+    try (var files = Files.list(outside)) {
+      assertTrue(files.findAny().isEmpty());
+    }
   }
 
   @Test

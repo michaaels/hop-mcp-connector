@@ -21,13 +21,15 @@ The plugin uses Hop's `@HopCommand`, plugin registry, `PipelineMeta`, `WorkflowM
 
 - Read-only project catalog, search, definition inspection, lineage, dependency analysis, and structural validation.
 - Optional native Hop deep checks, local execution, semantic authoring/mutation, and Hop Web GET/HEAD access. Each requires a separate explicit server flag.
-- Transactional semantic mutation with preview, SHA-256 preconditions, backup, atomic replacement, native reload validation, automatic recovery, and explicit rollback.
+- Transactional semantic mutation with preview, SHA-256 preconditions, protected backups, temporary-file replacement, native reload validation, automatic recovery, and explicit rollback. The result reports whether the filesystem supported an atomic move.
 - Bounded inputs, scans, results, execution and logs; project-root confinement; secure XML parsing; sensitive-data redaction.
 - Optional Hop Desktop and Hop Web live synchronization, explicitly started from the UI and without a network listener.
 
 ## Security defaults
 
 Inspection and structural validation are available by default. Deep checks, execution, authoring/mutation, and Hop Web tools are omitted from `tools/list` unless their respective flags are enabled. The service layer also checks authorization before deep checks, execution, writes, and web requests.
+
+In `hop_config`, `read_only` is true only when all four opt-in groups are disabled. Enabling deep checks, execution, or read-only Hop Web access also makes it false; use `definition_write_enabled` and the individual `allow_*` fields to identify which capability is authorized.
 
 ```text
 hop mcp --root <project>
@@ -50,12 +52,13 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 | Connector | Apache Hop | Java | MCP Java SDK | MCP revision |
 |---|---|---:|---:|---|
 | 2.0.0 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| 2.1.0 (prepared) | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 
-The MCP Java SDK 2.0.1 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the current stable compile baseline. The `hop-2.20` profile has been verified against the 2.20.0-SNAPSHOT line. CI downloads the checksum-verified Hop baseline, installs the Marketplace ZIP into a clean distribution, and exercises `hop mcp` over STDIO. Installation through the published Hop Marketplace catalog requires post-release verification.
+The MCP Java SDK 2.0.1 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Installation
 
-Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. The 2.0.0 artifact is `target/hop-mcp-connector-2.0.0.zip`; SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
+Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. The prepared 2.1.0 artifact is `target/hop-mcp-connector-2.1.0.zip`; SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
 
 Hop runtime libraries (`hop-core`, `hop-engine`, and `hop-ui`) are provided by Hop and are not included in the ZIP. The ZIP includes the project license and notice.
 
@@ -83,7 +86,17 @@ Add only the authorization flags required for the intended workflow.
 | Execute | `hop_test_definition`, `hop_execute`, `hop_start_execution`, `hop_execution_status`, `hop_stop_execution`, `hop_logs` | `--allow-execution`; the optional deep-check phase also requires `--allow-deep-check` |
 | Web | `hop_web_request` | `--allow-web-api` |
 
-Tools carry MCP annotations as client hints, not authorization. Strict bounded success and error output schemas are defined for `hop_config`, `hop_capabilities`, `hop_validate`, `hop_inspect`, `hop_catalog`, `hop_component_types`, `hop_component_schema`, `hop_execute`, `hop_execution_status`, `hop_mutate_definition`, and `hop_prepare_correction_plan`. Other tools still need output schemas. Results include both `structuredContent` and JSON `TextContent` for compatibility with clients that only consume text content, as recommended by MCP for backward compatibility.
+Tools carry MCP annotations as client hints, not authorization. Strict bounded success and error output schemas are advertised for 30 tools: `hop_config`, `hop_capabilities`, `hop_live_ui_status`, `hop_context`, `hop_validate`, `hop_inspect`, `hop_catalog`, `hop_list_definitions`, `hop_read_text`, `hop_search`, `hop_find_table`, `hop_dependencies`, `hop_component`, `hop_component_lineage`, `hop_plugins`, `hop_component_types`, `hop_component_schema`, `hop_execute`, `hop_start_execution`, `hop_stop_execution`, `hop_execution_status`, `hop_deep_check`, `hop_test_definition`, `hop_logs`, `hop_web_request`, `hop_mutate_definition`, `hop_prepare_correction_plan`, `hop_apply_correction_plan`, `hop_correction_plan_status`, and `hop_rollback_mutation`. Other tools still return bounded JSON-compatible results but do not advertise an output schema. Tool failures use an error object with `code`, `category`, `message`, and `retryable`; messages are sanitized. Successful results include both `structuredContent` and JSON `TextContent` for clients that consume text content.
+
+## Bounds, pagination, and errors
+
+Project file reads are limited to 4 MiB per file. Project scans stop at 50,000 visited entries, 5,000 scanned files, or depth 64; content scans and catalog hashing also have a 32 MiB byte budget. Structured pages contain at most 200 rows and the complete tool response is limited to 512 KiB. Results include count-completeness and truncation indicators where applicable, so `count` may describe only the bounded scan. The internal `.hop-mcp/` directory is excluded from project tools.
+
+`hop_read_text` returns at most 128 KiB per call (64 KiB by default). Its offsets and byte counts refer to the UTF-8 redacted text view, so callers can request the next chunk without splitting a secret at a chunk boundary. Search redacts file content before matching and returning snippets. Hop Web reads at most 4 MiB and returns at most 64 KiB of response body after redaction.
+
+Applied mutation transactions are retained in the current MCP session for up to one hour, with a limit of 100 transactions and 32 MiB of protected backups. Existing definitions are backed up beneath `.hop-mcp/backups/`; MCP responses return `backup: "protected"`, not the local backup path. The server first attempts an atomic filesystem move. `atomic_replace_used` reports whether that move succeeded; when the filesystem does not support it, the server uses its replacement fallback and still reloads the written definition through Hop, attempting recovery if validation fails. Rollback requires the transaction ID and the current definition SHA-256.
+
+Error categories are `VALIDATION`, `AUTHORIZATION`, `NOT_FOUND`, `CONFLICT`, `PRECONDITION_FAILED`, `TIMEOUT`, `EXECUTION`, `UNSUPPORTED`, `SECURITY`, and `INTERNAL`. A stale SHA-256 is a retryable precondition failure; a semantic entity that already exists is a conflict. Error categories are machine-readable, while tool annotations remain advisory hints.
 
 ## Semantic authoring and execution
 
@@ -102,13 +115,15 @@ mvn -B clean verify
 mvn -B -P hop-2.20 clean verify
 ```
 
-The STDIO integration test covers initialization, the 2025-11-25 handshake, `notifications/initialized`, tool discovery, consecutive calls, schema errors, unknown tools, handler failures, EOF, and real responses from the read-only tools and mutation previews. With execution explicitly enabled, it also calls `hop_component_schema`, `hop_execute`, and `hop_execution_status` against Apache Hop's local pipeline engine. The test validates actual `structuredContent` from all eleven tools with advertised output schemas using the MCP SDK JSON Schema validator. The clean-install CI smoke additionally starts Hop 2.19.0 with this ZIP installed and calls `hop_config` and `hop_validate`. The official MCP Conformance Suite is not wired into CI. Its current runner tests Streamable HTTP, while production transport here is STDIO; its `2025-11-25` required scenarios also include prompts, resources, completion, logging, sampling, elicitation, and SSE, which this tools-only STDIO server does not advertise. The Java SDK reference fixture also uses conformance-specific tools and resources. An HTTP adapter alone would not satisfy those scenarios, so no conformance pass is claimed.
+The STDIO integration tests cover initialization, the 2025-11-25 handshake, `notifications/initialized`, tool discovery, consecutive calls, schema errors, unknown tools, handler failures, EOF, enabled execution, mutation and rollback, and the correction-plan lifecycle. They validate actual results for all 30 advertised output schemas with the MCP SDK JSON Schema validator, and use a local HTTP fixture for the web response and redaction path. CI is configured to install the plugin into a clean Hop 2.19.0 distribution and exercise `hop_config` and `hop_validate`, then build separately against 2.20.0-SNAPSHOT. The official MCP Conformance Suite is not wired into CI. Its current runner tests Streamable HTTP, while production transport here is STDIO; its `2025-11-25` required scenarios also include prompts, resources, completion, logging, sampling, elicitation, and SSE, which this tools-only STDIO server does not advertise. The Java SDK reference fixture also uses conformance-specific tools and resources. An HTTP adapter alone would not satisfy those scenarios, so no conformance pass is claimed.
+
+The CI workflow also checks the Marketplace ZIP layout, license and notice files, Jandex index, and absence of bundled Hop runtime jars, and produces a CycloneDX SBOM. Tag-triggered releases validate the `vMAJOR.MINOR.PATCH` tag against the POM and verified artifact, generate SHA-256 checksums, and publish provenance and SBOM attestations for the release ZIP through GitHub's attestation service. The GitHub Release receives the ZIP, SBOM files, and checksum list. Workflow configuration is not itself evidence that a particular run succeeded.
 
 ## Registry metadata
 
 No official MCP Registry `server.json` is included: the registry's current package types do not include Apache Hop Marketplace ZIPs. MCPB is a separate package format and is not used to label this Marketplace artifact.
 
-Inspect the generated package with `unzip -l target/hop-mcp-connector-2.0.0.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+Inspect the generated package with `unzip -l target/hop-mcp-connector-2.1.0.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
 
 ## Security reporting
 

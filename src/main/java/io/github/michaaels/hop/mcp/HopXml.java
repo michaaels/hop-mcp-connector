@@ -21,22 +21,16 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 final class HopXml {
+  static final int MAX_COMPONENT_CONFIG_DEPTH = 16;
+  static final int MAX_COMPONENT_CONFIG_PROPERTIES = 128;
+  static final int MAX_COMPONENT_CONFIG_VALUES = 100;
+  static final int MAX_COMPONENT_CONFIG_TEXT_LENGTH = 1024;
+  private static final int MAX_COMPONENT_CONFIG_ENTRIES = 2_000;
+  private static final int MAX_COMPONENT_CONFIG_TEXT_BUDGET = 64 * 1024;
   private static final Pattern TABLE =
       Pattern.compile(
           "(?i)\\b(?:from|join|update|into|delete\\s+from|merge\\s+into)\\s+([`\"\\[\\]A-Za-z0-9_.$#-]+)");
   private static final Pattern REF = Pattern.compile("(?i)([^\\s\"'<>]+\\.(?:hpl|hwf))");
-  private static final Set<String> SECRET_NAMES =
-      Set.of(
-          "password",
-          "passwd",
-          "pwd",
-          "token",
-          "secret",
-          "client_secret",
-          "api_key",
-          "apikey",
-          "access_key",
-          "private_key");
 
   private HopXml() {}
 
@@ -113,7 +107,9 @@ final class HopXml {
           out.put("path", path);
           out.put("name", wanted);
           out.put("kind", tag);
-          out.put("config", elementMap(e));
+          ConfigBudget budget = new ConfigBudget();
+          out.put("config", elementMap(e, 0, budget));
+          out.put("config_truncated", budget.truncated);
           out.put("tables", findTables(searchable));
           out.put("references", references(searchable));
           return out;
@@ -173,25 +169,49 @@ final class HopXml {
 
   static List<Map<String, Object>> lineage(String xml, String start, String direction, int maxDepth)
       throws Exception {
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> edges =
+        (List<Map<String, Object>>)
+            lineageBounded(xml, start, direction, maxDepth, 500).get("edges");
+    return edges;
+  }
+
+  static Map<String, Object> lineageBounded(
+      String xml, String start, String direction, int maxDepth, int maxEdges) throws Exception {
     Document d = parse(xml);
-    List<Map<String, Object>> hs = hops(d.getDocumentElement());
     if (start == null || start.isBlank())
       throw new IllegalArgumentException("component is required");
     boolean upstream = "upstream".equalsIgnoreCase(direction);
+    int depth = Math.max(1, Math.min(maxDepth, 50));
+    int edgeLimit = Math.max(1, Math.min(maxEdges, 500));
+    int maxGraphEdges = 10_000;
+    List<Map<String, Object>> graphEdges = hops(d.getDocumentElement(), maxGraphEdges + 1);
+    boolean graphTruncated = graphEdges.size() > maxGraphEdges;
+    if (graphTruncated) graphEdges = graphEdges.subList(0, maxGraphEdges);
+    Map<String, List<Map<String, Object>>> adjacency = new LinkedHashMap<>();
+    for (Map<String, Object> hop : graphEdges) {
+      String key = String.valueOf(hop.get(upstream ? "to" : "from"));
+      adjacency.computeIfAbsent(key, ignored -> new ArrayList<>()).add(hop);
+    }
     List<Map<String, Object>> result = new ArrayList<>();
     Set<String> seen = new HashSet<>();
     ArrayDeque<Map.Entry<String, Integer>> q = new ArrayDeque<>();
     q.add(Map.entry(start, 0));
     seen.add(start);
-    int depth = Math.max(1, Math.min(maxDepth, 50));
+    int visitedNodes = 0;
+    boolean edgesTruncated = false;
+    traversal:
     while (!q.isEmpty()) {
       var cur = q.remove();
+      visitedNodes++;
       if (cur.getValue() >= depth) continue;
-      for (Map<String, Object> h : hs) {
+      for (Map<String, Object> h : adjacency.getOrDefault(cur.getKey(), List.of())) {
+        if (result.size() == edgeLimit) {
+          edgesTruncated = true;
+          break traversal;
+        }
         String from = String.valueOf(h.get("from"));
         String to = String.valueOf(h.get("to"));
-        boolean match = upstream ? to.equals(cur.getKey()) : from.equals(cur.getKey());
-        if (!match) continue;
         String next = upstream ? from : to;
         Map<String, Object> row = new LinkedHashMap<>(h);
         row.put("depth", cur.getValue() + 1);
@@ -199,31 +219,42 @@ final class HopXml {
         if (seen.add(next)) q.add(Map.entry(next, cur.getValue() + 1));
       }
     }
-    return result;
+    Map<String, Object> response = new LinkedHashMap<>();
+    response.put("edges", result);
+    response.put("edges_truncated", edgesTruncated || graphTruncated);
+    response.put("visited_nodes", visitedNodes);
+    response.put("max_depth_applied", depth);
+    return response;
   }
 
   static Set<String> findTables(String text) {
+    return findTables(text, null, ProjectFiles.MAX_RESULTS);
+  }
+
+  static Set<String> findTables(String text, String query, int maxItems) {
     LinkedHashSet<String> out = new LinkedHashSet<>();
     Matcher m = TABLE.matcher(text == null ? "" : text);
-    while (m.find() && out.size() < ProjectFiles.MAX_RESULTS) out.add(cleanIdentifier(m.group(1)));
+    String needle = query == null ? null : query.toLowerCase(Locale.ROOT);
+    while (m.find() && out.size() < maxItems) {
+      String table = cleanIdentifier(m.group(1));
+      if (needle == null || table.toLowerCase(Locale.ROOT).contains(needle)) out.add(table);
+    }
     return out;
   }
 
   static Set<String> references(String text) {
+    return references(text, ProjectFiles.MAX_RESULTS);
+  }
+
+  static Set<String> references(String text, int maxItems) {
     LinkedHashSet<String> out = new LinkedHashSet<>();
     Matcher m = REF.matcher(text == null ? "" : text);
-    while (m.find() && out.size() < ProjectFiles.MAX_RESULTS) out.add(m.group(1));
+    while (m.find() && out.size() < maxItems) out.add(m.group(1));
     return out;
   }
 
   static String redact(String text) {
-    if (text == null || text.isBlank()) return text;
-    String redacted =
-        text.replaceAll(
-            "(?i)(authorization\\s*[:=]\\s*(?:bearer|basic)\\s+)[^\\s,;]+", "$1***REDACTED***");
-    return redacted.replaceAll(
-        "(?i)([\\\"']?(?:password|passwd|pwd|token|secret|client[_-]?secret|api[_-]?key|apikey|access[_-]?key|private[_-]?key)[\\\"']?\\s*[=:]\\s*)(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;}\\]]+)",
-        "$1\"***REDACTED***\"");
+    return SensitiveData.redactText(text);
   }
 
   private static List<Map<String, Object>> hops(Element root) {
@@ -249,28 +280,75 @@ final class HopXml {
     return out;
   }
 
-  private static Map<String, Object> elementMap(Element e) {
+  private static Map<String, Object> elementMap(Element e, int depth, ConfigBudget budget) {
     Map<String, Object> out = new LinkedHashMap<>();
     Map<String, List<Object>> tmp = new LinkedHashMap<>();
     NodeList children = e.getChildNodes();
     for (int i = 0; i < children.getLength(); i++) {
       Node n = children.item(i);
       if (n.getNodeType() != Node.ELEMENT_NODE) continue;
+      if (budget.entries >= MAX_COMPONENT_CONFIG_ENTRIES) {
+        budget.truncated = true;
+        break;
+      }
       Element c = (Element) n;
-      String key = c.getTagName();
+      String rawKey = c.getTagName();
+      String key = boundedConfigText(rawKey, budget, 256);
+      if (key == null) break;
+      if (!tmp.containsKey(key) && tmp.size() >= MAX_COMPONENT_CONFIG_PROPERTIES) {
+        budget.truncated = true;
+        break;
+      }
+      List<Object> values = tmp.computeIfAbsent(key, ignored -> new ArrayList<>());
+      if (values.size() >= MAX_COMPONENT_CONFIG_VALUES) {
+        budget.truncated = true;
+        continue;
+      }
+      budget.entries++;
       Object value;
-      if (isSecretName(key)) value = "***REDACTED***";
-      else if (hasElementChildren(c)) value = elementMap(c);
-      else
-        value =
-            ProjectFiles.truncate(
-                c.getTextContent() == null ? "" : c.getTextContent().trim(), 4000);
-      tmp.computeIfAbsent(key, k -> new ArrayList<>()).add(value);
+      if (isSecretName(rawKey))
+        value = boundedConfigText("***REDACTED***", budget, MAX_COMPONENT_CONFIG_TEXT_LENGTH);
+      else if (hasElementChildren(c) && depth < MAX_COMPONENT_CONFIG_DEPTH)
+        value = elementMap(c, depth + 1, budget);
+      else if (hasElementChildren(c)) {
+        budget.truncated = true;
+        value = boundedConfigText("[TRUNCATED]", budget, MAX_COMPONENT_CONFIG_TEXT_LENGTH);
+      } else {
+        String text = c.getTextContent() == null ? "" : c.getTextContent().trim();
+        value = boundedConfigText(text, budget, MAX_COMPONENT_CONFIG_TEXT_LENGTH);
+      }
+      if (value == null) {
+        budget.truncated = true;
+        break;
+      }
+      values.add(value);
     }
     for (var en : tmp.entrySet()) {
       out.put(en.getKey(), en.getValue().size() == 1 ? en.getValue().get(0) : en.getValue());
     }
     return out;
+  }
+
+  private static String boundedConfigText(String text, ConfigBudget budget, int maxLength) {
+    int allowed = Math.min(maxLength, budget.remainingChars);
+    if (allowed <= 0) return null;
+    String bounded = text;
+    if (text.length() > allowed) {
+      int end = allowed - 1;
+      if (end > 0
+          && Character.isHighSurrogate(text.charAt(end - 1))
+          && Character.isLowSurrogate(text.charAt(end))) end--;
+      bounded = text.substring(0, end) + "…";
+    }
+    budget.remainingChars -= bounded.length();
+    if (bounded.length() < text.length()) budget.truncated = true;
+    return bounded;
+  }
+
+  private static final class ConfigBudget {
+    private int entries;
+    private int remainingChars = MAX_COMPONENT_CONFIG_TEXT_BUDGET;
+    private boolean truncated;
   }
 
   private static String searchableText(Element e) {
@@ -303,15 +381,7 @@ final class HopXml {
   }
 
   private static boolean isSecretName(String key) {
-    String s = key.toLowerCase(Locale.ROOT);
-    return SECRET_NAMES.contains(s)
-        || s.contains("password")
-        || s.endsWith("token")
-        || s.endsWith("secret")
-        || s.contains("api_key")
-        || s.contains("apikey")
-        || s.contains("access_key")
-        || s.contains("private_key");
+    return SensitiveData.isSensitiveKey(key);
   }
 
   private static String definitionName(Element root, String path) {

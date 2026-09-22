@@ -18,8 +18,11 @@ import java.util.Set;
 
 /** A bounded, read-only client for a configured Apache Hop Web base URL. */
 final class HopWebClient {
-  static final int MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+  static final int MAX_HTTP_READ_BYTES = ProjectFiles.MAX_HTTP_READ_BYTES;
+  static final int MAX_RESPONSE_READ_BYTES = MAX_HTTP_READ_BYTES;
+  static final int MAX_WEB_BODY_RETURN_BYTES = ProjectFiles.MAX_WEB_BODY_RETURN_BYTES;
   private static final int MAX_HEADERS = 32;
+  private static final int MAX_RESPONSE_HEADER_VALUE_BYTES = 1024;
   private static final Set<String> ALLOWED_METHODS = Set.of("GET", "HEAD");
   private static final Set<String> BLOCKED_HEADERS =
       Set.of("authorization", "cookie", "host", "content-length", "proxy-authorization");
@@ -68,12 +71,16 @@ final class HopWebClient {
         String name = entry.getKey();
         if (name == null
             || name.isBlank()
-            || BLOCKED_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
+            || name.length() > 128
+            || BLOCKED_HEADERS.contains(name.toLowerCase(Locale.ROOT))
+            || SensitiveData.isSensitiveKey(name)) {
           throw new IllegalArgumentException("REST request contains a forbidden header");
         }
         if (entry.getValue() == null) {
           throw new IllegalArgumentException("REST request contains a null header value");
         }
+        if (entry.getValue().length() > 2048)
+          throw new IllegalArgumentException("REST header value exceeds 2048 characters");
         builder.header(name, entry.getValue());
       }
     }
@@ -90,9 +97,12 @@ final class HopWebClient {
       output.put("status", response.statusCode());
       output.put("ok", response.statusCode() >= 200 && response.statusCode() < 300);
       output.put("headers", responseHeaders(response.headers().map()));
-      output.put("body", HopXml.redact(body.text()));
+      BoundedText returnedBody =
+          truncateUtf8(SensitiveData.redactSensitiveText(body.text()), MAX_WEB_BODY_RETURN_BYTES);
+      output.put("body", returnedBody.text());
       output.put("body_bytes", body.bytes());
-      output.put("body_truncated", body.truncated());
+      output.put("returned_bytes", returnedBody.bytes());
+      output.put("body_truncated", body.truncated() || returnedBody.truncated());
       return output;
     }
   }
@@ -116,6 +126,8 @@ final class HopWebClient {
     if (path == null || path.isBlank()) {
       throw new IllegalArgumentException("REST path is required");
     }
+    if (path.length() > 2048)
+      throw new IllegalArgumentException("REST path exceeds 2048 characters");
     URI requested;
     try {
       requested = URI.create(path.trim());
@@ -126,12 +138,29 @@ final class HopWebClient {
       throw new IllegalArgumentException(
           "REST path must be relative and cannot contain a fragment");
     }
+    if (requested.getRawAuthority() != null) {
+      throw new IllegalArgumentException("REST path cannot contain an authority");
+    }
+    String rawRequestedPath = requested.getRawPath();
+    if (rawRequestedPath != null) {
+      String lowerRawPath = rawRequestedPath.toLowerCase(Locale.ROOT);
+      if (lowerRawPath.contains("%2e")
+          || lowerRawPath.contains("%2f")
+          || lowerRawPath.contains("%5c")) {
+        throw new IllegalArgumentException(
+            "REST path contains an encoded traversal segment or separator");
+      }
+    }
     String requestedPath = requested.getPath();
     if (requestedPath == null || requestedPath.isBlank()) {
       requestedPath = "/";
     }
-    if (requestedPath.toLowerCase(Locale.ROOT).contains("%2e")) {
-      throw new IllegalArgumentException("REST path contains an encoded traversal segment");
+    String lowerRequestedPath = requestedPath.toLowerCase(Locale.ROOT);
+    if (lowerRequestedPath.contains("%2e")
+        || lowerRequestedPath.contains("%2f")
+        || lowerRequestedPath.contains("%5c")) {
+      throw new IllegalArgumentException(
+          "REST path contains an encoded traversal segment or separator");
     }
     String basePath = baseUri.getPath();
     String suffix = requestedPath.startsWith("/") ? requestedPath.substring(1) : requestedPath;
@@ -217,40 +246,77 @@ final class HopWebClient {
       String lower = key.toLowerCase(Locale.ROOT);
       output.put(
           key,
-          isSensitiveResponseHeader(lower)
-              ? "[REDACTED]"
-              : HopXml.redact(String.join(", ", entry.getValue())));
+          isSensitiveResponseHeader(lower) ? "[REDACTED]" : responseHeaderValue(entry.getValue()));
     }
     return output;
   }
 
+  private static String responseHeaderValue(List<String> values) {
+    StringBuilder output = new StringBuilder();
+    int outputBytes = 0;
+    int valueCount = 0;
+    boolean firstValue = true;
+    for (String value : values) {
+      if (value == null || ++valueCount > MAX_HEADERS) {
+        return "[TRUNCATED]";
+      }
+      BoundedText boundedValue = truncateUtf8(value, MAX_RESPONSE_HEADER_VALUE_BYTES);
+      if (boundedValue.truncated()) {
+        return "[TRUNCATED]";
+      }
+      String redactedValue = HopXml.redact(boundedValue.text());
+      int separatorBytes = firstValue ? 0 : 2;
+      BoundedText boundedRedacted =
+          truncateUtf8(
+              redactedValue, MAX_RESPONSE_HEADER_VALUE_BYTES - outputBytes - separatorBytes);
+      if (boundedRedacted.truncated()) {
+        return "[TRUNCATED]";
+      }
+      if (separatorBytes > 0) {
+        output.append(", ");
+      }
+      output.append(redactedValue);
+      outputBytes += separatorBytes + boundedRedacted.bytes();
+      firstValue = false;
+    }
+    return output.toString();
+  }
+
   private static boolean isSensitiveResponseHeader(String lower) {
-    String normalized = lower.replace("-", "").replace("_", "");
-    return SENSITIVE_RESPONSE_HEADERS.contains(lower)
-        || normalized.contains("token")
-        || normalized.contains("secret")
-        || normalized.contains("password")
-        || normalized.contains("passwd")
-        || normalized.contains("apikey")
-        || normalized.contains("accesskey")
-        || normalized.contains("privatekey");
+    return SENSITIVE_RESPONSE_HEADERS.contains(lower) || SensitiveData.isSensitiveKey(lower);
   }
 
   private static ReadResult readResponse(InputStream input) throws IOException {
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     byte[] buffer = new byte[8192];
     int total = 0;
-    while (total < MAX_RESPONSE_BYTES) {
-      int count = input.read(buffer, 0, Math.min(buffer.length, MAX_RESPONSE_BYTES - total));
+    while (total < MAX_RESPONSE_READ_BYTES) {
+      int count = input.read(buffer, 0, Math.min(buffer.length, MAX_RESPONSE_READ_BYTES - total));
       if (count < 0) {
         return new ReadResult(output.toString(StandardCharsets.UTF_8), total, false);
       }
       output.write(buffer, 0, count);
       total += count;
     }
-    // Stop reading immediately at the bound. This may report truncation when a response is exactly
-    // 4 MiB, but it prevents an unbounded or slow response from holding the MCP request open.
+    // Stop at the network bound; a response ending exactly there is conservatively marked
+    // truncated.
     return new ReadResult(output.toString(StandardCharsets.UTF_8), total, true);
+  }
+
+  private static BoundedText truncateUtf8(String text, int maxBytes) {
+    int end = 0;
+    int bytes = 0;
+    while (end < text.length()) {
+      int codePoint = text.codePointAt(end);
+      int codePointBytes =
+          codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+      if (bytes + codePointBytes > maxBytes) {
+        return new BoundedText(text.substring(0, end), true, bytes);
+      }
+      bytes += codePointBytes;
+      end += Character.charCount(codePoint);
+    }
+    return new BoundedText(text, false, bytes);
   }
 
   private static String publicUrl(URI uri) {
@@ -270,4 +336,6 @@ final class HopWebClient {
   }
 
   private record ReadResult(String text, int bytes, boolean truncated) {}
+
+  private record BoundedText(String text, boolean truncated, int bytes) {}
 }
