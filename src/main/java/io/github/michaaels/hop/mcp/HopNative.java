@@ -343,7 +343,7 @@ final class HopNative {
   private static ExecutorService executionExecutor() {
     return Executors.newSingleThreadExecutor(
         runnable -> {
-          Thread thread = new Thread(runnable, "apache-hop-mcp-execution");
+          Thread thread = new Thread(runnable, "hop-mcp-connector-execution");
           thread.setDaemon(true);
           return thread;
         });

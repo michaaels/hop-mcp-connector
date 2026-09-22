@@ -116,7 +116,7 @@ class HopDefinitionMutatorTest {
   }
 
   @Test
-  void serviceRequiresExplicitOptInForExecutionAndAppliedMutation() throws Exception {
+  void serviceRequiresExplicitOptInForExecutionAndAuthoring() throws Exception {
     Files.writeString(project.resolve("flow.hpl"), "<pipeline/>");
     HopMcpService service = new HopMcpService(new ProjectFiles(project), null, null, false);
     try {
@@ -124,11 +124,16 @@ class HopDefinitionMutatorTest {
           SecurityException.class, () -> service.execute("flow.hpl", "local", Map.of(), 30));
       assertThrows(
           SecurityException.class,
+          () -> service.testDefinition("flow.hpl", false, false, "local", Map.of(), 30));
+      assertThrows(
+          SecurityException.class,
           () -> service.testDefinition("flow.hpl", false, true, "local", Map.of(), 30));
       assertThrows(
           SecurityException.class,
           () -> service.testDefinition("flow.hpl", true, false, "local", Map.of(), 30));
       assertThrows(SecurityException.class, () -> service.logs(null, true, -1, 0));
+      assertThrows(SecurityException.class, () -> service.componentTypes("pipeline", "", 0, 10));
+      assertThrows(SecurityException.class, () -> service.componentSchema("pipeline", "Dummy"));
       assertThrows(
           SecurityException.class,
           () ->
@@ -138,6 +143,23 @@ class HopDefinitionMutatorTest {
                   List.of(Map.of("operation", "set_name", "value", "Changed")),
                   ProjectFiles.sha256(Files.readAllBytes(project.resolve("flow.hpl"))),
                   true));
+      assertThrows(
+          SecurityException.class,
+          () ->
+              service.mutateDefinition(
+                  "flow.hpl",
+                  "pipeline",
+                  List.of(Map.of("operation", "set_name", "value", "Changed")),
+                  ProjectFiles.sha256(Files.readAllBytes(project.resolve("flow.hpl"))),
+                  false));
+      assertThrows(
+          SecurityException.class,
+          () ->
+              service.prepareCorrectionPlan(
+                  "flow.hpl",
+                  "pipeline",
+                  List.of(Map.of("operation", "set_name", "value", "Changed"))));
+      assertThrows(SecurityException.class, () -> service.correctionPlanStatus("missing-plan"));
     } finally {
       service.close();
     }
@@ -246,7 +268,7 @@ class HopDefinitionMutatorTest {
   void reportsSemanticCapabilitiesAndHopCompatibility() {
     Map<String, Object> capabilities = HopSemanticCapabilities.describe(true, false);
 
-    assertEquals("Apache Hop Native Semantic MCP", capabilities.get("product"));
+    assertEquals("MCP Connector for Apache Hop", capabilities.get("product"));
     assertEquals(List.of("pipeline", "workflow"), capabilities.get("definition_kinds"));
     assertTrue(((List<?>) capabilities.get("semantic_operations")).size() >= 8);
     assertEquals(List.of("2.19.0", "2.20.0-SNAPSHOT"), capabilities.get("tested_hop_versions"));

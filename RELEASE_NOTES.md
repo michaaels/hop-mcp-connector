@@ -1,16 +1,12 @@
-# Apache Hop MCP 1.0.0 — Native semantic MCP
+# MCP Connector for Apache Hop 2.0.0 (unreleased)
 
-Apache Hop MCP 1.0.0 is the first stable release of the native-Java semantic MCP for Apache Hop.
+This draft describes the current development branch. It is not a published release.
 
-- Runs directly in the Apache Hop JVM on Java 21 with MCP Java SDK 2.0.1 over STDIO.
-- Inspects projects, definitions, components, dependencies, lineage and plugin metadata with bounded results and secret redaction.
-- Validates definitions and optionally runs Apache Hop deep checks and local execution through independent, explicit authorization flags.
-- Authors pipelines and workflows through native Hop semantic objects and the plugin registry rather than arbitrary XML replacement.
-- Supports reviewable, SHA-256-bound correction plans and transactional mutation with preview, backup, atomic replacement, native reload validation and rollback.
-- Supports optional Desktop and Hop Web live synchronization while protecting dirty tabs and keeping the bridge project-local.
-- Protects the full MCP initialization handshake and consecutive tool calls with an in-process STDIO integration test.
-- Preserves project-root confinement, hardened XML parsing, bounded execution and traversal, and sensitive-data redaction.
-- Builds against Apache Hop 2.19.0 and is compatibility-tested against the current Apache Hop 2.20.0-SNAPSHOT line.
-- Publishes the Marketplace artifact as `apache-hop-mcp-1.0.0.zip` under GitHub tag `v1.0.0` after all release gates pass.
+- The Maven and Marketplace artifact is `io.github.michaaels:hop-mcp-connector`; the ZIP is named `hop-mcp-connector-${version}.zip`.
+- The displayed product name is **MCP Connector for Apache Hop**, an independent community project.
+- The MCP Java SDK remains 2.0.1 and the declared MCP protocol baseline is 2025-11-25 over STDIO.
+- Deep-check, execution, mutation/authoring, and Hop Web tools are hidden until their matching server-side opt-in is enabled.
+- Tool annotations are supplied as client hints; authorization remains server-side.
+- Applied mutation continues to use native Hop objects and the existing transactional safeguards.
 
-This is a community project, not an official Apache Software Foundation release.
+Strict bounded output schemas are implemented for eleven tools, and the STDIO integration test validates each schema against actual tool output. It exercises native component-schema discovery, synchronous pipeline execution, and asynchronous execution status through Apache Hop's local engine with execution explicitly enabled. Schemas for the remaining tools are pending. A clean Hop 2.19.0 installation from the Marketplace ZIP passed locally and is added to CI; install through a published Hop Marketplace repository remains untested. The official MCP Conformance Suite has not passed or been run. Do not publish this release until these gaps are closed or their disposition is explicitly accepted.

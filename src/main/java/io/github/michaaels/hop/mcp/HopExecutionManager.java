@@ -21,7 +21,7 @@ final class HopExecutionManager implements AutoCloseable {
       Executors.newFixedThreadPool(
           MAX_ACTIVE_EXECUTIONS,
           runnable -> {
-            Thread thread = new Thread(runnable, "apache-hop-mcp-async-execution");
+            Thread thread = new Thread(runnable, "hop-mcp-connector-async-execution");
             thread.setDaemon(true);
             return thread;
           });

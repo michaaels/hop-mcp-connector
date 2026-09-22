@@ -68,7 +68,7 @@ final class HopXml {
     String componentTag = type.equals("pipeline") ? "transform" : "action";
     List<Map<String, Object>> components = new ArrayList<>();
     NodeList cs = root.getElementsByTagName(componentTag);
-    for (int i = 0; i < cs.getLength(); i++) {
+    for (int i = 0; i < cs.getLength() && components.size() < ProjectFiles.MAX_RESULTS; i++) {
       Element e = (Element) cs.item(i);
       String name = childText(e, "name");
       if (name == null || name.isBlank()) continue;
@@ -80,7 +80,8 @@ final class HopXml {
       c.put("tag", componentTag);
       components.add(c);
     }
-    List<Map<String, Object>> hops = hops(root);
+    NodeList hopNodes = root.getElementsByTagName("hop");
+    List<Map<String, Object>> hops = hops(root, ProjectFiles.MAX_RESULTS);
     String searchable = searchableText(root);
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("path", path);
@@ -88,6 +89,8 @@ final class HopXml {
     out.put("name", definitionName(root, path));
     out.put("components", components);
     out.put("hops", hops);
+    out.put("components_truncated", cs.getLength() > ProjectFiles.MAX_RESULTS);
+    out.put("hops_truncated", hopNodes.getLength() > ProjectFiles.MAX_RESULTS);
     out.put("component_count", components.size());
     out.put("hop_count", hops.size());
     out.put("tables", findTables(searchable));
@@ -125,6 +128,7 @@ final class HopXml {
     Element root = d.getDocumentElement();
     List<String> errors = new ArrayList<>();
     List<String> warnings = new ArrayList<>();
+    boolean diagnosticsTruncated = false;
     String type =
         root.getTagName().toLowerCase(Locale.ROOT).contains("workflow") ? "workflow" : "pipeline";
     String tag = type.equals("pipeline") ? "transform" : "action";
@@ -132,14 +136,25 @@ final class HopXml {
     NodeList list = root.getElementsByTagName(tag);
     for (int i = 0; i < list.getLength(); i++) {
       String n = childText((Element) list.item(i), "name");
-      if (n == null || n.isBlank()) warnings.add(tag + " without name");
-      else if (!names.add(n)) errors.add("Duplicate component name: " + n);
+      if (n == null || n.isBlank()) {
+        if (warnings.size() < ProjectFiles.MAX_RESULTS) warnings.add(tag + " without name");
+        else diagnosticsTruncated = true;
+      } else if (!names.add(n)) {
+        if (errors.size() < ProjectFiles.MAX_RESULTS) errors.add("Duplicate component name: " + n);
+        else diagnosticsTruncated = true;
+      }
     }
     for (Map<String, Object> h : hops(root)) {
       String from = String.valueOf(h.getOrDefault("from", ""));
       String to = String.valueOf(h.getOrDefault("to", ""));
-      if (!names.contains(from)) errors.add("Hop source not found: " + from);
-      if (!names.contains(to)) errors.add("Hop target not found: " + to);
+      if (!names.contains(from)) {
+        if (errors.size() < ProjectFiles.MAX_RESULTS) errors.add("Hop source not found: " + from);
+        else diagnosticsTruncated = true;
+      }
+      if (!names.contains(to)) {
+        if (errors.size() < ProjectFiles.MAX_RESULTS) errors.add("Hop target not found: " + to);
+        else diagnosticsTruncated = true;
+      }
     }
     return Map.of(
         "path",
@@ -151,7 +166,9 @@ final class HopXml {
         "errors",
         errors,
         "warnings",
-        warnings);
+        warnings,
+        "diagnostics_truncated",
+        diagnosticsTruncated);
   }
 
   static List<Map<String, Object>> lineage(String xml, String start, String direction, int maxDepth)
@@ -210,9 +227,13 @@ final class HopXml {
   }
 
   private static List<Map<String, Object>> hops(Element root) {
+    return hops(root, Integer.MAX_VALUE);
+  }
+
+  private static List<Map<String, Object>> hops(Element root, int maxItems) {
     List<Map<String, Object>> out = new ArrayList<>();
     NodeList list = root.getElementsByTagName("hop");
-    for (int i = 0; i < list.getLength(); i++) {
+    for (int i = 0; i < list.getLength() && out.size() < maxItems; i++) {
       Element e = (Element) list.item(i);
       String from = childText(e, "from");
       String to = childText(e, "to");

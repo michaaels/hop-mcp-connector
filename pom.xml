@@ -2,11 +2,11 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.michaaels</groupId>
-  <artifactId>apache-hop-mcp</artifactId>
-  <version>1.0.0</version>
-  <name>Apache Hop MCP</name>
-  <description>Community MCP server plugin for Apache Hop 2.19.x</description>
-  <url>https://github.com/michaaels/apache-hop-mcp</url>
+  <artifactId>hop-mcp-connector</artifactId>
+  <version>2.0.0</version>
+  <name>MCP Connector for Apache Hop</name>
+  <description>Independent community MCP plugin for Apache Hop 2.19.x</description>
+  <url>https://github.com/michaaels/hop-mcp-connector</url>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -44,6 +44,7 @@
     <plugin><groupId>com.spotify.fmt</groupId><artifactId>fmt-maven-plugin</artifactId><version>2.25</version><executions><execution><id>check-java-format</id><phase>verify</phase><goals><goal>check</goal></goals></execution></executions></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.3</version><configuration><useModulePath>false</useModulePath><systemPropertyVariables><project.version>${project.version}</project.version></systemPropertyVariables></configuration></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-assembly-plugin</artifactId><version>3.7.1</version><configuration><descriptors><descriptor>src/assembly/marketplace.xml</descriptor></descriptors><appendAssemblyId>false</appendAssemblyId><finalName>${project.artifactId}-${project.version}</finalName></configuration><executions><execution><id>marketplace-zip</id><phase>package</phase><goals><goal>single</goal></goals></execution></executions></plugin>
+    <plugin><groupId>org.cyclonedx</groupId><artifactId>cyclonedx-maven-plugin</artifactId><version>2.9.2</version><executions><execution><id>generate-sbom</id><phase>package</phase><goals><goal>makeAggregateBom</goal></goals></execution></executions></plugin>
     </plugins>
   </build>
 
@@ -51,6 +52,14 @@
     <profile>
       <id>hop-2.20</id>
       <properties><hop.version>2.20.0-SNAPSHOT</hop.version></properties>
+      <repositories>
+        <repository>
+          <id>apache-hop-snapshots-https</id>
+          <url>https://repository.apache.org/content/repositories/snapshots</url>
+          <releases><enabled>false</enabled></releases>
+          <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+      </repositories>
     </profile>
   </profiles>
 </project>

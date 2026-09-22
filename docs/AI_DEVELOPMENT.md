@@ -2,18 +2,18 @@
 
 ## Codex CLI / local
 
-Prerequisites: Java 21 and Maven 3.6.3+.
+Prerequisites: Java 21 and Apache Maven 3.9+.
 
 ```bash
-java -version
-mvn -version
-mvn -B clean verify
+rtk java -version
+rtk mvn -version
+rtk mvn -B clean verify
 ```
 
-For an integration smoke test, install the generated ZIP into a disposable Apache Hop 2.19.x client, restart Hop, and run:
+For an integration smoke test, install the generated ZIP into a disposable Apache Hop installation, restart Hop, and run:
 
 ```bash
-./hop mcp --help
+rtk ./hop mcp --help
 ```
 
 Then configure an MCP client to launch `hop mcp --root <fixture-project>` over STDIO.
@@ -25,8 +25,8 @@ The default Cloud task should build/test source without requiring a locally inst
 Expected setup:
 
 ```bash
-mvn -B -DskipTests dependency:go-offline
-mvn -B clean verify
+rtk mvn -B -DskipTests dependency:go-offline
+rtk mvn -B clean verify
 ```
 
 If network policy prevents Maven resolution, report that limitation rather than replacing Hop APIs with guessed stubs in production source.
@@ -49,7 +49,7 @@ MCP JSON-RPC owns stdout. Capture the original stdout for the MCP transport and 
 `mvn package` must produce a ZIP rooted at the Hop installation layout:
 
 ```text
-plugins/misc/apache-hop-mcp/
+plugins/misc/hop-mcp-connector/
 ```
 
 Runtime third-party MCP libraries go into the plugin `lib/` folder. Hop libraries remain `provided`.

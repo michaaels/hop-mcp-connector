@@ -12,27 +12,98 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
       - name: Verify
         run: mvn -B clean verify
+      - name: Read Maven coordinates
+        id: maven
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import xml.etree.ElementTree as ET
+          root = ET.parse("pom.xml").getroot()
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          print("version=" + root.findtext("m:version", namespaces=ns))
+          print("artifact=" + root.findtext("m:artifactId", namespaces=ns))
+          PY
       - name: Validate Marketplace ZIP
+        env:
+          VERSION: ${{ steps.maven.outputs.version }}
+          ARTIFACT: ${{ steps.maven.outputs.artifact }}
         shell: bash
         run: |
           set -euo pipefail
-          ZIP="target/apache-hop-mcp-1.0.0.zip"
+          ZIP="target/${ARTIFACT}-${VERSION}.zip"
+          ROOT="plugins/misc/${ARTIFACT}"
           test -f "$ZIP"
-          unzip -l "$ZIP" | grep 'plugins/misc/apache-hop-mcp/apache-hop-mcp-1.0.0.jar'
-          unzip -l "$ZIP" | grep 'plugins/misc/apache-hop-mcp/version.xml'
-          if unzip -l "$ZIP" | grep -E 'plugins/misc/apache-hop-mcp/lib/hop-(core|engine|ui)-'; then
+          unzip -l "$ZIP" | grep -F "$ROOT/${ARTIFACT}-${VERSION}.jar"
+          unzip -l "$ZIP" | grep -F "$ROOT/version.xml"
+          unzip -l "$ZIP" | grep -F "$ROOT/LICENSE"
+          unzip -l "$ZIP" | grep -F "$ROOT/NOTICE"
+          if unzip -l "$ZIP" | grep -E "$ROOT/lib/hop-(core|engine|ui)-"; then
             echo "Apache Hop runtime jars must not be bundled" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: apache-hop-mcp-1.0.0
-          path: target/apache-hop-mcp-1.0.0.zip
+          name: hop-mcp-connector-${{ steps.maven.outputs.version }}
+          path: |
+            target/${{ steps.maven.outputs.artifact }}-${{ steps.maven.outputs.version }}.zip
+            target/bom.json
+            target/bom.xml
+
+  hop-219-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Download and verify clean Apache Hop baseline
+        run: |
+          set -euo pipefail
+          read -r HOP_VERSION ARTIFACT VERSION < <(python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("pom.xml").getroot()
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          print(root.findtext("m:properties/m:hop.version", namespaces=ns),
+                root.findtext("m:artifactId", namespaces=ns),
+                root.findtext("m:version", namespaces=ns))
+          PY
+          )
+          ZIP_PATH=$(find "$GITHUB_WORKSPACE/artifacts" -name "$ARTIFACT-$VERSION.zip" -print -quit)
+          test -n "$ZIP_PATH"
+          cd "$RUNNER_TEMP"
+          HOP_ARCHIVE="apache-hop-client-$HOP_VERSION.zip"
+          curl -fL --retry 3 "https://downloads.apache.org/hop/$HOP_VERSION/$HOP_ARCHIVE" -o "$HOP_ARCHIVE"
+          curl -fL --retry 3 "https://downloads.apache.org/hop/$HOP_VERSION/$HOP_ARCHIVE.sha512" -o "$HOP_ARCHIVE.sha512"
+          sha512sum -c "$HOP_ARCHIVE.sha512"
+          mkdir hop-runtime
+          unzip -q "$HOP_ARCHIVE" -d hop-runtime
+          unzip -q "$ZIP_PATH" -d hop-runtime/hop
+      - name: Exercise installed plugin in a clean Hop process
+        run: node scripts/ci/hop-smoke.mjs --hop-dir "$RUNNER_TEMP/hop-runtime/hop" --project "$RUNNER_TEMP/hop-smoke-project" --config-dir "$RUNNER_TEMP/hop-config"
+
+  hop-220-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify against the Apache Hop 2.20 snapshot line
+        run: mvn -B -P hop-2.20 clean verify

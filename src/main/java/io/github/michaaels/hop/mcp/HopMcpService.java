@@ -111,6 +111,29 @@ final class HopMcpService implements AutoCloseable {
     return result;
   }
 
+  boolean isToolEnabled(String name) {
+    return switch (name) {
+      case "hop_deep_check" -> allowDeepCheck;
+      case "hop_test_definition",
+              "hop_execute",
+              "hop_start_execution",
+              "hop_execution_status",
+              "hop_stop_execution",
+              "hop_logs" ->
+          allowExecution;
+      case "hop_component_types",
+              "hop_component_schema",
+              "hop_prepare_correction_plan",
+              "hop_apply_correction_plan",
+              "hop_correction_plan_status",
+              "hop_mutate_definition",
+              "hop_rollback_mutation" ->
+          allowMutation;
+      case "hop_web_request" -> allowWebApi;
+      default -> true;
+    };
+  }
+
   Map<String, Object> plugins() {
     return HopNative.plugins();
   }
@@ -120,10 +143,12 @@ final class HopMcpService implements AutoCloseable {
   }
 
   Map<String, Object> componentTypes(String kind, String query, int offset, int limit) {
+    requireMutation();
     return componentAuthoring.types(kind, query, offset, limit);
   }
 
   Map<String, Object> componentSchema(String kind, String pluginId) throws Exception {
+    requireMutation();
     return componentAuthoring.schema(kind, pluginId);
   }
 
@@ -236,12 +261,11 @@ final class HopMcpService implements AutoCloseable {
       Map<String, String> parameters,
       int timeoutSeconds)
       throws Exception {
+    requireExecution();
     if (requestDeepCheck && !allowDeepCheck) {
       throw new SecurityException(
           "Deep check disabled. Restart with --allow-deep-check; it may access configured external systems.");
     }
-    if (requestExecution) requireExecution();
-
     Map<String, Object> structural = validate(path);
     Map<String, Object> deep = null;
     Map<String, Object> execution = null;
@@ -354,31 +378,35 @@ final class HopMcpService implements AutoCloseable {
       String expectedSha256,
       boolean apply)
       throws Exception {
-    if (apply && !allowMutation)
-      throw new SecurityException("Native mutation disabled. Restart with --allow-mutation.");
+    requireMutation();
     return definitionMutator.mutate(path, kind, operations, expectedSha256, apply);
   }
 
   Map<String, Object> prepareCorrectionPlan(
       String path, String kind, List<Map<String, Object>> operations) throws Exception {
+    requireMutation();
     return correctionPlans.prepare(path, kind, operations);
   }
 
   Map<String, Object> applyCorrectionPlan(String planId, String planSha256) throws Exception {
-    if (!allowMutation)
-      throw new SecurityException("Native mutation disabled. Restart with --allow-mutation.");
+    requireMutation();
     return correctionPlans.apply(planId, planSha256);
   }
 
   Map<String, Object> correctionPlanStatus(String planId) {
+    requireMutation();
     return correctionPlans.status(planId);
   }
 
   Map<String, Object> rollbackMutation(String transactionId, String expectedSha256)
       throws Exception {
+    requireMutation();
+    return definitionMutator.rollback(transactionId, expectedSha256);
+  }
+
+  private void requireMutation() {
     if (!allowMutation)
       throw new SecurityException("Native mutation disabled. Restart with --allow-mutation.");
-    return definitionMutator.rollback(transactionId, expectedSha256);
   }
 
   Map<String, Object> webRequest(String method, String path, Map<String, String> headers)
@@ -423,16 +451,58 @@ final class HopMcpService implements AutoCloseable {
     try {
       return call.call();
     } catch (Exception e) {
-      return Map.of(
-          "ok",
-          false,
-          "operation",
-          operation,
-          "error",
-          e.getClass().getSimpleName(),
-          "message",
-          HopXml.redact(String.valueOf(e.getMessage())));
+      Map<String, Object> result = errorPayload(e);
+      result.put("ok", false);
+      result.put("operation", operation);
+      return result;
     }
+  }
+
+  Map<String, Object> errorPayload(Exception exception) {
+    String category;
+    String code;
+    boolean retryable = false;
+    String message;
+    if (exception instanceof SecurityException) {
+      category = "AUTHORIZATION";
+      code = "AUTHORIZATION_DENIED";
+      message = "Operation is not authorized. Enable the matching server option.";
+    } else if (exception instanceof IllegalArgumentException) {
+      category = "VALIDATION";
+      code = "INVALID_INPUT";
+      message = safeExceptionMessage(exception);
+    } else if (exception instanceof java.nio.file.NoSuchFileException
+        || exception instanceof java.io.FileNotFoundException) {
+      category = "NOT_FOUND";
+      code = "NOT_FOUND";
+      message = "Requested project file or definition was not found.";
+    } else if (exception instanceof java.util.concurrent.TimeoutException) {
+      category = "TIMEOUT";
+      code = "OPERATION_TIMEOUT";
+      message = "Operation timed out.";
+      retryable = true;
+    } else if (exception instanceof UnsupportedOperationException) {
+      category = "UNSUPPORTED";
+      code = "UNSUPPORTED_OPERATION";
+      message = "Requested operation is not supported.";
+    } else {
+      category = "INTERNAL";
+      code = "OPERATION_FAILED";
+      message = "Operation failed.";
+    }
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("code", code);
+    result.put("category", category);
+    result.put("message", message);
+    result.put("retryable", retryable);
+    return result;
+  }
+
+  private String safeExceptionMessage(Exception exception) {
+    String message = HopXml.redact(String.valueOf(exception.getMessage()));
+    String projectRoot = files.root().toString();
+    if (!projectRoot.isBlank()) message = message.replace(projectRoot, "<project>");
+    return message.length() <= 512 ? message : message.substring(0, 512);
   }
 
   private String validateDefinition(String path) {

@@ -123,7 +123,7 @@ class HopCorrectionPlanManagerTest {
   }
 
   @Test
-  void serviceAllowsPreviewButRequiresMutationOptInToApplyPlan() throws Exception {
+  void serviceRequiresMutationOptInForCorrectionPlans() throws Exception {
     HopMcpService service =
         new HopMcpService(
             new ProjectFiles(project),
@@ -135,15 +135,13 @@ class HopCorrectionPlanManagerTest {
             false,
             null);
     try {
-      Map<String, Object> prepared =
-          service.prepareCorrectionPlan("guarded.hwf", "workflow", workflowOperations());
-      assertEquals("prepared", prepared.get("state"));
       assertThrows(
           SecurityException.class,
-          () ->
-              service.applyCorrectionPlan(
-                  String.valueOf(prepared.get("plan_id")),
-                  String.valueOf(prepared.get("plan_sha256"))));
+          () -> service.prepareCorrectionPlan("guarded.hwf", "workflow", workflowOperations()));
+      assertThrows(SecurityException.class, () -> service.correctionPlanStatus("missing-plan"));
+      assertThrows(
+          SecurityException.class,
+          () -> service.applyCorrectionPlan("missing-plan", "0".repeat(64)));
       assertFalse(Files.exists(project.resolve("guarded.hwf")));
     } finally {
       service.close();

@@ -2,25 +2,25 @@
 
 ## Supported version
 
-The current supported line is 1.0.x on Apache Hop 2.19.x and 2.20.x / Java 21. Apache Hop 2.19.0 remains the release compile baseline until 2.20.0 is published.
+The 2.0.0 line is under development and has not been released. The Maven compile baseline is Apache Hop 2.19.0 with Java 21. The separate 2.20.0-SNAPSHOT profile is a compatibility check, not a stable-support promise.
 
 ## Design assumptions
 
-Apache Hop pipeline/workflow definitions can contain executable behavior. Treat untrusted `.hpl`, `.hwf`, scripts, SQL, metadata, parameters, and plugin configurations as untrusted code/data. Do not expose the STDIO process directly to untrusted remote users.
+Apache Hop pipeline and workflow definitions can contain executable behavior. Treat untrusted `.hpl`, `.hwf`, scripts, SQL, metadata, parameters, and plugin configurations as untrusted code or data. Do not expose the STDIO process directly to untrusted remote users.
 
-Inspection is enabled by default. Local execution and applied semantic mutation are disabled unless the administrator starts the server with `--allow-execution` or `--allow-mutation`, respectively.
+Project inspection and structural validation are enabled by default. Native deep checking, local execution, semantic authoring/mutation, and Hop Web access require their separate command-line authorization flags. Tools for disabled groups are omitted from `tools/list`; service handlers retain server-side authorization checks.
 
-Execution accepts only local Apache Hop run configurations and is bounded by concurrency and timeout limits. Executing a definition can still access databases, services, files, scripts, and other resources available to the Hop process; only authorize trusted clients and projects.
+Execution accepts local Apache Hop run configurations and enforces concurrency, timeout, operation-retention, and output limits. A definition can still access databases, services, files, scripts, and other resources available to the Hop process. Only authorize trusted clients and projects.
 
-Mutation is limited to supported operations on native Hop semantic objects. Existing definitions require an expected SHA-256. Applied changes are backed up, atomically replaced, reloaded by Hop, automatically restored if validation fails, and can be rolled back during the same MCP session with a current-hash precondition.
+Mutation uses native Hop semantic objects. Existing definitions require an expected SHA-256. Applied changes are backed up, atomically replaced, reloaded through Hop, restored if reload validation fails, and eligible for explicit rollback during the same MCP session with a current-hash precondition.
 
-Hop Desktop and Hop Web live synchronization is disabled until a user explicitly starts it from the Tools menu. The bridge stores only relative definition paths, transaction identifiers, timestamps, and SHA-256 fingerprints under `.hop-mcp/`; it does not serialize Hop metadata or operation values. Control files are bounded, atomically written, rejected when symlinked, expire automatically, and are inaccessible through MCP project tools. UI work is dispatched on the owning SWT/RAP session thread, and dirty tabs are never reloaded or closed.
+The filesystem boundary, bounded reads/scans/results, secure XML parsing, and secret redaction apply to MCP outputs and diagnostics. Do not add a generic filesystem or arbitrary HTTP proxy surface.
 
-The bridge assumes the MCP process and each subscribed UI session trust the same project filesystem. It does not create a network endpoint. Hop Web state and server push are isolated per browser session. Project events are intentionally broadcast to every explicitly subscribed session for that project, but each session performs its own dirty-tab check and writes a separate acknowledgement without exposing its session identifier through MCP.
+Hop Desktop and Hop Web live synchronization is disabled until a user starts it from the Tools menu. The bridge stores bounded project-local control events under `.hop-mcp/`, protects dirty tabs, and opens no network listener. Subscribed UI sessions trust the same project filesystem.
 
-Optional Hop Web access remains read-only: only GET and HEAD are accepted. Requests stay under an administrator-configured base URL, redirects are disabled, caller-provided authentication headers are rejected, and sensitive response data is redacted.
+Optional Hop Web access is read-only: only GET and HEAD are accepted. Requests stay under an administrator-configured base URL, redirects are disabled, caller-provided authorization headers are rejected, and sensitive response data is redacted.
 
-The native deep checker is disabled by default because some transforms/actions may inspect fields or contact configured external systems while checking.
+The native deep checker is disabled by default because some plugins may resolve fields or contact configured external systems during checking.
 
 ## Reporting
 

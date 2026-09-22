@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pipeline>
+  <info>
+    <name>PokeAPI ability files</name>
+    <name_sync_with_filename>N</name_sync_with_filename>
+    <description>Downloads one PokeAPI ability and writes its raw JSON and normalized Pokémon list.</description>
+    <extended_description/>
+    <pipeline_version>1.0</pipeline_version>
+    <pipeline_type>Normal</pipeline_type>
+    <pipeline_status>0</pipeline_status>
+    <parameters>
+      <parameter>
+        <name>API_URL</name>
+        <default_value>https://pokeapi.co/api/v2/ability/battle-armor</default_value>
+        <description>PokeAPI ability endpoint</description>
+      </parameter>
+      <parameter>
+        <name>ABILITY_SLUG</name>
+        <default_value>battle-armor</default_value>
+        <description>Safe ability name used in output filenames</description>
+      </parameter>
+    </parameters>
+    <capture_transform_performance>N</capture_transform_performance>
+    <transform_performance_capturing_delay>1000</transform_performance_capturing_delay>
+    <transform_performance_capturing_size_limit>100</transform_performance_capturing_size_limit>
+    <created_user>Apache Hop MCP</created_user>
+    <created_date>2026/09/13 11:00:00.000</created_date>
+    <modified_user>Apache Hop MCP</modified_user>
+    <modified_date>2026/09/13 11:00:00.000</modified_date>
+  </info>
+  <notepads/>
+  <order>
+    <hop><from>Generate request</from><to>Call PokeAPI</to><enabled>Y</enabled></hop>
+    <hop><from>Call PokeAPI</from><to>Write raw ability JSON</to><enabled>Y</enabled></hop>
+    <hop><from>Call PokeAPI</from><to>Parse ability JSON</to><enabled>Y</enabled></hop>
+    <hop><from>Parse ability JSON</from><to>Add ability name</to><enabled>Y</enabled></hop>
+    <hop><from>Add ability name</from><to>Write ability Pokémon CSV</to><enabled>Y</enabled></hop>
+  </order>
+  <transform>
+    <name>Generate request</name>
+    <type>RowGenerator</type>
+    <description>Creates one request row.</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning><method>none</method><schema_name/></partitioning>
+    <fields/>
+    <interval_in_ms>5000</interval_in_ms>
+    <last_time_field/>
+    <never_ending>N</never_ending>
+    <limit>1</limit>
+    <row_time_field/>
+    <attributes/>
+    <GUI><xloc>96</xloc><yloc>160</yloc></GUI>
+  </transform>
+  <transform>
+    <name>Call PokeAPI</name>
+    <type>Rest</type>
+    <description>Downloads the selected ability as JSON.</description>
+    <distribute>N</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning><method>none</method><schema_name/></partitioning>
+    <applicationType>JSON</applicationType>
+    <method>GET</method>
+    <url>${API_URL}</url>
+    <urlInField>N</urlInField>
+    <dynamicMethod>N</dynamicMethod>
+    <methodFieldName/>
+    <urlField/>
+    <bodyField/>
+    <httpLogin/>
+    <httpPassword>Encrypted </httpPassword>
+    <proxyHost/>
+    <proxyPort/>
+    <trustStoreFile/>
+    <trustStorePassword>Encrypted </trustStorePassword>
+    <headers/>
+    <parameters/>
+    <matrixParameters/>
+    <result>
+      <name>response_body</name>
+      <code>http_status</code>
+      <response_time>response_time_ms</response_time>
+      <response_header/>
+    </result>
+    <retryTimes>2</retryTimes>
+    <retryDelayMs>500</retryDelayMs>
+    <retryStatusCodes>429,500,502,503,504</retryStatusCodes>
+    <attributes/>
+    <GUI><xloc>288</xloc><yloc>160</yloc></GUI>
+  </transform>
+  <transform>
+    <name>Write raw ability JSON</name>
+    <type>TextFileOutput</type>
+    <description>Persists the original API response.</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning><method>none</method><schema_name/></partitioning>
+    <separator/>
+    <enclosure/>
+    <enclosure_forced>N</enclosure_forced>
+    <enclosure_fix_disabled>N</enclosure_fix_disabled>
+    <header>N</header>
+    <footer>N</footer>
+    <format>UNIX</format>
+    <compression>None</compression>
+    <encoding>UTF-8</encoding>
+    <endedLine/>
+    <fileNameInField>N</fileNameInField>
+    <fileNameField/>
+    <create_parent_folder>Y</create_parent_folder>
+    <file>
+      <name>${PROJECT_HOME}/output/${ABILITY_SLUG}</name>
+      <servlet_output>N</servlet_output>
+      <do_not_open_new_file_init>N</do_not_open_new_file_init>
+      <extention>json</extention>
+      <append>N</append>
+      <split>N</split>
+      <haspartno>N</haspartno>
+      <add_date>N</add_date>
+      <add_time>N</add_time>
+      <SpecifyFormat>N</SpecifyFormat>
+      <date_time_format/>
+      <add_to_result_filenames>Y</add_to_result_filenames>
+      <pad>N</pad>
+      <fast_dump>N</fast_dump>
+      <splitevery/>
+    </file>
+    <fields>
+      <field>
+        <name>response_body</name><type>String</type><format/><currency/><decimal/><group/>
+        <nullif/><trim_type>none</trim_type><length>-1</length><precision>-1</precision>
+      </field>
+    </fields>
+    <attributes/>
+    <GUI><xloc>496</xloc><yloc>80</yloc></GUI>
+  </transform>
+  <transform>
+    <name>Parse ability JSON</name>
+    <type>JsonInput</type>
+    <description>Expands the Pokémon array into one normalized row per Pokémon.</description>
+    <include>N</include>
+    <include_field/>
+    <rownum>N</rownum>
+    <rownum_field/>
+    <limit>0</limit>
+    <valueField>response_body</valueField>
+    <IsInFields>Y</IsInFields>
+    <IsAFile>N</IsAFile>
+    <addresultfile>N</addresultfile>
+    <IsIgnoreEmptyFile>N</IsIgnoreEmptyFile>
+    <doNotFailIfNoFile>N</doNotFailIfNoFile>
+    <ignoreMissingPath>N</ignoreMissingPath>
+    <readurl>N</readurl>
+    <removeSourceField>Y</removeSourceField>
+    <defaultPathLeafToNull>Y</defaultPathLeafToNull>
+    <files><file><name/><filemask/><exclude_filemask/><file_required>N</file_required><include_subfolders>N</include_subfolders></file></files>
+    <fields>
+      <field><name>pokemon_name</name><length>-1</length><type>String</type><format/><trim_type>none</trim_type><precision>-1</precision><currency/><decimal/><group/><repeat>N</repeat><path>$.pokemon[*].pokemon.name</path></field>
+      <field><name>pokemon_url</name><length>-1</length><type>String</type><format/><trim_type>none</trim_type><precision>-1</precision><currency/><decimal/><group/><repeat>N</repeat><path>$.pokemon[*].pokemon.url</path></field>
+      <field><name>is_hidden</name><length>-1</length><type>Boolean</type><format/><trim_type>none</trim_type><precision>-1</precision><currency/><decimal/><group/><repeat>N</repeat><path>$.pokemon[*].is_hidden</path></field>
+      <field><name>slot</name><length>-1</length><type>Integer</type><format/><trim_type>none</trim_type><precision>0</precision><currency/><decimal/><group/><repeat>N</repeat><path>$.pokemon[*].slot</path></field>
+    </fields>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <partitioning><method>none</method><schema_name/></partitioning>
+    <attributes/>
+    <GUI><xloc>496</xloc><yloc>240</yloc></GUI>
+  </transform>
+  <transform>
+    <name>Add ability name</name>
+    <type>GetVariable</type>
+    <description>Adds the requested ability to every normalized Pokémon row.</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning><method>none</method><schema_name/></partitioning>
+    <fields>
+      <field>
+        <name>ability_name</name>
+        <variable>${ABILITY_SLUG}</variable>
+        <type>String</type>
+        <format/>
+        <length>-1</length>
+        <precision>-1</precision>
+        <currency/>
+        <decimal/>
+        <group/>
+        <trim_type>none</trim_type>
+      </field>
+    </fields>
+    <attributes/>
+    <GUI><xloc>704</xloc><yloc>240</yloc></GUI>
+  </transform>
+  <transform>
+    <name>Write ability Pokémon CSV</name>
+    <type>TextFileOutput</type>
+    <description>Writes one CSV file for the selected ability.</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning><method>none</method><schema_name/></partitioning>
+    <separator>,</separator>
+    <enclosure>"</enclosure>
+    <enclosure_forced>Y</enclosure_forced>
+    <enclosure_fix_disabled>N</enclosure_fix_disabled>
+    <header>Y</header>
+    <footer>N</footer>
+    <format>UNIX</format>
+    <compression>None</compression>
+    <encoding>UTF-8</encoding>
+    <endedLine/>
+    <fileNameInField>N</fileNameInField>
+    <fileNameField/>
+    <create_parent_folder>Y</create_parent_folder>
+    <file>
+      <name>${PROJECT_HOME}/output/${ABILITY_SLUG}-pokemon</name>
+      <servlet_output>N</servlet_output>
+      <do_not_open_new_file_init>N</do_not_open_new_file_init>
+      <extention>csv</extention>
+      <append>N</append>
+      <split>N</split>
+      <haspartno>N</haspartno>
+      <add_date>N</add_date>
+      <add_time>N</add_time>
+      <SpecifyFormat>N</SpecifyFormat>
+      <date_time_format/>
+      <add_to_result_filenames>Y</add_to_result_filenames>
+      <pad>N</pad>
+      <fast_dump>N</fast_dump>
+      <splitevery/>
+    </file>
+    <fields>
+      <field><name>ability_name</name><type>String</type><format/><currency/><decimal/><group/><nullif/><trim_type>none</trim_type><length>-1</length><precision>-1</precision></field>
+      <field><name>pokemon_name</name><type>String</type><format/><currency/><decimal/><group/><nullif/><trim_type>none</trim_type><length>-1</length><precision>-1</precision></field>
+      <field><name>pokemon_url</name><type>String</type><format/><currency/><decimal/><group/><nullif/><trim_type>none</trim_type><length>-1</length><precision>-1</precision></field>
+      <field><name>is_hidden</name><type>Boolean</type><format/><currency/><decimal/><group/><nullif/><trim_type>none</trim_type><length>-1</length><precision>-1</precision></field>
+      <field><name>slot</name><type>Integer</type><format/><currency/><decimal/><group/><nullif/><trim_type>none</trim_type><length>-1</length><precision>0</precision></field>
+    </fields>
+    <attributes/>
+    <GUI><xloc>912</xloc><yloc>240</yloc></GUI>
+  </transform>
+  <transform_error_handling/>
+  <attributes/>
+</pipeline>

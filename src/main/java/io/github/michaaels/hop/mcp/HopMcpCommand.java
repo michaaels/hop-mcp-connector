@@ -28,7 +28,7 @@ import picocli.CommandLine;
 @CommandLine.Command(
     name = "mcp",
     mixinStandardHelpOptions = true,
-    description = "Run the Apache Hop MCP server (read-only by default)")
+    description = "Run the MCP Connector for Apache Hop server (read-only by default)")
 @HopCommand(id = "mcp", description = "Run the Apache Hop Model Context Protocol server")
 public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProvider {
   @CommandLine.Option(
@@ -126,7 +126,7 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
         server.awaitEof();
       }
     } catch (Exception e) {
-      log.logError("Apache Hop MCP failed", e);
+      log.logError("MCP Connector for Apache Hop failed", e);
       throw new RuntimeException(e);
     } finally {
       Thread.currentThread().setContextClassLoader(previousContextClassLoader);
@@ -165,7 +165,10 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
   private void logStartup(
       ProjectFiles files, HopWebClient webClient, HopLiveUiEventBroker liveUiEventBroker) {
     log.logBasic(
-        "Apache Hop MCP " + HopMcpVersion.current() + " started (stdio) root=" + files.root());
+        "MCP Connector for Apache Hop "
+            + HopMcpVersion.current()
+            + " started (stdio) root="
+            + files.root());
     if (allowDeepCheck) {
       log.logBasic("Native deep check enabled; checks can contact configured external systems.");
     }

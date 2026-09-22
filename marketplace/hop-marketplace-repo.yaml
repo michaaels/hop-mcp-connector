@@ -1,23 +1,23 @@
 schemaVersion: "1.0"
 kind: hop-marketplace-repository
-id: apache-hop-mcp
-name: Apache Hop MCP Community Repository
-url: https://github.com/michaaels/apache-hop-mcp/releases/download/
+id: hop-mcp-connector
+name: MCP Connector for Apache Hop Community Repository
+url: https://github.com/michaaels/hop-mcp-connector/releases/download/
 primary: false
 enabled: true
 browse: false
 includeSnapshots: false
-catalogUrl: https://raw.githubusercontent.com/michaaels/apache-hop-mcp/main/marketplace/catalog.yaml
-urlTemplate: https://github.com/michaaels/apache-hop-mcp/releases/download/v${version}/${artifactId}-${version}.zip
+catalogUrl: https://raw.githubusercontent.com/michaaels/hop-mcp-connector/main/marketplace/catalog.yaml
+urlTemplate: https://github.com/michaaels/hop-mcp-connector/releases/download/v${version}/${artifactId}-${version}.zip
 groupIdFilter: io.github.michaaels
-homepage: https://github.com/michaaels/apache-hop-mcp
-description: Community Apache Hop MCP plugin releases hosted on GitHub.
+homepage: https://github.com/michaaels/hop-mcp-connector
+description: Independent community MCP plugin for Apache Hop, distributed through GitHub Releases.
 plugins:
   - groupId: io.github.michaaels
-    artifactId: apache-hop-mcp
-    version: "1.0.0"
+    artifactId: hop-mcp-connector
+    version: "2.0.0"
     minHopVersion: "2.19.0"
     maxHopVersion: "2.20.999"
-    name: Apache Hop MCP
+    name: MCP Connector for Apache Hop
     category: Community / AI
-    description: Native Java MCP server for Apache Hop with inspection, gated testing, and SHA-bound semantic correction plans.
+    description: Independent native Java MCP plugin for Apache Hop with bounded inspection, opt-in execution, and transactional semantic authoring.

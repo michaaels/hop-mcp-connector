@@ -23,7 +23,7 @@ final class HopSemanticCapabilities {
 
   static Map<String, Object> describe(boolean mutationEnabled, boolean liveUiAvailable) {
     Map<String, Object> result = new LinkedHashMap<>();
-    result.put("product", "Apache Hop Native Semantic MCP");
+    result.put("product", "MCP Connector for Apache Hop");
     result.put("definition_kinds", List.of("pipeline", "workflow"));
     result.put("semantic_operations", operations());
     result.put("preview_available", true);

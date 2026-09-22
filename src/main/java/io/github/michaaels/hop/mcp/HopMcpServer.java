@@ -35,7 +35,7 @@ final class HopMcpServer implements AutoCloseable {
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("apache-hop-mcp", HopMcpVersion.current())
+            .serverInfo("hop-mcp-connector", HopMcpVersion.current())
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
                 "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")
@@ -382,7 +382,14 @@ final class HopMcpServer implements AutoCloseable {
   }
 
   private void add(String name, String description, Map<String, Object> schema, Handler handler) {
-    var tool = McpSchema.Tool.builder(name, schema).description(description).build();
+    if (!service.isToolEnabled(name)) return;
+    var toolBuilder =
+        McpSchema.Tool.builder(name, schema)
+            .description(description)
+            .annotations(annotations(name));
+    Map<String, Object> outputSchema = outputSchemaFor(name);
+    if (outputSchema != null) toolBuilder.outputSchema(outputSchema);
+    var tool = toolBuilder.build();
     var spec =
         McpServerFeatures.SyncToolSpecification.builder()
             .tool(tool)
@@ -397,12 +404,7 @@ final class HopMcpServer implements AutoCloseable {
                         .structuredContent(data)
                         .build();
                   } catch (Exception e) {
-                    Map<String, Object> error =
-                        Map.of(
-                            "error",
-                            e.getClass().getSimpleName(),
-                            "message",
-                            HopXml.redact(String.valueOf(e.getMessage())));
+                    Map<String, Object> error = service.errorPayload(e);
                     return McpSchema.CallToolResult.builder()
                         .content(List.of(new McpSchema.TextContent(JsonUtil.toJson(error))))
                         .structuredContent(error)
@@ -412,6 +414,658 @@ final class HopMcpServer implements AutoCloseable {
                 })
             .build();
     server.addTool(spec);
+  }
+
+  private static McpSchema.ToolAnnotations annotations(String name) {
+    boolean readOnly = true;
+    boolean destructive = false;
+    boolean idempotent = true;
+    boolean openWorld = false;
+    switch (name) {
+      case "hop_deep_check" -> openWorld = true;
+      case "hop_execute", "hop_start_execution", "hop_test_definition" -> {
+        readOnly = false;
+        destructive = true;
+        idempotent = false;
+        openWorld = true;
+      }
+      case "hop_stop_execution" -> {
+        readOnly = false;
+        destructive = true;
+        openWorld = true;
+      }
+      case "hop_prepare_correction_plan" -> {
+        readOnly = false;
+        idempotent = false;
+      }
+      case "hop_apply_correction_plan", "hop_mutate_definition", "hop_rollback_mutation" -> {
+        readOnly = false;
+        destructive = true;
+        idempotent = false;
+      }
+      case "hop_web_request" -> openWorld = true;
+      default -> {
+        // Local inspection tools do not change project state or contact external systems.
+      }
+    }
+    return McpSchema.ToolAnnotations.builder()
+        .readOnlyHint(readOnly)
+        .destructiveHint(destructive)
+        .idempotentHint(idempotent)
+        .openWorldHint(openWorld)
+        .build();
+  }
+
+  private static Map<String, Object> outputSchemaFor(String name) {
+    Map<String, Object> result =
+        switch (name) {
+          case "hop_config" -> configOutputSchema();
+          case "hop_capabilities" -> capabilitiesOutputSchema();
+          case "hop_validate" -> validationOutputSchema();
+          case "hop_inspect" -> inspectOutputSchema();
+          case "hop_catalog" -> catalogOutputSchema();
+          case "hop_component_types" -> componentTypesOutputSchema();
+          case "hop_component_schema" -> componentSchemaOutputSchema();
+          case "hop_execute" -> executionOutputSchema();
+          case "hop_execution_status" -> executionStatusOutputSchema();
+          case "hop_mutate_definition" -> mutationOutputSchema();
+          case "hop_prepare_correction_plan" -> correctionPlanOutputSchema();
+          default -> null;
+        };
+    return result == null ? null : errorAwareOutputSchema(result);
+  }
+
+  private static Map<String, Object> configOutputSchema() {
+    Map<String, Object> readBytesSchema =
+        boundedInteger(0, ProjectFiles.MAX_READ_BYTES, "Maximum project-file read size");
+    return schema(
+        fields(
+            "version", boundedString(64, "Connector version"),
+            "project_root", boundedString(4096, "Canonical configured project root"),
+            "transport", enumStr("stdio"),
+            "read_only", bool("Whether semantic mutation is disabled"),
+            "allow_deep_check", bool("Whether native deep checks are authorized"),
+            "allow_execution", bool("Whether local execution is authorized"),
+            "allow_mutation", bool("Whether semantic mutation is authorized"),
+            "allow_web_api", bool("Whether Hop Web requests are authorized"),
+            "web_api_configured", bool("Whether a Hop Web base URL is configured"),
+            "web_api_base", boundedString(2048, "Configured Hop Web base URL"),
+            "max_read_bytes", readBytesSchema,
+            "max_scan_files", nonNegativeInteger("Maximum project scan size")),
+        List.of(
+            "version",
+            "project_root",
+            "transport",
+            "read_only",
+            "allow_deep_check",
+            "allow_execution",
+            "allow_mutation",
+            "allow_web_api",
+            "web_api_configured",
+            "web_api_base",
+            "max_read_bytes",
+            "max_scan_files"));
+  }
+
+  private static Map<String, Object> capabilitiesOutputSchema() {
+    Map<String, Object> operation =
+        schema(
+            fields(
+                "operation", boundedString(64, "Semantic operation identifier"),
+                "definition_kinds", arrayOf(enumStr("pipeline", "workflow"), 2),
+                "required", stringArray(32),
+                "optional", stringArray(32),
+                "destructive", bool("Whether applying the operation changes a definition")),
+            List.of("operation", "definition_kinds", "required", "optional", "destructive"));
+    Map<String, Object> testCycle =
+        schema(
+            fields(
+                "phases", arrayOf(enumStr("structural_validation", "deep_check", "execution"), 3),
+                "gated", bool("Whether deep checks and execution require authorization"),
+                "correction_mode", enumStr("advisory_only"),
+                "auto_apply", bool("Whether generated corrections apply automatically")),
+            List.of("phases", "gated", "correction_mode", "auto_apply"));
+    Map<String, Object> correction =
+        schema(
+            fields(
+                "scope", enumStr("same_mcp_session"),
+                "max_retained", nonNegativeInteger("Maximum retained plans"),
+                "ttl_seconds", nonNegativeInteger("Plan lifetime in seconds"),
+                "single_use", bool("Whether a prepared plan can be applied once"),
+                "sha256_bound", bool("Whether the plan is bound to a file hash"),
+                "explicit_apply", bool("Whether applying requires a separate request"),
+                "auto_apply", bool("Whether a prepared plan applies automatically")),
+            List.of(
+                "scope",
+                "max_retained",
+                "ttl_seconds",
+                "single_use",
+                "sha256_bound",
+                "explicit_apply",
+                "auto_apply"));
+    return schema(
+        fields(
+            "product", boundedString(128, "Product name"),
+            "definition_kinds", arrayOf(enumStr("pipeline", "workflow"), 2),
+            "semantic_operations", arrayOf(operation, 32),
+            "preview_available", bool("Whether native mutations can be previewed"),
+            "apply_enabled", bool("Whether semantic mutation is authorized"),
+            "transactional_write", bool("Whether writes are transactional"),
+            "sha256_precondition", bool("Whether writes require file hash preconditions"),
+            "native_reload_validation", bool("Whether writes are reloaded through Hop APIs"),
+            "rollback", enumStr("same_mcp_session"),
+            "test_cycle", testCycle,
+            "correction_plans", correction,
+            "live_ui_available", bool("Whether a live UI event adapter is available"),
+            "live_ui_status", enumStr("connected", "headless_not_connected"),
+            "live_ui_adapter", enumStr("project_event_bridge"),
+            "live_ui_dirty_tab_policy", enumStr("never_overwrite"),
+            "live_ui_supported_clients", arrayOf(enumStr("desktop", "web"), 2),
+            "tested_hop_versions", stringArray(8)),
+        List.of(
+            "product",
+            "definition_kinds",
+            "semantic_operations",
+            "preview_available",
+            "apply_enabled",
+            "transactional_write",
+            "sha256_precondition",
+            "native_reload_validation",
+            "rollback",
+            "test_cycle",
+            "correction_plans",
+            "live_ui_available",
+            "live_ui_status",
+            "live_ui_adapter",
+            "live_ui_dirty_tab_policy",
+            "live_ui_supported_clients",
+            "tested_hop_versions"));
+  }
+
+  private static Map<String, Object> validationOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "type", enumStr("pipeline", "workflow"),
+            "valid", bool("Whether structural validation passed"),
+            "errors", stringArray(ProjectFiles.MAX_RESULTS),
+            "warnings", stringArray(ProjectFiles.MAX_RESULTS),
+            "diagnostics_truncated", bool("Whether the diagnostics limit was reached")),
+        List.of("path", "type", "valid", "errors", "warnings", "diagnostics_truncated"));
+  }
+
+  private static Map<String, Object> inspectOutputSchema() {
+    Map<String, Object> component =
+        schema(
+            fields(
+                "name", boundedString(1024, "Transform or action name"),
+                "plugin", boundedString(1024, "Native Hop plugin identifier"),
+                "tag", enumStr("transform", "action")),
+            List.of("name", "tag"));
+    Map<String, Object> hop =
+        schema(
+            fields(
+                "from", boundedString(1024, "Hop source component"),
+                "to", boundedString(1024, "Hop target component"),
+                "enabled", bool("Whether this Hop edge is enabled")),
+            List.of("from", "to"));
+    return toolOutputSchema(
+        fields(
+            "path", boundedString(4096, "Project-relative definition path"),
+            "type", enumStr("pipeline", "workflow"),
+            "name", boundedString(1024, "Definition name"),
+            "components", arrayOf(component, ProjectFiles.MAX_RESULTS),
+            "hops", arrayOf(hop, ProjectFiles.MAX_RESULTS),
+            "components_truncated", bool("Whether the component list was truncated"),
+            "hops_truncated", bool("Whether the Hop edge list was truncated"),
+            "component_count", nonNegativeInteger("Returned component count"),
+            "hop_count", nonNegativeInteger("Returned Hop edge count"),
+            "tables", stringArray(ProjectFiles.MAX_RESULTS),
+            "references", stringArray(ProjectFiles.MAX_RESULTS)),
+        List.of(
+            "path",
+            "type",
+            "name",
+            "components",
+            "hops",
+            "components_truncated",
+            "hops_truncated",
+            "component_count",
+            "hop_count",
+            "tables",
+            "references"));
+  }
+
+  private static Map<String, Object> catalogOutputSchema() {
+    Map<String, Object> file =
+        schema(
+            fields(
+                "path", boundedString(4096, "Project-relative path"),
+                "kind", boundedString(32, "Recognized file kind"),
+                "extension", boundedString(32, "File extension"),
+                "bytes", boundedInteger(0, Long.MAX_VALUE, "File size in bytes"),
+                "last_modified_epoch_ms", boundedInteger(0, Long.MAX_VALUE, "Modification time"),
+                "sha256", boundedString(64, "SHA-256 digest or empty when skipped"),
+                "hash_skipped", bool("Whether the content hash was skipped"),
+                "hash_skip_reason", boundedString(128, "Reason the content hash was skipped")),
+            List.of(
+                "path",
+                "kind",
+                "extension",
+                "bytes",
+                "last_modified_epoch_ms",
+                "sha256",
+                "hash_skipped"));
+    return toolOutputSchema(
+        fields(
+            "glob", boundedString(2048, "Applied project-relative glob"),
+            "offset", nonNegativeInteger("First returned match offset"),
+            "limit", catalogLimit("Maximum requested files"),
+            "scanned", nonNegativeInteger("Files scanned"),
+            "scan_limit_reached", bool("Whether the project scan limit was reached"),
+            "count", nonNegativeInteger("Matched file count"),
+            "returned", boundedInteger(0, 200, "Returned file count"),
+            "has_more", bool("Whether another page or scan remains"),
+            "files", arrayOf(file, 200)),
+        List.of(
+            "glob",
+            "offset",
+            "limit",
+            "scanned",
+            "scan_limit_reached",
+            "count",
+            "returned",
+            "has_more",
+            "files"));
+  }
+
+  private static Map<String, Object> componentTypesOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "kind", enumStr("pipeline", "workflow"),
+            "matched_component_count", nonNegativeInteger("Matching plugin count"),
+            "returned_component_count", boundedInteger(0, 50, "Returned plugin count"),
+            "offset", nonNegativeInteger("First returned plugin offset"),
+            "limit", boundedInteger(1, 50, "Maximum requested plugins"),
+            "has_more", bool("Whether another page remains"),
+            "query", boundedString(1024, "Applied search query"),
+            "components", arrayOf(pluginRowSchema(), 50)),
+        List.of(
+            "kind",
+            "matched_component_count",
+            "returned_component_count",
+            "offset",
+            "limit",
+            "has_more",
+            "components"));
+  }
+
+  private static Map<String, Object> componentSchemaOutputSchema() {
+    Map<String, Object> property =
+        schema(
+            fields(
+                "key", boundedString(512, "Injectable property key"),
+                "description", boundedString(4096, "Translated property description"),
+                "java_type", boundedString(512, "Java property type"),
+                "value_type", enumStr("string", "boolean", "integer", "number", "enum"),
+                "allowed_values", stringArray(128)),
+            List.of("key", "description", "java_type", "value_type"));
+    Map<String, Object> propertyGroup =
+        schema(
+            fields(
+                "key", boundedString(512, "Tabular group key"),
+                "description", boundedString(4096, "Translated group description"),
+                "max_rows",
+                    boundedInteger(
+                        1, HopComponentAuthoring.MAX_ROWS_PER_GROUP, "Maximum supported rows"),
+                "properties", arrayOf(property, HopComponentAuthoring.MAX_PROPERTIES)),
+            List.of("key", "description", "max_rows", "properties"));
+    return toolOutputSchema(
+        fields(
+            "kind", enumStr("pipeline", "workflow"),
+            "plugin", pluginRowSchema(),
+            "native_injection_supported", bool("Whether native metadata injection is supported"),
+            "scalar_injection_supported", bool("Whether safe scalar injection is supported"),
+            "tabular_injection_supported", bool("Whether supported tabular injection is available"),
+            "property_count",
+                boundedInteger(0, HopComponentAuthoring.MAX_PROPERTIES, "Scalar property count"),
+            "properties", arrayOf(property, HopComponentAuthoring.MAX_PROPERTIES),
+            "property_group_count",
+                boundedInteger(0, HopComponentAuthoring.MAX_PROPERTY_GROUPS, "Tabular group count"),
+            "property_groups", arrayOf(propertyGroup, HopComponentAuthoring.MAX_PROPERTY_GROUPS),
+            "sensitive_properties_excluded", bool("Whether sensitive properties were excluded"),
+            "collection_properties_excluded", bool("Whether collection properties were excluded"),
+            "nested_collection_properties_excluded",
+                bool("Whether nested collections were excluded"),
+            "structural_properties_excluded", bool("Whether structural properties were excluded")),
+        List.of(
+            "kind",
+            "plugin",
+            "native_injection_supported",
+            "scalar_injection_supported",
+            "tabular_injection_supported",
+            "property_count",
+            "properties",
+            "property_group_count",
+            "property_groups",
+            "sensitive_properties_excluded",
+            "collection_properties_excluded",
+            "nested_collection_properties_excluded",
+            "structural_properties_excluded"));
+  }
+
+  private static Map<String, Object> executionOutputSchema() {
+    return toolOutputSchema(
+        executionResultFields(),
+        List.of(
+            "kind",
+            "path",
+            "run_configuration",
+            "ok",
+            "timed_out",
+            "error_count",
+            "status",
+            "log_channel_id",
+            "started_at",
+            "finished_at",
+            "diagnostics"));
+  }
+
+  private static Map<String, Object> executionStatusOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "operation_id", boundedString(64, "Execution operation ID"),
+            "path", boundedString(4096, "Project-relative definition path"),
+            "run_configuration", boundedString(256, "Hop run configuration"),
+            "state", enumStr("running", "completed", "timed_out", "failed", "stopped", "stopping"),
+            "started_at",
+                boundedInteger(0, Long.MAX_VALUE, "Execution start time in epoch milliseconds"),
+            "active_executions", nonNegativeInteger("Currently active executions"),
+            "finished_at",
+                boundedInteger(0, Long.MAX_VALUE, "Execution finish time in epoch milliseconds"),
+            "log_channel_id", boundedString(128, "Hop log channel identifier"),
+            "result", executionResultSchema(),
+            "error", executionErrorSchema(),
+            "stop_requested", bool("Whether cancellation was requested")),
+        List.of(
+            "operation_id",
+            "path",
+            "run_configuration",
+            "state",
+            "started_at",
+            "active_executions"));
+  }
+
+  private static Map<String, Object> mutationOutputSchema() {
+    return toolOutputSchema(
+        mutationFields(),
+        List.of(
+            "path",
+            "kind",
+            "target_exists",
+            "preview",
+            "applied",
+            "changed",
+            "old_sha256",
+            "new_sha256",
+            "before",
+            "after",
+            "changes",
+            "native_reload_valid",
+            "backup",
+            "transaction_id",
+            "rollback_available"));
+  }
+
+  private static Map<String, Object> correctionPlanOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "plan_id",
+            boundedString(64, "Session correction plan ID"),
+            "plan_sha256",
+            boundedString(64, "Immutable plan SHA-256"),
+            "state",
+            enumStr("prepared"),
+            "path",
+            boundedString(4096, "Project-relative definition path"),
+            "kind",
+            enumStr("pipeline", "workflow"),
+            "target_exists",
+            bool("Whether a definition existed when the plan was prepared"),
+            "bound_sha256",
+            boundedString(64, "SHA-256 of the original definition or empty"),
+            "operation_count",
+            boundedInteger(0, HopDefinitionMutator.MAX_OPERATIONS, "Number of operations"),
+            "created_at",
+            boundedString(64, "Creation time in RFC 3339 format"),
+            "expires_at",
+            boundedString(64, "Expiry time in RFC 3339 format"),
+            "single_use",
+            bool("Whether the correction plan can be applied once"),
+            "auto_apply",
+            bool("Whether the correction plan applies automatically"),
+            "preview",
+            mutationSuccessSchema()),
+        List.of(
+            "plan_id",
+            "plan_sha256",
+            "state",
+            "path",
+            "kind",
+            "target_exists",
+            "bound_sha256",
+            "operation_count",
+            "created_at",
+            "expires_at",
+            "single_use",
+            "auto_apply",
+            "preview"));
+  }
+
+  private static Map<String, Object> executionResultFields() {
+    return fields(
+        "kind", enumStr("pipeline", "workflow"),
+        "path", boundedString(4096, "Project-relative definition path"),
+        "run_configuration", boundedString(256, "Hop run configuration"),
+        "ok", bool("Whether execution succeeded"),
+        "timed_out", bool("Whether execution reached its timeout"),
+        "error_count", nonNegativeInteger("Hop error count"),
+        "status", boundedString(256, "Hop execution status"),
+        "log_channel_id", boundedString(128, "Hop log channel identifier"),
+        "started_at",
+            boundedInteger(0, Long.MAX_VALUE, "Execution start time in epoch milliseconds"),
+        "finished_at",
+            boundedInteger(0, Long.MAX_VALUE, "Execution finish time in epoch milliseconds"),
+        "diagnostics", boundedString(512, "Pointer to bounded Hop log output"));
+  }
+
+  private static Map<String, Object> executionResultSchema() {
+    return schema(
+        executionResultFields(),
+        List.of(
+            "kind",
+            "path",
+            "run_configuration",
+            "ok",
+            "timed_out",
+            "error_count",
+            "status",
+            "log_channel_id",
+            "started_at",
+            "finished_at",
+            "diagnostics"));
+  }
+
+  private static Map<String, Object> executionErrorSchema() {
+    return schema(
+        fields(
+            "error", boundedString(128, "Execution exception type"),
+            "message", boundedString(4096, "Sanitized execution error message")),
+        List.of("error", "message"));
+  }
+
+  private static Map<String, Object> mutationFields() {
+    return fields(
+        "path", boundedString(4096, "Project-relative definition path"),
+        "kind", enumStr("pipeline", "workflow"),
+        "target_exists", bool("Whether a definition existed before preview"),
+        "preview", bool("Whether this response is preview only"),
+        "applied", bool("Whether the definition was written"),
+        "changed", bool("Whether serialized definition content differs"),
+        "old_sha256", boundedString(64, "Previous definition SHA-256"),
+        "new_sha256", boundedString(64, "Proposed definition SHA-256"),
+        "before", definitionSummarySchema(),
+        "after", definitionSummarySchema(),
+        "changes", arrayOf(semanticChangeSchema(), HopDefinitionMutator.MAX_OPERATIONS),
+        "native_reload_valid", bool("Whether native Hop reload validation succeeded"),
+        "backup", boundedString(4096, "Backup path or empty when not applicable"),
+        "transaction_id", boundedString(64, "Rollback transaction ID or empty when not applied"),
+        "rollback_available", bool("Whether rollback is available in this session"),
+        "semantic_event_published", bool("Whether a semantic UI event was accepted"));
+  }
+
+  private static Map<String, Object> mutationSuccessSchema() {
+    return schema(
+        mutationFields(),
+        List.of(
+            "path",
+            "kind",
+            "target_exists",
+            "preview",
+            "applied",
+            "changed",
+            "old_sha256",
+            "new_sha256",
+            "before",
+            "after",
+            "changes",
+            "native_reload_valid",
+            "backup",
+            "transaction_id",
+            "rollback_available"));
+  }
+
+  private static Map<String, Object> definitionSummarySchema() {
+    return schema(
+        fields(
+            "name", boundedString(1024, "Definition name"),
+            "description_present", bool("Whether a description is set"),
+            "component_count", nonNegativeInteger("Transform or action count"),
+            "hop_count", nonNegativeInteger("Hop edge count")),
+        List.of("name", "description_present", "component_count", "hop_count"));
+  }
+
+  private static Map<String, Object> semanticChangeSchema() {
+    Map<String, Object> item =
+        schema(
+            fields(
+                "operation",
+                enumStr(HopSemanticCapabilities.OPERATION_NAMES.toArray(String[]::new))),
+            List.of("operation"));
+    item.put("additionalProperties", boundedChangeValueSchema());
+    item.put("maxProperties", 8);
+    return item;
+  }
+
+  private static Map<String, Object> boundedChangeValueSchema() {
+    Map<String, Object> scalar =
+        Map.of(
+            "anyOf",
+            List.of(
+                boundedString(8192, "Semantic change value"),
+                boundedInteger(-1_000_000_000L, 1_000_000_000L, "Numeric semantic change value"),
+                bool("Boolean semantic change value"),
+                Map.of("type", "null")));
+    Map<String, Object> object = new LinkedHashMap<>();
+    object.put("type", "object");
+    object.put("additionalProperties", scalar);
+    object.put("maxProperties", HopComponentAuthoring.MAX_PROPERTIES);
+    Map<String, Object> rowObject = new LinkedHashMap<>();
+    rowObject.put("type", "object");
+    rowObject.put("additionalProperties", scalar);
+    rowObject.put("maxProperties", HopComponentAuthoring.MAX_PROPERTIES);
+    Map<String, Object> array = new LinkedHashMap<>();
+    array.put("type", "array");
+    array.put("items", Map.of("anyOf", List.of(scalar, rowObject)));
+    array.put("maxItems", HopComponentAuthoring.MAX_ROWS_PER_GROUP);
+    Map<String, Object> objectValues = new LinkedHashMap<>();
+    objectValues.put("type", "object");
+    objectValues.put("additionalProperties", Map.of("anyOf", List.of(scalar, array)));
+    objectValues.put("maxProperties", HopComponentAuthoring.MAX_PROPERTIES);
+    return Map.of("anyOf", List.of(scalar, object, array, objectValues));
+  }
+
+  private static Map<String, Object> pluginRowSchema() {
+    return schema(
+        fields(
+            "id", boundedString(512, "Canonical Hop plugin ID"),
+            "ids", stringArray(64),
+            "name", boundedString(2048, "Plugin display name"),
+            "description", boundedString(8192, "Plugin description"),
+            "category", boundedString(1024, "Plugin category")),
+        List.of("id", "ids", "name", "description", "category"));
+  }
+
+  private static Map<String, Object> toolOutputSchema(
+      Map<String, Object> properties, List<String> required) {
+    return schema(properties, required);
+  }
+
+  private static Map<String, Object> errorAwareOutputSchema(Map<String, Object> success) {
+    Map<String, Object> error =
+        schema(
+            fields(
+                "code", boundedString(64, "Stable error code"),
+                "category",
+                    enumStr(
+                        "VALIDATION",
+                        "AUTHORIZATION",
+                        "NOT_FOUND",
+                        "CONFLICT",
+                        "PRECONDITION_FAILED",
+                        "TIMEOUT",
+                        "EXECUTION",
+                        "UNSUPPORTED",
+                        "SECURITY",
+                        "INTERNAL"),
+                "message", boundedString(1000, "Safe, actionable error message"),
+                "retryable", bool("Whether retrying without changes may succeed")),
+            List.of("code", "category", "message", "retryable"));
+    return Map.of("oneOf", List.of(success, error));
+  }
+
+  private static Map<String, Object> boundedInteger(
+      long minimum, long maximum, String description) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("type", "integer");
+    result.put("description", description);
+    result.put("minimum", minimum);
+    result.put("maximum", maximum);
+    return result;
+  }
+
+  private static Map<String, Object> stringArray(int maxItems) {
+    return arrayOf(boundedString(4096, "Bounded string value"), maxItems);
+  }
+
+  private static Map<String, Object> arrayOf(Map<String, Object> item, int maxItems) {
+    return Map.of("type", "array", "items", item, "maxItems", maxItems);
+  }
+
+  private static Map<String, Object> fields(Object... nameAndSchemas) {
+    if (nameAndSchemas.length % 2 != 0)
+      throw new IllegalArgumentException("Schema fields must be key/value pairs");
+    Map<String, Object> result = new LinkedHashMap<>();
+    for (int i = 0; i < nameAndSchemas.length; i += 2) {
+      result.put((String) nameAndSchemas[i], nameAndSchemas[i + 1]);
+    }
+    return result;
+  }
+
+  private static Map<String, Object> boundedString(int maxLength, String description) {
+    Map<String, Object> result = new LinkedHashMap<>(str(description));
+    result.put("maxLength", maxLength);
+    return result;
   }
 
   private static Map<String, Object> schema(Map<String, Object> properties, List<String> required) {

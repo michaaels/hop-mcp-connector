@@ -2,11 +2,11 @@ schemaVersion: "1.0"
 kind: hop-marketplace-catalog
 plugins:
   - groupId: io.github.michaaels
-    artifactId: apache-hop-mcp
-    version: "1.0.0"
-    name: Apache Hop MCP
+    artifactId: hop-mcp-connector
+    version: "2.0.0"
+    name: MCP Connector for Apache Hop
     category: Community / AI
-    description: Native Java MCP server for Apache Hop with inspection, gated testing, and SHA-bound semantic correction plans.
+    description: Independent native Java MCP plugin for Apache Hop with bounded inspection, opt-in execution, and transactional semantic authoring.
     minHopVersion: "2.19.0"
     maxHopVersion: "2.20.999"
-    source: apache-hop-mcp
+    source: hop-mcp-connector

@@ -1,71 +1,74 @@
 # AGENTS.md
 
-This file is the operational contract for AI coding agents working in this repository.
+This is the operational contract for agents working in this repository.
 
-## Mission
+## Code discovery
 
-Maintain a small, secure, native-Java MCP plugin for Apache Hop. The Marketplace edition must remain installable as one Hop plugin and expose `hop mcp` through Hop's `@HopCommand` plugin discovery.
+This project uses codebase-memory-mcp. Prefer `search_graph`, `trace_path`, `get_code_snippet`, `query_graph`, and `search_code` for code discovery. Run `index_repository` first if the checkout is not indexed. Fall back to `rg` for string literals, non-code files, or when graph results are insufficient.
 
-## Supported baseline
+Always prefix shell commands with `rtk` (use `rtk proxy` for commands without an RTK wrapper).
 
-- Java: 21
-- Apache Hop: 2.19.x (`hop.version=2.19.0` compile baseline)
-- MCP Java SDK: 2.0.1
-- Transport: STDIO
-- Maven coordinate: `io.github.michaaels:apache-hop-mcp`
+## Mission and baseline
 
-## Architecture
+Maintain a small, secure, native-Java MCP plugin for Apache Hop. The Marketplace edition must remain installable as one Hop plugin and expose `hop mcp` through Hop's `@HopCommand` discovery.
 
-```text
-MCP client
-  -> hop mcp
-  -> HopMcpCommand
-  -> HopMcpServer
-  -> HopMcpService
-  -> safe static project inspection / selected native Hop APIs
-  -> Apache Hop runtime
-```
+- Java 21.
+- Apache Hop 2.19.0 Maven compile baseline; 2.20.0-SNAPSHOT compatibility profile.
+- MCP Java SDK 2.0.1; protocol baseline 2025-11-25.
+- Production transport is STDIO.
+- Maven coordinate: `io.github.michaaels:hop-mcp-connector`.
+- Product name: `MCP Connector for Apache Hop`.
 
-Do not reintroduce Python or a Java subprocess bridge into the Marketplace runtime.
+Keep `hop mcp` as the CLI command. Do not rename Java packages solely for branding. Do not reintroduce Python or a Java subprocess bridge into the Marketplace runtime.
 
-## Non-negotiable security rules
+## Architecture and security rules
 
-1. Never add execution, mutation, or broader authorization in a patch release.
-2. Never allow project paths to escape the configured root through `..`, absolute-path tricks, or symlinks.
-3. Keep DTDs and XML external entities disabled.
-4. Never print secrets returned from Hop metadata or XML. Extend redaction when new sensitive keys are found.
-5. STDIO stdout is protocol-only. Application/Hop logging belongs on stderr.
-6. Deep validation that can resolve fields or access external systems must remain explicit opt-in.
-7. Do not bundle `hop-core`, `hop-engine`, or `hop-ui` in the Marketplace ZIP.
-8. Do not weaken file-size, scan-count, result-count, or traversal-depth bounds without a documented reason and tests.
+1. Preserve native Hop integration: `@HopCommand`, `IHopCommand`, `PluginRegistry`, `PipelineMeta`, `WorkflowMeta`, metadata providers, run configurations, and metadata injection APIs.
+2. Never use arbitrary XML replacement for pipeline/workflow edits. Keep mutations semantic and transactional.
+3. Never add execution, mutation, or broader authorization in a patch release.
+4. Project paths must remain under the configured root after normalization and symlink resolution.
+5. Keep DTDs, external entities, external schemas, and XInclude disabled.
+6. Redact secrets before returning or logging data. Never expose passwords, tokens, the full environment, or arbitrary system properties.
+7. STDIO stdout is protocol-only. Application and Hop logs belong on stderr.
+8. Deep validation that can resolve fields or contact external systems stays explicit opt-in.
+9. Deep-check, execution, mutation/authoring, and Hop Web tools must be absent from `tools/list` unless their matching flag is enabled. Keep service-layer authorization as defense in depth.
+10. Do not bundle `hop-core`, `hop-engine`, `hop-ui`, or other Hop runtime jars in the Marketplace ZIP; keep Hop dependencies `provided` where applicable.
+11. Do not weaken file-size, scan-count, result-count, input-size, operation-count, or traversal-depth bounds without a documented reason and tests.
+12. Preserve and verify Jandex plugin metadata generation.
 
-## Before editing
+## New-tool completion checklist
 
-Read the relevant source and Apache Hop 2.19 API before guessing a method signature. Prefer release/2.19.0 source when compatibility matters.
+A new MCP tool is complete only when it has a stable name, concise description, strict bounded input schema, output schema where applicable, accurate annotations, a capability group, server-side authorization, bounds and redaction, unit and STDIO integration tests, documented error behavior, performance consideration, and user documentation.
 
-## Required validation
+## Before editing and validation
+
+Read the relevant source and Apache Hop 2.19 API before guessing a method signature. Prefer Apache Hop release/2.19.0 sources when compatibility matters.
 
 For ordinary changes run:
 
 ```bash
-mvn -B clean verify
+rtk mvn -B clean verify
 ```
 
-For packaging changes additionally inspect the ZIP:
+For compatibility changes run:
 
 ```bash
-unzip -l target/apache-hop-mcp-1.0.0.zip
+rtk mvn -B -P hop-2.20 clean verify
 ```
 
-It must contain `plugins/misc/apache-hop-mcp/` and must not contain Apache Hop runtime jars.
+For packaging changes inspect `target/hop-mcp-connector-${version}.zip`. It must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
 
-## Release rules
+Update tests when adding or changing a tool. Preserve coverage for protocol handshake, schema failures, unknown tools, error results, security bounds, package layout, and clean shutdown.
 
-- Plugin version and Marketplace catalog version must agree.
-- Release ZIP name is exactly `apache-hop-mcp-${version}.zip`.
-- GitHub Release tag is `v${version}`.
-- Keep Marketplace `minHopVersion` aligned with the tested baseline.
+## Branding, versioning, and releases
+
+- The project is independent of the Apache Software Foundation. Keep the complete Apache License 2.0 text and attribution/mark notice in source and ZIP.
+- Keep Maven, Marketplace catalog, `version.xml`, server metadata, release notes, ZIP filename, and release tag consistent.
+- Artifact and ZIP name: `hop-mcp-connector-${version}`; GitHub tag: `v${version}`.
+- Keep Marketplace minimum Hop version aligned with a verified baseline.
+- Release workflows are tag-controlled and must validate tag/POM consistency; never publish solely because a commit message contains `[release]`.
+- Do not push, tag, release, or publish artifacts unless the user explicitly asks.
 
 ## Semantic mutation rules
 
-Native mutation must use Hop semantic objects, not arbitrary XML string replacement. Python/outer transaction logic from older prototypes is not a requirement. A mutation implementation must provide: expected SHA-256, preview, backup, atomic write, native reload validation, and rollback.
+Native writes must use Hop semantic objects, not arbitrary XML string replacement. Each applied mutation must provide expected SHA-256, preview, backup, atomic write, native reload validation, recovery, transaction ID, and rollback.

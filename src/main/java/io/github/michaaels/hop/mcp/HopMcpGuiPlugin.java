@@ -14,14 +14,14 @@ import org.eclipse.swt.widgets.MessageBox;
 /** Hop Desktop and Hop Web entry point for explicit, session-scoped MCP live synchronization. */
 @GuiPlugin
 public class HopMcpGuiPlugin {
-  public static final String MENU_ID = "40250-menu-tools-apache-hop-mcp";
+  public static final String MENU_ID = "40250-menu-tools-hop-mcp-connector";
 
   private static final Map<HopGui, HopLiveUiSync> LIVE_SYNCS = new IdentityHashMap<>();
 
   @GuiMenuElement(
       root = HopGui.ID_MAIN_MENU,
       id = MENU_ID,
-      label = "Apache Hop MCP live synchronization...",
+      label = "MCP Connector for Apache Hop live synchronization...",
       toolTip = "Start or stop live synchronization for semantic MCP changes",
       parentId = HopGui.ID_MAIN_MENU_TOOLS_PARENT_ID,
       separator = true)
@@ -46,7 +46,7 @@ public class HopMcpGuiPlugin {
       LIVE_SYNCS.put(hopGui, candidate);
       showInformation(
           hopGui,
-          "Apache Hop MCP live synchronization",
+          "MCP Connector for Apache Hop live synchronization",
           "Live synchronization for "
               + clientLabel(candidate)
               + " is running for:\n\n"
@@ -54,10 +54,12 @@ public class HopMcpGuiPlugin {
               + "\n\nSemantic MCP changes will open or refresh Hop definitions. "
               + "Tabs with unsaved changes are never overwritten.");
     } catch (Exception e) {
-      hopGui.getLog().logError("Unable to start Apache Hop MCP live synchronization", e);
+      hopGui
+          .getLog()
+          .logError("Unable to start MCP Connector for Apache Hop live synchronization", e);
       showError(
           hopGui,
-          "Apache Hop MCP",
+          "MCP Connector for Apache Hop",
           "Live synchronization could not be started. See the Hop log for details.");
     }
   }
@@ -67,13 +69,15 @@ public class HopMcpGuiPlugin {
       liveSync.close();
       showInformation(
           hopGui,
-          "Apache Hop MCP live synchronization",
+          "MCP Connector for Apache Hop live synchronization",
           "Live synchronization for " + clientLabel(liveSync) + " has stopped.");
     } catch (IOException e) {
-      hopGui.getLog().logError("Unable to stop Apache Hop MCP live synchronization", e);
+      hopGui
+          .getLog()
+          .logError("Unable to stop MCP Connector for Apache Hop live synchronization", e);
       showError(
           hopGui,
-          "Apache Hop MCP",
+          "MCP Connector for Apache Hop",
           "Live synchronization could not be stopped cleanly. See the Hop log for details.");
     }
   }

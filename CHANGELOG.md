@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.0 - Unreleased
+
+- Renamed the Maven, Marketplace, plugin installation, ZIP, and MCP server identifiers to `hop-mcp-connector`.
+- Changed the Marketplace product name to **MCP Connector for Apache Hop** and clarified independent-project and trademark attribution.
+- Replaced the abbreviated license notice with the complete Apache License 2.0 and added a distributable `NOTICE`.
+- Switched the STDIO contract test to MCP revision 2025-11-25 and expanded it for tool discovery, hidden authorization-gated tools, invalid input, unknown tools, handler errors, and EOF.
+- Omitted deep-check, execution, mutation/authoring, and Hop Web tools from `tools/list` unless their matching opt-in is enabled, while preserving service-layer checks.
+- Added MCP tool annotations from the MCP Java SDK 2.0.1.
+- Added strict bounded success and error output schemas for eleven core, inspection, validation, execution, and mutation tools; normalized MCP tool errors to stable codes and categories.
+- Added bounds and truncation indicators for project inspection and validation diagnostics.
+- Replaced commit-message-based releases with explicit version-tag validation.
+- Expanded STDIO end-to-end coverage to call native component-schema discovery, synchronous execution, and asynchronous execution status with execution explicitly enabled. Actual `structuredContent` for all eleven output-schema tools is validated against its advertised JSON Schema using the MCP SDK validator.
+- Official MCP Conformance Suite integration and installation through a published Hop Marketplace repository remain pending; this release is not ready to publish.
+
 ## 1.0.0 - 2026-09-21
 
 - Promoted the native semantic MCP tool contract to its first stable release.

@@ -309,7 +309,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
       throw new IOException("Live UI control file escaped the project root");
     }
     ByteArrayOutputStream output = new ByteArrayOutputStream();
-    values.store(output, "Apache Hop MCP live UI event");
+    values.store(output, "MCP Connector for Apache Hop live UI event");
     byte[] content = output.toByteArray();
     if (content.length > MAX_CONTROL_FILE_BYTES) {
       throw new IOException("Live UI control file exceeds size limit");

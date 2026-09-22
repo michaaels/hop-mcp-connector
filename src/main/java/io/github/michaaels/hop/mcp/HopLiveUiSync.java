@@ -117,7 +117,7 @@ abstract class HopLiveUiSync implements AutoCloseable {
         }
       }
     } catch (Exception e) {
-      hopGui.getLog().logError("Apache Hop MCP live synchronization poll failed", e);
+      hopGui.getLog().logError("MCP Connector for Apache Hop live synchronization poll failed", e);
     }
   }
 
@@ -128,7 +128,9 @@ abstract class HopLiveUiSync implements AutoCloseable {
     try {
       broker.heartbeat(session);
     } catch (Exception e) {
-      hopGui.getLog().logError("Apache Hop MCP live synchronization heartbeat failed", e);
+      hopGui
+          .getLog()
+          .logError("MCP Connector for Apache Hop live synchronization heartbeat failed", e);
     }
   }
 
@@ -185,7 +187,9 @@ abstract class HopLiveUiSync implements AutoCloseable {
     } catch (Exception e) {
       hopGui
           .getLog()
-          .logError("Unable to apply Apache Hop MCP live event for '" + event.path() + "'", e);
+          .logError(
+              "Unable to apply MCP Connector for Apache Hop live event for '" + event.path() + "'",
+              e);
       acknowledge(event, "error", "Unable to apply the live event; see the Hop log");
     }
   }
@@ -226,7 +230,7 @@ abstract class HopLiveUiSync implements AutoCloseable {
     try {
       broker.acknowledge(session, event, status, message);
     } catch (Exception e) {
-      hopGui.getLog().logError("Unable to acknowledge Apache Hop MCP live event", e);
+      hopGui.getLog().logError("Unable to acknowledge MCP Connector for Apache Hop live event", e);
     }
   }
 
@@ -292,7 +296,9 @@ abstract class HopLiveUiSync implements AutoCloseable {
     try {
       close();
     } catch (IOException e) {
-      hopGui.getLog().logError("Unable to stop Apache Hop MCP live synchronization", e);
+      hopGui
+          .getLog()
+          .logError("Unable to stop MCP Connector for Apache Hop live synchronization", e);
     }
   }
 }
