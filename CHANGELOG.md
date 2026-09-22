@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 - Unreleased
+## 2.0.0 - 2026-09-22
 
 - Renamed the Maven, Marketplace, plugin installation, ZIP, and MCP server identifiers to `hop-mcp-connector`.
 - Changed the Marketplace product name to **MCP Connector for Apache Hop** and clarified independent-project and trademark attribution.
@@ -12,7 +12,7 @@
 - Added bounds and truncation indicators for project inspection and validation diagnostics.
 - Replaced commit-message-based releases with explicit version-tag validation.
 - Expanded STDIO end-to-end coverage to call native component-schema discovery, synchronous execution, and asynchronous execution status with execution explicitly enabled. Actual `structuredContent` for all eleven output-schema tools is validated against its advertised JSON Schema using the MCP SDK validator.
-- Official MCP Conformance Suite integration and installation through a published Hop Marketplace repository remain pending; this release is not ready to publish.
+- Documented that the official MCP Conformance Suite was not run for this release and that installation through the published Hop Marketplace catalog requires post-publication verification.
 
 ## 1.0.0 - 2026-09-21
 
