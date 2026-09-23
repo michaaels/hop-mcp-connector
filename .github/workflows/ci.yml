@@ -74,6 +74,85 @@ jobs:
             target/bom.json
             target/bom.xml
 
+  mcp-conformance-2025-11-25:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MCP_CONFORMANCE_RUNNER: 0.2.0-alpha.11
+      MCP_CONFORMANCE_REVISION: 2025-11-25
+      REPORT_DIR: ${{ runner.temp }}/mcp-conformance-2025-11-25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+      - name: Compile the test-only Streamable HTTP adapter
+        run: mvn -B -DskipTests test-compile
+      - name: Capture environment and requirement set
+        run: |
+          set -euo pipefail
+          mkdir -p "$REPORT_DIR"
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "connector_version=$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("pom.xml").getroot().findtext("{http://maven.apache.org/POM/4.0.0}version"))')"
+            java -version
+            node --version
+            npm --version
+            npx --version
+            npx --yes "@modelcontextprotocol/conformance@$MCP_CONFORMANCE_RUNNER" --version
+          } > "$REPORT_DIR/environment.txt" 2>&1
+          npx --yes "@modelcontextprotocol/conformance@$MCP_CONFORMANCE_RUNNER" \
+            list --requirements "$MCP_CONFORMANCE_REVISION" > "$REPORT_DIR/requirements.txt"
+      - name: Start localhost-only conformance adapter
+        run: |
+          set -euo pipefail
+          mkdir -p "$REPORT_DIR/project"
+          mvn -B -DskipTests exec:java \
+            -Dexec.classpathScope=test \
+            -Dexec.mainClass=io.github.michaaels.hop.mcp.HopMcpConformanceServer \
+            -Dexec.args="--root $REPORT_DIR/project --ready-file $REPORT_DIR/ready.txt --port 0" \
+            > "$REPORT_DIR/server.log" 2>&1 &
+          echo $! > "$REPORT_DIR/server.pid"
+          for attempt in $(seq 1 60); do
+            if test -s "$REPORT_DIR/ready.txt"; then break; fi
+            sleep 1
+          done
+          test -s "$REPORT_DIR/ready.txt"
+          cat "$REPORT_DIR/ready.txt"
+          echo "MCP_CONFORMANCE_URL=$(cat "$REPORT_DIR/ready.txt")" >> "$GITHUB_ENV"
+      - name: Run the exact frozen requirement-set command
+        continue-on-error: true
+        run: |
+          set +e
+          timeout --signal=TERM 360s npx --yes "@modelcontextprotocol/conformance@$MCP_CONFORMANCE_RUNNER" \
+            server --url "$MCP_CONFORMANCE_URL" \
+            --requirements "$MCP_CONFORMANCE_REVISION" --verbose \
+            > "$REPORT_DIR/requirement-set.raw.txt" 2>&1
+          echo $? > "$REPORT_DIR/requirement-set.exit-code"
+      - name: Run every required server scenario individually
+        run: node scripts/ci/mcp-conformance-required.mjs "$MCP_CONFORMANCE_URL" "$REPORT_DIR/required"
+      - name: Stop conformance adapter
+        if: always()
+        run: |
+          set +e
+          if test -s "$REPORT_DIR/server.pid"; then
+            kill "$(cat "$REPORT_DIR/server.pid")" 2>/dev/null || true
+          fi
+      - name: Upload MCP conformance report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-conformance-2025-11-25
+          path: ${{ runner.temp }}/mcp-conformance-2025-11-25
+
   hop-219-smoke:
     needs: build
     runs-on: ubuntu-latest

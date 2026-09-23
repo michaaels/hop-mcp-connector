@@ -1,5 +1,6 @@
 package io.github.michaaels.hop.mcp;
 
+import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapperSupplier;
 import io.modelcontextprotocol.json.schema.jackson3.JacksonJsonSchemaValidatorSupplier;
 import io.modelcontextprotocol.server.McpServer;
@@ -19,6 +20,12 @@ import java.util.concurrent.CountDownLatch;
 
 final class HopMcpServer implements AutoCloseable {
   @FunctionalInterface
+  interface SpecificationFactory {
+    McpServer.SyncSpecification<?> create(
+        McpJsonMapper mapper, InputStream input, OutputStream protocolOut);
+  }
+
+  @FunctionalInterface
   interface Handler {
     Map<String, Object> call(Map<String, Object> args) throws Exception;
   }
@@ -30,12 +37,30 @@ final class HopMcpServer implements AutoCloseable {
       new java.util.ArrayList<>();
 
   HopMcpServer(HopMcpService service, InputStream in, OutputStream protocolOut) {
+    this(
+        service,
+        in,
+        protocolOut,
+        (mapper, stdioIn, stdioOut) ->
+            McpServer.sync(new StdioServerTransportProvider(mapper, stdioIn, stdioOut)));
+  }
+
+  static HopMcpServer withSpecificationFactory(
+      HopMcpService service, SpecificationFactory specificationFactory) {
+    return new HopMcpServer(service, null, null, specificationFactory);
+  }
+
+  private HopMcpServer(
+      HopMcpService service,
+      InputStream in,
+      OutputStream protocolOut,
+      SpecificationFactory specificationFactory) {
     this.service = service;
-    input = new TrackingInputStream(in);
+    input = in == null ? null : new TrackingInputStream(in);
     var mapper = new JacksonMcpJsonMapperSupplier().get();
-    var transport = new StdioServerTransportProvider(mapper, input, protocolOut);
     var specification =
-        McpServer.sync(transport)
+        specificationFactory
+            .create(mapper, input, protocolOut)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
             .serverInfo("hop-mcp-connector", HopMcpVersion.current())
@@ -1822,7 +1847,7 @@ final class HopMcpServer implements AutoCloseable {
                 "message", boundedString(1000, "Safe, actionable error message"),
                 "retryable", bool("Whether retrying without changes may succeed")),
             List.of("code", "category", "message", "retryable"));
-    return Map.of("oneOf", List.of(success, error));
+    return Map.of("type", "object", "oneOf", List.of(success, error));
   }
 
   private static Map<String, Object> boundedInteger(
