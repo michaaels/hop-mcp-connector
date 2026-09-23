@@ -1,0 +1,35 @@
+# Known MCP conformance gaps for the application server profile.
+#
+# The official 2025-11-25 requirement set includes scenarios for an "everything"
+# conformance fixture (named test tools, prompts, resources, completion, sampling,
+# and elicitation). hop-mcp-connector intentionally exposes Apache Hop tools only.
+#
+# These entries remain failures against the full requirement set; the official
+# runner's expected-failures mechanism turns them into a regression baseline:
+# - a new unlisted failure fails CI;
+# - a baselined scenario that starts passing also fails CI until this file is cleaned up.
+server:
+  - completion-complete
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-with-logging
+  - tools-call-error
+  - tools-call-with-progress
+  - tools-call-sampling
+  - tools-call-elicitation
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  - resources-list
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - resources-subscribe
+  - resources-unsubscribe
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
