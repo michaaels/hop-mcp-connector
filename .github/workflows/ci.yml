@@ -134,17 +134,16 @@ jobs:
           test -s "$REPORT_DIR/ready.txt"
           cat "$REPORT_DIR/ready.txt"
           echo "MCP_CONFORMANCE_URL=$(cat "$REPORT_DIR/ready.txt")" >> "$GITHUB_ENV"
-      - name: Run the exact frozen requirement-set command
-        continue-on-error: true
+      - name: Run frozen MCP requirement set with explicit regression baseline
+        shell: bash
         run: |
-          set +e
+          set -euo pipefail
           timeout --signal=TERM 360s npx --yes "@modelcontextprotocol/conformance@$MCP_CONFORMANCE_RUNNER" \
             server --url "$MCP_CONFORMANCE_URL" \
-            --requirements "$MCP_CONFORMANCE_REVISION" --verbose \
-            > "$REPORT_DIR/requirement-set.raw.txt" 2>&1
-          echo $? > "$REPORT_DIR/requirement-set.exit-code"
-      - name: Run every required server scenario individually
-        run: node scripts/ci/mcp-conformance-required.mjs "$MCP_CONFORMANCE_URL" "$REPORT_DIR/required"
+            --requirements "$MCP_CONFORMANCE_REVISION" \
+            --expected-failures ".github/mcp-conformance-2025-11-25-baseline.yml" \
+            --output-dir "$REPORT_DIR/results" \
+            --verbose 2>&1 | tee "$REPORT_DIR/requirement-set.txt"
       - name: Stop conformance adapter
         if: always()
         run: |
