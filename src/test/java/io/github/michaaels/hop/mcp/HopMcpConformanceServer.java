@@ -76,6 +76,7 @@ public final class HopMcpConformanceServer {
     wrapper.setAsyncSupported(true);
     context.addChild(wrapper);
     context.addServletMappingDecoded("/*", "mcpServlet");
+    tomcat.getConnector().setProperty("address", "127.0.0.1");
     tomcat.getConnector().setAsyncTimeout(30_000);
     return tomcat;
   }
