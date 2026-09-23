@@ -81,7 +81,6 @@ jobs:
     env:
       MCP_CONFORMANCE_RUNNER: 0.2.0-alpha.11
       MCP_CONFORMANCE_REVISION: 2025-11-25
-      REPORT_DIR: ${{ runner.temp }}/mcp-conformance-2025-11-25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,6 +93,13 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
+      - name: Initialize conformance report directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT_DIR="$RUNNER_TEMP/mcp-conformance-2025-11-25"
+          mkdir -p "$REPORT_DIR"
+          echo "REPORT_DIR=$REPORT_DIR" >> "$GITHUB_ENV"
       - name: Compile the test-only Streamable HTTP adapter
         run: mvn -B -DskipTests test-compile
       - name: Capture environment and requirement set
