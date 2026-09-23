@@ -10,7 +10,35 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
+      - name: Detect Dependency Graph availability
+        id: dependency-graph
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o "$RUNNER_TEMP/dependency-graph.json" -w '%{http_code}' \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/dependency-graph/sbom")"
+          case "$status" in
+            200)
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::GitHub Dependency Graph is not enabled for this repository; dependency review is skipped."
+              ;;
+            *)
+              echo "Unexpected response while checking Dependency Graph availability: HTTP $status" >&2
+              cat "$RUNNER_TEMP/dependency-graph.json" >&2 || true
+              exit 1
+              ;;
+          esac
+
       - name: Review dependency changes
+        if: steps.dependency-graph.outputs.enabled == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
