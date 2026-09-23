@@ -14,7 +14,7 @@
     <hop.version>2.19.0</hop.version>
     <mcp.version>2.0.1</mcp.version>
     <jakarta.servlet.version>6.1.0</jakarta.servlet.version>
-    <tomcat.version>11.0.2</tomcat.version>
+    <tomcat.version>11.0.26</tomcat.version>
     <junit.version>6.1.3</junit.version>
   </properties>
 
@@ -44,12 +44,12 @@
     </resources>
     <plugins>
     <plugin><groupId>io.smallrye</groupId><artifactId>jandex-maven-plugin</artifactId><version>3.6.0</version><executions><execution><id>make-index</id><goals><goal>jandex</goal></goals></execution></executions></plugin>
-    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.0</version><configuration><release>21</release></configuration></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.16.0</version><configuration><release>21</release></configuration></plugin>
     <plugin><groupId>com.spotify.fmt</groupId><artifactId>fmt-maven-plugin</artifactId><version>2.25</version><executions><execution><id>check-java-format</id><phase>verify</phase><goals><goal>check</goal></goals></execution></executions></plugin>
-    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.3</version><configuration><useModulePath>false</useModulePath><systemPropertyVariables><project.version>${project.version}</project.version></systemPropertyVariables></configuration></plugin>
-    <plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.1.0</version></plugin>
-    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-assembly-plugin</artifactId><version>3.7.1</version><configuration><descriptors><descriptor>src/assembly/marketplace.xml</descriptor></descriptors><appendAssemblyId>false</appendAssemblyId><finalName>${project.artifactId}-${project.version}</finalName></configuration><executions><execution><id>marketplace-zip</id><phase>package</phase><goals><goal>single</goal></goals></execution></executions></plugin>
-    <plugin><groupId>org.cyclonedx</groupId><artifactId>cyclonedx-maven-plugin</artifactId><version>2.9.2</version><executions><execution><id>generate-sbom</id><phase>package</phase><goals><goal>makeAggregateBom</goal></goals></execution></executions></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.6.0</version><configuration><useModulePath>false</useModulePath><systemPropertyVariables><project.version>${project.version}</project.version></systemPropertyVariables></configuration></plugin>
+    <plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.6.4</version></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-assembly-plugin</artifactId><version>3.8.0</version><configuration><descriptors><descriptor>src/assembly/marketplace.xml</descriptor></descriptors><appendAssemblyId>false</appendAssemblyId><finalName>${project.artifactId}-${project.version}</finalName></configuration><executions><execution><id>marketplace-zip</id><phase>package</phase><goals><goal>single</goal></goals></execution></executions></plugin>
+    <plugin><groupId>org.cyclonedx</groupId><artifactId>cyclonedx-maven-plugin</artifactId><version>2.9.3</version><executions><execution><id>generate-sbom</id><phase>package</phase><goals><goal>makeAggregateBom</goal></goals></execution></executions></plugin>
     </plugins>
   </build>
 
