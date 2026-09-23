@@ -131,6 +131,26 @@ async function request(method, params) {
   return response.result;
 }
 
+async function listAllTools() {
+  const tools = [];
+  const seenCursors = new Set();
+  let cursor;
+  for (let page = 0; page < 32; page++) {
+    const result = await request("tools/list", cursor ? { cursor } : {});
+    if (!Array.isArray(result.tools)) {
+      throw new Error("tools/list returned an invalid tools page");
+    }
+    tools.push(...result.tools);
+    cursor = result.nextCursor;
+    if (!cursor) return tools;
+    if (typeof cursor !== "string" || seenCursors.has(cursor)) {
+      throw new Error("tools/list returned an invalid or repeated cursor");
+    }
+    seenCursors.add(cursor);
+  }
+  throw new Error("tools/list exceeded the smoke-test pagination limit");
+}
+
 try {
   const initialized = await request("initialize", {
     protocolVersion: "2025-11-25",
@@ -152,8 +172,7 @@ try {
     }) + "\n",
     "utf8",
   );
-  const toolList = await request("tools/list", {});
-  const tools = toolList.tools ?? [];
+  const tools = await listAllTools();
   const toolNames = new Set(tools.map((tool) => tool.name));
   for (const name of ["hop_config", "hop_validate"]) {
     if (!toolNames.has(name)) throw new Error("Missing core tool: " + name);
