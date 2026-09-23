@@ -460,6 +460,40 @@ class HopMcpServerStdioTest {
   }
 
   @Test
+  void registersAllToolsBeforeAcceptingProtocolRequests() throws Exception {
+    try (PipedInputStream serverInput = new PipedInputStream();
+        PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
+        PipedInputStream clientInput = new PipedInputStream();
+        PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+        BufferedReader responses =
+            new BufferedReader(new InputStreamReader(clientInput, StandardCharsets.UTF_8));
+        PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
+        ExecutorService reader = Executors.newSingleThreadExecutor()) {
+      requests.println(
+          "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"startup-race-test\",\"version\":\"1\"}}}");
+      requests.println(
+          "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
+      requests.println("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}");
+
+      try (HopMcpServer server =
+          new HopMcpServer(
+              new HopMcpService(
+                  new ProjectFiles(project), new Variables(), new MemoryMetadataProvider(), false),
+              serverInput,
+              serverOutput)) {
+        assertResponseId(readResponse(reader, responses), 1);
+        String toolsResponse = readResponse(reader, responses);
+        assertResponseId(toolsResponse, 2);
+        assertTrue(toolsResponse.contains("hop_config"), toolsResponse);
+        assertTrue(toolsResponse.contains("hop_validate"), toolsResponse);
+        assertTrue(toolsResponse.contains("hop_dependencies"), toolsResponse);
+        clientOutput.close();
+        server.awaitEof();
+      }
+    }
+  }
+
+  @Test
   void validatesWebRequestOutputSchemaOverStdio() throws Exception {
     HttpServer web = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     byte[] body = "credentials=web-secret".getBytes(StandardCharsets.UTF_8);

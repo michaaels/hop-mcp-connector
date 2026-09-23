@@ -175,7 +175,16 @@ try {
   const tools = await listAllTools();
   const toolNames = new Set(tools.map((tool) => tool.name));
   for (const name of ["hop_config", "hop_validate"]) {
-    if (!toolNames.has(name)) throw new Error("Missing core tool: " + name);
+    if (!toolNames.has(name)) {
+      throw new Error(
+        "Missing core tool: " +
+          name +
+          "; discovered " +
+          tools.length +
+          " tools: " +
+          [...toolNames].sort().join(", "),
+      );
+    }
   }
   for (const name of [
     "hop_deep_check",

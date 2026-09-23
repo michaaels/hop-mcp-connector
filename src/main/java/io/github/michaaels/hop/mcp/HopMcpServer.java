@@ -26,21 +26,22 @@ final class HopMcpServer implements AutoCloseable {
   private final TrackingInputStream input;
   private final McpSyncServer server;
   private final HopMcpService service;
+  private final List<McpServerFeatures.SyncToolSpecification> toolSpecifications =
+      new java.util.ArrayList<>();
 
   HopMcpServer(HopMcpService service, InputStream in, OutputStream protocolOut) {
     this.service = service;
     input = new TrackingInputStream(in);
     var mapper = new JacksonMcpJsonMapperSupplier().get();
     var transport = new StdioServerTransportProvider(mapper, input, protocolOut);
-    server =
+    var specification =
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
             .serverInfo("hop-mcp-connector", HopMcpVersion.current())
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
-                "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, protected backups, atomic filesystem replacement when supported (with a safe replace fallback), native reload validation and rollback.")
-            .build();
+                "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, protected backups, atomic filesystem replacement when supported (with a safe replace fallback), native reload validation and rollback.");
     add(
         "hop_config",
         "Show MCP project root, limits and security mode.",
@@ -451,6 +452,7 @@ final class HopMcpServer implements AutoCloseable {
         a ->
             service.webRequest(
                 sDefault(a, "method", "GET"), s(a, "path"), headers(a.get("headers"))));
+    server = specification.tools(toolSpecifications).build();
   }
 
   void awaitEof() throws InterruptedException {
@@ -517,7 +519,7 @@ final class HopMcpServer implements AutoCloseable {
                   }
                 })
             .build();
-    server.addTool(spec);
+    toolSpecifications.add(spec);
   }
 
   private static McpSchema.ToolAnnotations annotations(String name) {
