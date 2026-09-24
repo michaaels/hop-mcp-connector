@@ -36,10 +36,19 @@ final class HopMetadataService {
 
   private final ProjectFiles files;
   private final IHopMetadataProvider metadataProvider;
+  private final HopProjectDefinitionIndex definitionIndex;
 
   HopMetadataService(ProjectFiles files, IHopMetadataProvider metadataProvider) {
+    this(files, metadataProvider, new HopProjectDefinitionIndex(files));
+  }
+
+  HopMetadataService(
+      ProjectFiles files,
+      IHopMetadataProvider metadataProvider,
+      HopProjectDefinitionIndex definitionIndex) {
     this.files = files;
     this.metadataProvider = metadataProvider;
+    this.definitionIndex = definitionIndex;
   }
 
   Map<String, Object> types(int offset, int limit) throws Exception {
@@ -148,33 +157,31 @@ final class HopMetadataService {
           "METADATA_NOT_FOUND", "Metadata object was not found for the requested type and name.");
     }
 
-    Map<String, Object> search = files.search(name, "**", 0, MAX_DEPENDENCY_RESULTS);
-    Object rawResults = search.get("results");
+    HopProjectDefinitionIndex.Snapshot snapshot = definitionIndex.snapshot();
     List<Map<String, Object>> usedBy = new ArrayList<>();
-    Set<String> seenPaths = new LinkedHashSet<>();
-    boolean scanTruncated = Boolean.TRUE.equals(search.get("has_more"));
-    if (rawResults instanceof List<?> results) {
-      dependencyScan:
-      for (Object raw : results) {
-        if (!(raw instanceof Map<?, ?> result)) continue;
-        Object pathValue = result.get("path");
-        String path = pathValue == null ? "" : String.valueOf(pathValue);
-        String lower = path.toLowerCase(Locale.ROOT);
-        if ((!lower.endsWith(".hpl") && !lower.endsWith(".hwf")) || !seenPaths.add(path)) continue;
-        List<String> components = matchingComponents(path, name);
-        if (components.isEmpty()) components = List.of("unknown");
-        for (String component : components) {
-          usedBy.add(new LinkedHashMap<>(Map.of("path", path, "component", component)));
-          if (usedBy.size() > MAX_DEPENDENCY_RESULTS) {
-            scanTruncated = true;
-            break dependencyScan;
-          }
+    boolean resultTruncated = false;
+    dependencyScan:
+    for (HopProjectDefinitionIndex.Entry definition : snapshot.definitions().values()) {
+      if (!definition.containsText(name)) continue;
+      List<String> components =
+          definition.componentsContaining(name, MAX_DEPENDENCY_RESULTS + 1);
+      if (components.isEmpty()) components = List.of("unknown");
+      for (String component : components) {
+        if (usedBy.size() >= MAX_DEPENDENCY_RESULTS) {
+          resultTruncated = true;
+          break dependencyScan;
         }
+        usedBy.add(
+            new LinkedHashMap<>(
+                Map.of("path", definition.path(), "component", safeString(component))));
       }
+      if (definition.componentsTruncated()) resultTruncated = true;
     }
+
     int end = Math.min(usedBy.size(), offset + limit);
     List<Map<String, Object>> page =
         offset >= usedBy.size() ? List.of() : new ArrayList<>(usedBy.subList(offset, end));
+    boolean scanTruncated = snapshot.truncated() || resultTruncated;
     boolean hasMore = scanTruncated || end < usedBy.size();
     return new LinkedHashMap<>(
         Map.of(
@@ -187,52 +194,6 @@ final class HopMetadataService {
             "returned", page.size(),
             "has_more", hasMore,
             "used_by", page));
-  }
-
-  private List<String> matchingComponents(String path, String metadataName) {
-    try {
-      String definition = files.readText(path);
-      Map<String, Object> inspection = HopXml.inspect(path, definition);
-      Object rawComponents = inspection.get("components");
-      if (!(rawComponents instanceof List<?> components)) return List.of();
-      List<String> matches = new ArrayList<>();
-      for (Object rawComponent : components) {
-        if (!(rawComponent instanceof Map<?, ?> component)) continue;
-        Object componentNameValue = component.get("name");
-        String componentName = componentNameValue == null ? "" : String.valueOf(componentNameValue);
-        if (componentName.isBlank()) continue;
-        Map<String, Object> detail = HopXml.component(path, definition, componentName);
-        if (containsString(detail, metadataName, 0)) {
-          matches.add(componentName);
-          if (matches.size() >= MAX_METADATA_RESULTS) break;
-        }
-      }
-      return matches;
-    } catch (Exception ignored) {
-      return List.of();
-    }
-  }
-
-  private boolean containsString(Object value, String expected, int depth) {
-    if (value == null || depth > MAX_METADATA_DEPTH) return false;
-    if (value instanceof String text) {
-      return text.toLowerCase(Locale.ROOT).contains(expected.toLowerCase(Locale.ROOT));
-    }
-    if (value instanceof Map<?, ?> map) {
-      for (Map.Entry<?, ?> entry : map.entrySet()) {
-        if (containsString(entry.getKey(), expected, depth + 1)
-            || containsString(entry.getValue(), expected, depth + 1)) return true;
-      }
-      return false;
-    }
-    if (value instanceof Iterable<?> iterable) {
-      int count = 0;
-      for (Object item : iterable) {
-        if (containsString(item, expected, depth + 1)) return true;
-        if (++count >= MAX_METADATA_COLLECTION_ITEMS) break;
-      }
-    }
-    return false;
   }
 
   private Map<String, Object> projectMetadata(IHopMetadata metadata) {
