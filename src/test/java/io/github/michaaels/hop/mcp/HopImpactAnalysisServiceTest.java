@@ -17,11 +17,15 @@ class HopImpactAnalysisServiceTest {
   void combinesTablesReferencesDependenciesAndLineageWithinBounds() throws Exception {
     Files.writeString(
         project.resolve("enrich_cells.hpl"),
-        pipeline("select * from DWH.DIM_SITE", "hourly_kpi.hwf", "DWH_PROD"));
+        pipeline("select * from DWH.DIM_SITE", "child.hwf", "DWH_PROD"));
     Files.writeString(
         project.resolve("load_site.hpl"), pipeline("insert into DWH.DIM_SITE", "", "DWH_PROD"));
     Files.writeString(
-        project.resolve("hourly_kpi.hwf"), workflow("enrich_cells.hpl", "DWH_PROD"));
+        project.resolve("parent.hwf"), workflow("enrich_cells.hpl", "DWH_PROD"));
+    Files.writeString(project.resolve("child.hwf"), workflow("", "DWH_PROD"));
+    Files.writeString(
+        project.resolve("archive.hpl"),
+        pipeline("select * from DWH.DIM_SITE_ARCHIVE", "", "DWH_PROD"));
 
     Map<String, Object> result =
         new HopImpactAnalysisService(new ProjectFiles(project))
@@ -30,7 +34,10 @@ class HopImpactAnalysisServiceTest {
     assertEquals(3, result.get("node_count"));
     assertEquals(3, result.get("returned_nodes"));
     assertTrue(String.valueOf(result.get("table_references")).contains("DWH.DIM_SITE"));
-    assertTrue(String.valueOf(result.get("dependencies")).contains("hourly_kpi.hwf"));
+    assertTrue(String.valueOf(result.get("dependencies")).contains("parent.hwf"));
+    assertTrue(String.valueOf(result.get("nodes")).contains("parent.hwf"));
+    assertTrue(!String.valueOf(result.get("nodes")).contains("child.hwf"));
+    assertTrue(!String.valueOf(result.get("nodes")).contains("archive.hpl"));
     assertTrue(String.valueOf(result.get("lineage")).contains("enrich_cells.hpl"));
     assertEquals(false, result.get("results_truncated"));
   }
