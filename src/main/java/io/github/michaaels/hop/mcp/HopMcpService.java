@@ -95,11 +95,12 @@ final class HopMcpService implements AutoCloseable {
     this.allowMutation = allowMutation;
     this.allowWebApi = allowWebApi;
     this.webClient = webClient;
-    this.metadata = new HopMetadataService(files, metadataProvider);
+    HopProjectDefinitionIndex definitionIndex = new HopProjectDefinitionIndex(files);
+    this.metadata = new HopMetadataService(files, metadataProvider, definitionIndex);
     this.connections = new HopConnectionService(metadataProvider, variables, allowDeepCheck);
     this.schemaCompare = new HopSchemaCompareService(metadataProvider, variables, allowDeepCheck);
     this.definitionDiff = new HopDefinitionDiffService(files, variables, metadataProvider);
-    this.impactAnalysis = new HopImpactAnalysisService(files, variables);
+    this.impactAnalysis = new HopImpactAnalysisService(files, variables, definitionIndex);
     this.runConfigurations = new HopRunConfigurationService(metadataProvider, variables);
     this.environmentDiff = new HopEnvironmentDiffService(files, variables, runConfigurations);
     this.executionRepository = new HopExecutionRepository(files, variables, metadataProvider);
