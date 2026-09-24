@@ -70,17 +70,20 @@ final class HopDiagnosisService {
       int previousLimit)
       throws Exception {
     validate(location, executionId, channelId, previousLimit);
-    Map<String, Object> detail = executions.detail(location, executionId);
+    Map<String, Object> executionSnapshot =
+        executions.diagnosticSnapshot(location, executionId, previousLimit);
+    Map<String, Object> detail = objectMap(executionSnapshot.get("detail"));
     Map<String, Object> summary = objectMap(detail.get("execution"));
     String path = safeText(summary.get("path"), MAX_PATH_LENGTH);
     String runConfiguration = safeText(summary.get("run_configuration"), 512);
 
     Evidence executionEvidence = executionEvidence(detail, summary);
-    Evidence metricEvidence = metricsEvidence(location, executionId);
+    Evidence metricEvidence = metricsEvidence(objectMap(executionSnapshot.get("metrics")));
     Evidence logEvidence = logsEvidence(channelId, includeGeneral, logFrom, logTo);
     Evidence definitionEvidence = definitionEvidence(path);
     Evidence configurationEvidence = configurationEvidence(path, runConfiguration);
-    Evidence previousEvidence = previousEvidence(location, path, executionId, previousLimit);
+    Evidence previousEvidence =
+        previousEvidence(objectMap(executionSnapshot.get("history")), executionId);
 
     List<Map<String, Object>> facts = new ArrayList<>();
     addExecutionFacts(facts, summary, detail);
@@ -159,9 +162,8 @@ final class HopDiagnosisService {
     return new Evidence(value, true, false);
   }
 
-  private Evidence metricsEvidence(String location, String executionId) {
+  private Evidence metricsEvidence(Map<String, Object> raw) {
     try {
-      Map<String, Object> raw = executions.metrics(location, executionId);
       List<Map<String, Object>> components = new ArrayList<>();
       Object rows = raw.get("components");
       if (rows instanceof List<?> list) {
@@ -229,7 +231,7 @@ final class HopDiagnosisService {
     try {
       String xml = files.readText(path);
       Document document = HopXml.parse(xml);
-      Map<String, Object> inspection = HopXml.inspect(path, xml);
+      Map<String, Object> inspection = HopXml.inspect(path, document);
       Map<String, SafeText> references = new LinkedHashMap<>();
       collectMetadata(document.getDocumentElement(), "", references);
       List<Map<String, Object>> metadataRows = new ArrayList<>();
@@ -284,10 +286,8 @@ final class HopDiagnosisService {
     }
   }
 
-  private Evidence previousEvidence(String location, String path, String currentId, int limit) {
-    if (path == null || path.isBlank()) return unavailable("PREVIOUS_PATH_UNAVAILABLE");
+  private Evidence previousEvidence(Map<String, Object> raw, String currentId) {
     try {
-      Map<String, Object> raw = executions.history(location, path, null, null, null, 0, limit);
       List<Map<String, Object>> rows = new ArrayList<>();
       Object executionsValue = raw.get("executions");
       if (executionsValue instanceof List<?> list) {
