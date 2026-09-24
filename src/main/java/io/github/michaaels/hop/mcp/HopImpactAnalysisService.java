@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import org.apache.hop.core.variables.IVariables;
 
 /** Bounded project-local impact graph built from Hop definitions and their references. */
 final class HopImpactAnalysisService {
@@ -31,9 +32,15 @@ final class HopImpactAnalysisService {
   static final int MAX_SELECTOR_LENGTH = 1024;
 
   private final ProjectFiles files;
+  private final IVariables variables;
 
   HopImpactAnalysisService(ProjectFiles files) {
+    this(files, null);
+  }
+
+  HopImpactAnalysisService(ProjectFiles files, IVariables variables) {
     this.files = Objects.requireNonNull(files, "files");
+    this.variables = variables;
   }
 
   Map<String, Object> analyze(
@@ -85,13 +92,7 @@ final class HopImpactAnalysisService {
 
     Set<String> initial = matchingDefinitions(definitions, selector);
     Traversal traversal =
-        traverse(
-            initial,
-            selector.isDefinition() ? inbound : outbound,
-            definitions,
-            maxDepth,
-            maxEdges,
-            maxResults);
+        traverse(initial, inbound, definitions, maxDepth, maxEdges, maxResults);
     List<Map<String, Object>> nodes = nodeOutput(traversal.nodes(), definitions);
     List<Map<String, Object>> tableReferences = tableReferences(selector, traversal.nodes(), definitions);
     List<Map<String, Object>> metadataReferences =
@@ -109,15 +110,15 @@ final class HopImpactAnalysisService {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("query", selector.output());
     result.put("nodes", nodes);
-    result.put("dependencies", bounded(dependencyEdges, maxEdges));
+    result.put("dependencies", pipelineWorkflowReferences);
     result.put("metadata_references", metadataReferences);
     result.put("table_references", tableReferences);
     result.put("pipeline_workflow_references", pipelineWorkflowReferences);
     result.put("lineage", lineage);
     result.put("node_count", traversal.nodes().size());
     result.put("returned_nodes", nodes.size());
-    result.put("edge_count", dependencyEdges.size());
-    result.put("returned_edges", Math.min(dependencyEdges.size(), maxEdges));
+    result.put("edge_count", pipelineWorkflowReferences.size());
+    result.put("returned_edges", pipelineWorkflowReferences.size());
     result.put("max_depth_applied", maxDepth);
     result.put("max_edges_applied", maxEdges);
     result.put("max_results_applied", maxResults);
@@ -296,7 +297,7 @@ final class HopImpactAnalysisService {
     Set<String> included = nodes.keySet();
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map<String, Object> dependency : dependencies) {
-      if (included.contains(dependency.get("from")) || included.contains(dependency.get("to"))) {
+      if (included.contains(dependency.get("from")) && included.contains(dependency.get("to"))) {
         result.add(dependency);
       }
     }
@@ -310,8 +311,18 @@ final class HopImpactAnalysisService {
   private Path resolveReference(String source, String reference) {
     try {
       if (reference == null || reference.isBlank() || reference.length() > MAX_PATH_LENGTH) return null;
-      Path raw = Path.of(reference);
-      Path candidate = raw.isAbsolute() ? raw : files.root().resolve(source).getParent().resolve(raw);
+      String resolvedReference =
+          reference.replace("${PROJECT_HOME}", files.root().toString());
+      if (variables != null) resolvedReference = variables.resolve(resolvedReference);
+      if (resolvedReference == null || resolvedReference.isBlank()) return null;
+      Path sourcePath = files.root().resolve(source).normalize();
+      Path sourceFolder = sourcePath.getParent();
+      if (sourceFolder == null) return null;
+      resolvedReference =
+          resolvedReference.replace(
+              "${Internal.Entry.Current.Folder}", sourceFolder.toString());
+      Path raw = Path.of(resolvedReference);
+      Path candidate = raw.isAbsolute() ? raw : sourceFolder.resolve(raw);
       candidate = candidate.normalize();
       if (!candidate.startsWith(files.root()) || !Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
         return null;
@@ -361,7 +372,7 @@ final class HopImpactAnalysisService {
         .anyMatch(
             table -> {
               String value = table.toLowerCase(Locale.ROOT);
-              return value.equals(normalized) || value.contains(normalized);
+              return value.equals(normalized) || value.endsWith("." + normalized);
             });
   }
 
