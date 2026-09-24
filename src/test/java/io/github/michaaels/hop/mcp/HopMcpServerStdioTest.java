@@ -607,7 +607,7 @@ class HopMcpServerStdioTest {
       assertFalse(tools.contains("hop_execution_children"), tools);
       assertFalse(tools.contains("hop_execution_metrics"), tools);
       assertFalse(tools.contains("hop_diagnose_execution"), tools);
-      assertTrue(tools.contains("hop_data_profile"), tools);
+      assertFalse(tools.contains("hop_data_profile"), tools);
       assertFalse(tools.contains("hop_component_schema"), tools);
       assertFalse(tools.contains("hop_mutate_definition"), tools);
       assertFalse(tools.contains("hop_web_request"), tools);
