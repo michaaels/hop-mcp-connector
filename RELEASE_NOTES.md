@@ -1,17 +1,34 @@
-# MCP Connector for Apache Hop 2.1.0
+# MCP Connector for Apache Hop 2.2.0
 
-Released on 2026-09-23. This release keeps the Java 21, Apache Hop 2.19.0 compile baseline, Hop 2.20.0-SNAPSHOT compatibility profile, MCP Java SDK 2.0.1, and MCP protocol revision 2025-11-25 over STDIO.
+Released on 2026-09-24. This release expands the connector from a hardened Apache Hop MCP integration into a broader production-ETL operations surface while retaining Java 21, the Apache Hop 2.19.0 compile baseline, the Hop 2.20.0-SNAPSHOT compatibility profile, MCP Java SDK 2.0.1, and protocol revision 2025-11-25 over STDIO.
 
-- Bound project traversal, file reads, content scans, catalog hashing, response sizes, web response bodies, log output, and mutation backup storage. Hidden connector-control files are excluded from project tools.
-- Added stable pagination and explicit completeness/truncation indicators to project listings and searches. File reads and search results redact secrets before returning data.
-- Added typed, sanitized MCP error results and strict bounded output schemas for 30 tools.
-- Register the complete authorized tool set before starting the STDIO transport, preventing fast clients from observing an incomplete `tools/list` during startup.
-- Isolated semantic-mutation backups beneath `.hop-mcp/backups/`, bounded their count and size, added expiry cleanup, and report whether replacement used an atomic filesystem move.
-- Kept deep checks, execution, authoring/mutation, and Hop Web tools hidden unless their matching server-side opt-in is enabled.
-- Pinned GitHub Actions to full commit SHAs. CI validates the Hop 2.19.0 archive checksum and clean-install STDIO smoke, runs the Hop 2.20.0-SNAPSHOT profile, inspects ZIP/Jandex metadata, and generates a CycloneDX SBOM. Tag releases verify tag/POM/artifact consistency and attach checksums and GitHub attestations.
+## Production ETL capabilities
 
-The repository's STDIO integration tests exercise the protocol handshake and tool calls, validate advertised schemas against actual results, and cover enabled execution, mutation and rollback, correction plans, and a local web-response fixture. The official MCP Conformance Suite was not run: its current runner targets Streamable HTTP and requires capabilities this tools-only STDIO server does not advertise. Installation through the published Hop Marketplace catalog still requires post-publication verification.
+- Added native metadata discovery and inspection: `hop_metadata_types`, `hop_metadata_list`, `hop_metadata_get`, and bounded metadata dependency analysis.
+- Added explicit deep-check tools for RDBMS connection testing and table schema comparison with bounded timeouts and structured schema-drift results.
+- Added native run-configuration resolution, semantic definition diff, environment comparison, and bounded project impact analysis.
+- Added native Execution Information Location reads for history, detail, child executions, component metrics, stored execution-data profiling, and evidence-based execution diagnosis.
+- Kept Apache Hop as the source of truth: the new operations reuse Hop metadata providers, serializers, run configurations, execution information, `PipelineMeta`, `WorkflowMeta`, and database APIs instead of introducing a parallel ETL runtime.
 
-Verification on 2026-09-23: `mvn -Djavax.net.ssl.trustStoreType=Windows-ROOT -B clean verify` and `mvn -Djavax.net.ssl.trustStoreType=Windows-ROOT -B -P hop-2.20 clean verify` both passed with 64 tests, zero failures, and two skipped Windows symlink tests. Both produced the package and CycloneDX SBOM; the ZIP layout, Jandex index, embedded version, required legal files, and Hop-runtime exclusions were checked. The Ubuntu CI gate also installed the Marketplace ZIP into a checksum-verified clean Apache Hop 2.19.0 distribution and passed initialization, discovery of all 15 default tools, `hop_config`, `hop_validate`, and clean STDIO shutdown.
+## Security and correctness
 
-The Maven POM, server metadata, release notes, Marketplace catalog entries, artifact name, and `v2.1.0` tag are aligned at `2.1.0`.
+- Stored execution-data profiling now requires `--allow-execution` because it can return operational row samples.
+- Profiling counts physical rows once regardless of the number of requested fields and reports availability, completeness, truncation, distinct bounds, and redacted samples accurately.
+- Impact analysis now follows dependent definitions, resolves project/Hop path variables, avoids prefix matches such as `DIM_SITE` matching `DIM_SITE_ARCHIVE`, and returns only dependency edges inside the affected subgraph.
+- Existing deny-by-default capability gates, project-root confinement, secure XML parsing, redaction, response budgets, deep-check authorization, transactional semantic mutation, SHA-256 preconditions, protected backups, and rollback remain in force.
+
+## MCP conformance and CI
+
+- MCP Conformance 2025-11-25 remains a required CI gate.
+- The official `@modelcontextprotocol/conformance@0.2.0-alpha.11` runner executes the frozen `2025-11-25` requirement set against a localhost-only test adapter that reuses the production server definition, registry, schemas, and handlers.
+- Known scenarios belonging to unsupported MCP capabilities such as prompts, resources, completion, sampling, elicitation, and conformance fixture tools are tracked through the runner's official `--expected-failures` mechanism. New unexpected failures and stale baseline entries fail CI.
+- Production transport remains STDIO.
+- The verified release build runs 84 tests and requires the main build, clean Apache Hop 2.19 smoke, Apache Hop 2.20 compatibility, and MCP Conformance jobs to succeed.
+
+## Build and dependency maintenance
+
+- Updated JUnit Jupiter to 6.1.3 and refreshed Tomcat and Maven build tooling while keeping `fmt-maven-plugin` at the repository's established 2.25 formatting baseline.
+- Release packaging continues to validate the Marketplace ZIP layout, Jandex index, embedded version, legal files, and exclusion of Apache Hop runtime jars.
+- The release publishes the Marketplace ZIP, CycloneDX JSON/XML SBOMs, SHA-256 checksums, provenance attestation, and SBOM attestation.
+
+The Maven POM, embedded version resources, release notes, Marketplace catalog entries, artifact filename, and `v2.2.0` tag are aligned at `2.2.0`.

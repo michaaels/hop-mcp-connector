@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.0 - 2026-09-24
+
+- Added native Apache Hop metadata discovery and inspection through `hop_metadata_types`, `hop_metadata_list`, `hop_metadata_get`, and bounded metadata dependency analysis.
+- Added explicitly authorized RDBMS connection testing and table schema comparison, including bounded timeouts and schema-drift reporting for added/removed columns, type, length, precision, scale, and nullability changes.
+- Added native run-configuration resolution, semantic definition diff, environment comparison, project impact analysis, native execution history/detail/children/metrics, stored execution-data profiling, and evidence-based execution diagnosis.
+- Kept production transport on STDIO while adding the official MCP 2025-11-25 conformance runner as a CI regression gate through a localhost-only test adapter and the runner's official expected-failures baseline.
+- Expanded strict MCP output schemas and STDIO integration coverage for the production ETL tool surface; the verified build now runs 84 tests.
+- Hardened stored execution-data profiling behind `--allow-execution`, fixed physical-row counting/completeness reporting, and kept sampled values under existing sensitive-data redaction and response bounds.
+- Corrected impact analysis to traverse dependent definitions, resolve Hop/project path variables, avoid table-prefix false positives, and restrict returned dependency edges to the affected subgraph.
+- Updated development dependencies to JUnit Jupiter 6.1.3, Tomcat 11.0.26, Maven Compiler 3.16.0, Surefire 3.6.0, Exec 3.6.4, Assembly 3.8.0, and CycloneDX 2.9.3 while retaining the established formatter baseline.
+- Preserved clean Apache Hop 2.19 installation smoke coverage, Apache Hop 2.20 snapshot compatibility, bounded filesystem/network behavior, transactional mutation, backup/rollback, secret redaction, SBOM generation, checksums, and release attestations.
+
 ## 2.1.0 - 2026-09-23
 
 - Bound project traversal before visiting unbounded trees: at most 50,000 entries, 5,000 files, and depth 64; bounded content scans and catalog hashing to 32 MiB.
