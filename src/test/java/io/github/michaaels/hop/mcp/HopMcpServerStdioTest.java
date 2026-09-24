@@ -176,9 +176,7 @@ class HopMcpServerStdioTest {
 
         requests.println(
             toolCall(
-                61,
-                "hop_metadata_list",
-                "{\"type\":\"pipeline-run-configuration\",\"limit\":10}"));
+                61, "hop_metadata_list", "{\"type\":\"pipeline-run-configuration\",\"limit\":10}"));
         String metadataList = readResponse(reader, responses);
         assertSuccessfulToolResponse(metadataList, 61);
         assertStructuredOutputConforms(metadataList, "hop_metadata_list", outputSchemas);
@@ -268,9 +266,7 @@ class HopMcpServerStdioTest {
 
         requests.println(
             toolCall(
-                70,
-                "hop_definition_diff",
-                "{\"path_a\":\"valid.hpl\",\"path_b\":\"valid.hpl\"}"));
+                70, "hop_definition_diff", "{\"path_a\":\"valid.hpl\",\"path_b\":\"valid.hpl\"}"));
         String definitionDiff = readResponse(reader, responses);
         assertSuccessfulToolResponse(definitionDiff, 70);
         assertStructuredOutputConforms(definitionDiff, "hop_definition_diff", outputSchemas);
@@ -493,9 +489,7 @@ class HopMcpServerStdioTest {
 
         requests.println(
             toolCall(
-                65,
-                "hop_execution_history",
-                "{\"location\":\"missing-location\",\"limit\":10}"));
+                65, "hop_execution_history", "{\"location\":\"missing-location\",\"limit\":10}"));
         String executionHistory = readResponse(reader, responses);
         assertResponseId(executionHistory, 65);
         assertTrue(executionHistory.contains("\"isError\":true"), executionHistory);

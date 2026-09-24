@@ -20,8 +20,7 @@ class HopImpactAnalysisServiceTest {
         pipeline("select * from DWH.DIM_SITE", "child.hwf", "DWH_PROD"));
     Files.writeString(
         project.resolve("load_site.hpl"), pipeline("insert into DWH.DIM_SITE", "", "DWH_PROD"));
-    Files.writeString(
-        project.resolve("parent.hwf"), workflow("enrich_cells.hpl", "DWH_PROD"));
+    Files.writeString(project.resolve("parent.hwf"), workflow("enrich_cells.hpl", "DWH_PROD"));
     Files.writeString(project.resolve("child.hwf"), workflow("", "DWH_PROD"));
     Files.writeString(
         project.resolve("archive.hpl"),
@@ -45,7 +44,8 @@ class HopImpactAnalysisServiceTest {
   @Test
   void supportsMetadataAndDefinitionSelectorsAndRejectsUnsafeInputs() throws Exception {
     Files.writeString(
-        project.resolve("load.hpl"), pipeline("select * from DWH.DIM_SITE", "child.hwf", "DWH_PROD"));
+        project.resolve("load.hpl"),
+        pipeline("select * from DWH.DIM_SITE", "child.hwf", "DWH_PROD"));
     Files.writeString(project.resolve("child.hwf"), workflow("", "DWH_PROD"));
     HopImpactAnalysisService service = new HopImpactAnalysisService(new ProjectFiles(project));
 
@@ -57,10 +57,8 @@ class HopImpactAnalysisServiceTest {
     assertEquals(2, definition.get("node_count"));
     assertTrue(String.valueOf(definition.get("nodes")).contains("load.hpl"));
 
-    assertThrows(
-        IllegalArgumentException.class, () -> service.analyze("A", "B", null, 5, 10, 10));
-    assertThrows(
-        Exception.class, () -> service.analyze(null, null, "../outside.hpl", 5, 10, 10));
+    assertThrows(IllegalArgumentException.class, () -> service.analyze("A", "B", null, 5, 10, 10));
+    assertThrows(Exception.class, () -> service.analyze(null, null, "../outside.hpl", 5, 10, 10));
   }
 
   private static String pipeline(String sql, String reference, String metadata) {

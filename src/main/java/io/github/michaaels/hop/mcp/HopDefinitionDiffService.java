@@ -5,9 +5,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -86,7 +84,8 @@ final class HopDefinitionDiffService {
     }
 
     HopComparison hopComparison = compareHops(first.hops(), second.hops(), paths.kind());
-    ParameterComparison parameterComparison = compareParameters(first.parameters(), second.parameters());
+    ParameterComparison parameterComparison =
+        compareParameters(first.parameters(), second.parameters());
     List<String> changedMetadataReferences =
         changedMetadataReferences(first.metadataReferences(), second.metadataReferences());
     Set<String> addedReferences = difference(second.references(), first.references());
@@ -106,17 +105,19 @@ final class HopDefinitionDiffService {
     result.put("path_a", paths.firstRelative());
     result.put("path_b", paths.secondRelative());
     result.put("kind", paths.kind());
-    result.put("identical", addedComponents.isEmpty()
-        && removedComponents.isEmpty()
-        && changedComponents.isEmpty()
-        && hopComparison.added().isEmpty()
-        && hopComparison.removed().isEmpty()
-        && hopComparison.changed().isEmpty()
-        && parameterComparison.changed().isEmpty()
-        && changedMetadataReferences.isEmpty()
-        && definitionProperties.isEmpty()
-        && addedReferences.isEmpty()
-        && removedReferences.isEmpty());
+    result.put(
+        "identical",
+        addedComponents.isEmpty()
+            && removedComponents.isEmpty()
+            && changedComponents.isEmpty()
+            && hopComparison.added().isEmpty()
+            && hopComparison.removed().isEmpty()
+            && hopComparison.changed().isEmpty()
+            && parameterComparison.changed().isEmpty()
+            && changedMetadataReferences.isEmpty()
+            && definitionProperties.isEmpty()
+            && addedReferences.isEmpty()
+            && removedReferences.isEmpty());
     result.put("definition_changed", Map.of("properties", definitionProperties));
     result.put("components_added", addedComponents);
     result.put("components_removed", removedComponents);
@@ -231,8 +232,7 @@ final class HopDefinitionDiffService {
       properties.put("split", hop.isSplit());
       properties.put("error_hop", hop.isErrorHop());
       hops.add(
-          new Hop(
-              hop.getFromTransform().getName(), hop.getToTransform().getName(), properties));
+          new Hop(hop.getFromTransform().getName(), hop.getToTransform().getName(), properties));
     }
     if (count > MAX_HOPS) hops.add(Hop.truncationMarker());
     return hops;
@@ -254,7 +254,8 @@ final class HopDefinitionDiffService {
     return hops;
   }
 
-  private Map<String, Object> componentProperties(String componentXml, String name) throws Exception {
+  private Map<String, Object> componentProperties(String componentXml, String name)
+      throws Exception {
     byte[] bytes = componentXml.getBytes(StandardCharsets.UTF_8);
     if (bytes.length > MAX_COMPONENT_XML_BYTES) {
       throw new IllegalArgumentException("Component serialization exceeds the comparison limit");
@@ -332,7 +333,8 @@ final class HopDefinitionDiffService {
         return;
       }
       for (Map.Entry<?, ?> entry : map.entrySet()) {
-        String child = path.isEmpty() ? String.valueOf(entry.getKey()) : path + "." + entry.getKey();
+        String child =
+            path.isEmpty() ? String.valueOf(entry.getKey()) : path + "." + entry.getKey();
         flatten(entry.getValue(), child, out, count);
         if (count[0] >= MAX_PROPERTIES) return;
       }
@@ -519,10 +521,10 @@ final class HopDefinitionDiffService {
     String firstKind = kind(first);
     String secondKind = kind(second);
     if (firstKind == null || secondKind == null || !firstKind.equals(secondKind)) {
-      throw new IllegalArgumentException("path_a and path_b must be matching .hpl or .hwf definitions");
+      throw new IllegalArgumentException(
+          "path_a and path_b must be matching .hpl or .hwf definitions");
     }
-    return new PathPair(
-        first, second, firstKind, files.relative(first), files.relative(second));
+    return new PathPair(first, second, firstKind, files.relative(first), files.relative(second));
   }
 
   private static void requirePath(String path, String field) {
@@ -569,7 +571,8 @@ final class HopDefinitionDiffService {
   private static Map<String, Component> componentsByKey(List<Component> components) {
     Map<String, Component> result = new LinkedHashMap<>();
     for (Component component : components) {
-      if (!component.truncation()) result.put(component.kind() + "\u0000" + component.name(), component);
+      if (!component.truncation())
+        result.put(component.kind() + "\u0000" + component.name(), component);
     }
     return result;
   }
@@ -603,7 +606,8 @@ final class HopDefinitionDiffService {
       String firstRelative,
       String secondRelative) {}
 
-  private record Component(String name, String kind, String pluginId, Map<String, Object> properties) {
+  private record Component(
+      String name, String kind, String pluginId, Map<String, Object> properties) {
     private static Component truncationMarker() {
       return new Component("", "", "", Map.of());
     }

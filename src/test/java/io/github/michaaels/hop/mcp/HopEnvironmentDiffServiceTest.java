@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 import org.apache.hop.core.HopEnvironment;
 import org.apache.hop.core.variables.Variables;
@@ -37,12 +36,10 @@ class HopEnvironmentDiffServiceTest {
     PipelineMeta pipeline = pipeline("Environment");
     Files.writeString(
         project.resolve("dev.hpl"),
-        withEnvironment(
-            pipeline.getXml(variables), "SALES_DEV", "thread-dev", "secret-dev", "4"));
+        withEnvironment(pipeline.getXml(variables), "SALES_DEV", "thread-dev", "secret-dev", "4"));
     Files.writeString(
         project.resolve("prod.hpl"),
-        withEnvironment(
-            pipeline.getXml(variables), "SALES", "thread-prod", null, "8"));
+        withEnvironment(pipeline.getXml(variables), "SALES", "thread-prod", null, "8"));
 
     Map<String, Object> result =
         new HopEnvironmentDiffService(
@@ -56,11 +53,12 @@ class HopEnvironmentDiffServiceTest {
     assertTrue(String.valueOf(result.get("variables_changed")).contains("SALES_DEV"));
     assertTrue(String.valueOf(result.get("metadata_references_changed")).contains("DEV_DB"));
     assertTrue(String.valueOf(result.get("parameter_defaults_changed")).contains("THREADS"));
-    assertTrue(String.valueOf(result.get("unresolved_variables")).contains("MISSING"), result.toString());
+    assertTrue(
+        String.valueOf(result.get("unresolved_variables")).contains("MISSING"), result.toString());
     assertTrue(String.valueOf(result.get("variables_changed")).contains(SensitiveData.REDACTED));
     assertTrue((Boolean) result.get("redaction_applied"));
     assertTrue((Boolean) result.get("comparison_complete"));
-}
+  }
 
   @Test
   void requiresMatchingProjectRelativeDefinitions() throws Exception {

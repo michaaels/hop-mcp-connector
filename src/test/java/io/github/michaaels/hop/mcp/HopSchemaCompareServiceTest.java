@@ -11,8 +11,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.apache.hop.core.database.DatabaseMeta;
 import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.database.DatabaseMeta;
 import org.apache.hop.core.variables.Variables;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -75,7 +75,11 @@ class HopSchemaCompareServiceTest {
 
     Map<String, Object> result =
         service.compare(
-            "DWH", "public", "customers", List.of(field("customer_id", "string", null, null, null, null)), 3);
+            "DWH",
+            "public",
+            "customers",
+            List.of(field("customer_id", "string", null, null, null, null)),
+            3);
 
     assertTrue((Boolean) result.get("matches"));
     assertEquals(0, result.get("difference_count"));
@@ -105,8 +109,7 @@ class HopSchemaCompareServiceTest {
         () -> enabled.compare("DWH", "public", "customers", oversized, 3));
   }
 
-  private static HopSchemaCompareService service(
-      HopSchemaCompareService.SchemaReadResult schema) {
+  private static HopSchemaCompareService service(HopSchemaCompareService.SchemaReadResult schema) {
     return new HopSchemaCompareService(
         null,
         new Variables(),

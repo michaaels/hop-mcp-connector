@@ -1,6 +1,5 @@
 package io.github.michaaels.hop.mcp;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
@@ -51,16 +50,22 @@ class HopDiagnosisServiceTest {
             + "<parameters><parameter><name>THREADS</name><default_value>4</default_value></parameter></parameters>"
             + xml.substring(closing));
 
-    Execution current = execution("current", project.resolve("orders.hpl").toString(), null, 2_000L);
-    Execution previous = execution("previous", project.resolve("orders.hpl").toString(), null, 1_000L);
+    Execution current =
+        execution("current", project.resolve("orders.hpl").toString(), null, 2_000L);
+    Execution previous =
+        execution("previous", project.resolve("orders.hpl").toString(), null, 1_000L);
     ExecutionState currentState = state("current", true, false, 3_000L);
     currentState.setStatusDescription("Failed");
     ExecutionState previousState = state("previous", false, false, 1_500L);
-    IExecutionInfoLocation location = fakeLocation(Map.of("current", current, "previous", previous), Map.of("current", currentState, "previous", previousState));
+    IExecutionInfoLocation location =
+        fakeLocation(
+            Map.of("current", current, "previous", previous),
+            Map.of("current", currentState, "previous", previousState));
     HopExecutionRepository repository =
         new HopExecutionRepository(
             new ProjectFiles(project), null, null, (name, action) -> action.apply(location));
-    HopMetadataService metadata = new HopMetadataService(new ProjectFiles(project), metadataProvider);
+    HopMetadataService metadata =
+        new HopMetadataService(new ProjectFiles(project), metadataProvider);
     HopRunConfigurationService runConfigurations =
         new HopRunConfigurationService(metadataProvider, variables);
     HopDiagnosisService service =
@@ -71,14 +76,16 @@ class HopDiagnosisServiceTest {
             runConfigurations,
             (channel, includeGeneral, from, to) ->
                 Map.of(
-                    "count", 1,
-                    "truncated", false,
+                    "count",
+                    1,
+                    "truncated",
+                    false,
                     "events",
-                        List.of(
-                            Map.of(
-                                "timestamp", 2_500L,
-                                "level", "ERROR",
-                                "message", "password=secret"))));
+                    List.of(
+                        Map.of(
+                            "timestamp", 2_500L,
+                            "level", "ERROR",
+                            "message", "password=secret"))));
 
     Map<String, Object> result = service.diagnose("local", "current", "channel", true, -1, 0, 10);
 

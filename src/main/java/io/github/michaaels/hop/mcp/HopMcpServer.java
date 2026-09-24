@@ -115,8 +115,14 @@ final class HopMcpServer implements AutoCloseable {
         "List native Apache Hop metadata types from the metadata plugin registry with pagination.",
         schema(
             Map.of(
-                "offset", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of metadata types to skip"),
-                "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_TYPES, "Maximum metadata types to return")),
+                "offset",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_SCAN_FILES, "Number of metadata types to skip"),
+                "limit",
+                    boundedInteger(
+                        1,
+                        HopMetadataService.MAX_METADATA_TYPES,
+                        "Maximum metadata types to return")),
             List.of()),
         a -> service.metadataTypes(iDefault(a, "offset", 0), iDefault(a, "limit", 50)));
     add(
@@ -124,10 +130,20 @@ final class HopMcpServer implements AutoCloseable {
         "List named native Apache Hop metadata objects without loading sensitive values.",
         schema(
             Map.of(
-                "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-                "query", boundedString(HopMetadataService.MAX_METADATA_QUERY_LENGTH, "Optional case-insensitive name filter"),
-                "offset", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of metadata objects to skip"),
-                "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_RESULTS, "Maximum metadata objects to return")),
+                "type",
+                    boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                "query",
+                    boundedString(
+                        HopMetadataService.MAX_METADATA_QUERY_LENGTH,
+                        "Optional case-insensitive name filter"),
+                "offset",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_SCAN_FILES, "Number of metadata objects to skip"),
+                "limit",
+                    boundedInteger(
+                        1,
+                        HopMetadataService.MAX_METADATA_RESULTS,
+                        "Maximum metadata objects to return")),
             List.of("type")),
         a ->
             service.metadataList(
@@ -140,8 +156,11 @@ final class HopMcpServer implements AutoCloseable {
         "Read one native Apache Hop metadata object through a bounded, secret-redacted projection.",
         schema(
             Map.of(
-                "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-                "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name")),
+                "type",
+                    boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                "name",
+                    boundedString(
+                        HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name")),
             List.of("type", "name")),
         a -> service.metadataGet(s(a, "type"), s(a, "name")));
     add(
@@ -149,23 +168,30 @@ final class HopMcpServer implements AutoCloseable {
         "Find bounded project definitions and components that reference one native Apache Hop metadata object.",
         schema(
             Map.of(
-                "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-                "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
-                "offset", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of dependent definitions to skip"),
-                "limit", boundedInteger(1, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Maximum dependencies to return")),
+                "type",
+                    boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                "name",
+                    boundedString(
+                        HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+                "offset",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_SCAN_FILES, "Number of dependent definitions to skip"),
+                "limit",
+                    boundedInteger(
+                        1,
+                        HopMetadataService.MAX_DEPENDENCY_RESULTS,
+                        "Maximum dependencies to return")),
             List.of("type", "name")),
         a ->
             service.metadataDependencies(
-                s(a, "type"),
-                s(a, "name"),
-                iDefault(a, "offset", 0),
-                iDefault(a, "limit", 50)));
+                s(a, "type"), s(a, "name"), iDefault(a, "offset", 0), iDefault(a, "limit", 50)));
     add(
         "hop_test_connection",
         "Test one native Apache Hop RDBMS connection with a bounded timeout. Requires --allow-deep-check and may contact an external system.",
         schema(
             Map.of(
-                "type", enumStr("rdbms"),
+                "type",
+                enumStr("rdbms"),
                 "name",
                 boundedString(HopConnectionService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
                 "timeout_seconds",
@@ -185,9 +211,11 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "connection",
-                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+                boundedString(
+                    HopSchemaCompareService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
                 "schema",
-                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Optional database schema name"),
+                boundedString(
+                    HopSchemaCompareService.MAX_NAME_LENGTH, "Optional database schema name"),
                 "table",
                 boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database table name"),
                 "expected",
@@ -238,11 +266,14 @@ final class HopMcpServer implements AutoCloseable {
                     HopImpactAnalysisService.MAX_PATH_LENGTH,
                     "Optional project-relative .hpl or .hwf definition selector"),
                 "max_depth",
-                boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Maximum dependency traversal depth"),
+                boundedInteger(
+                    1, HopImpactAnalysisService.MAX_DEPTH, "Maximum dependency traversal depth"),
                 "max_edges",
-                boundedInteger(1, HopImpactAnalysisService.MAX_EDGES, "Maximum dependency and lineage edges"),
+                boundedInteger(
+                    1, HopImpactAnalysisService.MAX_EDGES, "Maximum dependency and lineage edges"),
                 "max_results",
-                boundedInteger(1, HopImpactAnalysisService.MAX_RESULTS, "Maximum impacted definitions")),
+                boundedInteger(
+                    1, HopImpactAnalysisService.MAX_RESULTS, "Maximum impacted definitions")),
             List.of()),
         a ->
             service.impactAnalysis(
@@ -274,9 +305,11 @@ final class HopMcpServer implements AutoCloseable {
                     HopEnvironmentDiffService.MAX_NAME_LENGTH,
                     "Native run configuration for path_b, default local"),
                 "parameters_a",
-                stringMapSchema("Optional bounded parameter values for path_a; sensitive values are redacted"),
+                stringMapSchema(
+                    "Optional bounded parameter values for path_a; sensitive values are redacted"),
                 "parameters_b",
-                stringMapSchema("Optional bounded parameter values for path_b; sensitive values are redacted")),
+                stringMapSchema(
+                    "Optional bounded parameter values for path_b; sensitive values are redacted")),
             List.of("path_a", "path_b")),
         a ->
             service.environmentDiff(
@@ -291,9 +324,17 @@ final class HopMcpServer implements AutoCloseable {
         "Resolve one native Apache Hop pipeline or workflow run configuration for a project-relative definition, expanding bounded parameters and variables without exposing secrets.",
         schema(
             Map.of(
-                "path", boundedString(HopRunConfigurationService.MAX_PATH_LENGTH, "Project-relative .hpl/.hwf definition path"),
-                "run_configuration", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Native run configuration name, default local"),
-                "parameters", stringMapSchema("Optional bounded parameter values; sensitive values are redacted")),
+                "path",
+                    boundedString(
+                        HopRunConfigurationService.MAX_PATH_LENGTH,
+                        "Project-relative .hpl/.hwf definition path"),
+                "run_configuration",
+                    boundedString(
+                        HopRunConfigurationService.MAX_NAME_LENGTH,
+                        "Native run configuration name, default local"),
+                "parameters",
+                    stringMapSchema(
+                        "Optional bounded parameter values; sensitive values are redacted")),
             List.of("path")),
         a ->
             service.resolveConfiguration(
@@ -565,9 +606,13 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "location",
-                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH,
+                    "Native Execution Information Location metadata name"),
                 "path",
-                boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Optional case-insensitive definition path or name filter"),
+                boundedString(
+                    HopExecutionRepository.MAX_FILTER_LENGTH,
+                    "Optional case-insensitive definition path or name filter"),
                 "status",
                 enumStr(
                     "running",
@@ -583,9 +628,11 @@ final class HopMcpServer implements AutoCloseable {
                 "to_epoch_ms",
                 boundedInteger(0, Long.MAX_VALUE, "Optional inclusive execution start upper bound"),
                 "offset",
-                boundedInteger(0, HopExecutionRepository.MAX_HISTORY_SCAN, "Number of executions to skip"),
+                boundedInteger(
+                    0, HopExecutionRepository.MAX_HISTORY_SCAN, "Number of executions to skip"),
                 "limit",
-                boundedInteger(1, HopExecutionRepository.MAX_HISTORY_RESULTS, "Maximum executions to return")),
+                boundedInteger(
+                    1, HopExecutionRepository.MAX_HISTORY_RESULTS, "Maximum executions to return")),
             List.of("location")),
         a ->
             service.executionHistory(
@@ -602,7 +649,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "location",
-                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH,
+                    "Native Execution Information Location metadata name"),
                 "execution_id",
                 boundedString(256, "Native Hop execution ID")),
             List.of("location", "execution_id")),
@@ -613,13 +662,19 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "location",
-                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH,
+                    "Native Execution Information Location metadata name"),
                 "execution_id",
                 boundedString(256, "Root native Hop execution ID"),
                 "max_depth",
-                boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Maximum child traversal depth"),
+                boundedInteger(
+                    1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Maximum child traversal depth"),
                 "max_nodes",
-                boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_NODES, "Maximum child executions to return")),
+                boundedInteger(
+                    1,
+                    HopExecutionRepository.MAX_CHILDREN_NODES,
+                    "Maximum child executions to return")),
             List.of("location", "execution_id")),
         a ->
             service.executionChildren(
@@ -633,10 +688,12 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "location",
-                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH,
+                    "Native Execution Information Location metadata name"),
                 "execution_id",
                 boundedString(256, "Native Hop execution ID")),
-        List.of("location", "execution_id")),
+            List.of("location", "execution_id")),
         a -> service.executionMetrics(s(a, "location"), s(a, "execution_id")));
     add(
         "hop_diagnose_execution",
@@ -649,12 +706,10 @@ final class HopMcpServer implements AutoCloseable {
                     "Native Execution Information Location metadata name"),
                 "execution_id",
                 boundedString(
-                    HopDiagnosisService.MAX_EXECUTION_ID_LENGTH,
-                    "Native Hop execution ID"),
+                    HopDiagnosisService.MAX_EXECUTION_ID_LENGTH, "Native Hop execution ID"),
                 "channel_id",
                 boundedString(
-                    HopDiagnosisService.MAX_CHANNEL_ID_LENGTH,
-                    "Optional execution log channel ID"),
+                    HopDiagnosisService.MAX_CHANNEL_ID_LENGTH, "Optional execution log channel ID"),
                 "include_general",
                 bool("Include general log messages, default true"),
                 "from",
@@ -682,7 +737,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             Map.of(
                 "location",
-                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH,
+                    "Native Execution Information Location metadata name"),
                 "execution_id",
                 boundedString(256, "Native Hop execution ID"),
                 "transform",
@@ -1548,10 +1605,13 @@ final class HopMcpServer implements AutoCloseable {
     return toolOutputSchema(
         fields(
             "offset", nonNegativeInteger("First metadata type offset"),
-            "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_TYPES, "Maximum metadata types requested"),
+            "limit",
+                boundedInteger(
+                    1, HopMetadataService.MAX_METADATA_TYPES, "Maximum metadata types requested"),
             "count", nonNegativeInteger("Metadata types discovered"),
             "count_complete", bool("Whether all metadata types were inspected"),
-            "returned", boundedInteger(0, HopMetadataService.MAX_METADATA_TYPES, "Metadata types returned"),
+            "returned",
+                boundedInteger(0, HopMetadataService.MAX_METADATA_TYPES, "Metadata types returned"),
             "has_more", bool("Whether another metadata type page remains"),
             "types", arrayOf(metadataTypeSchema(), HopMetadataService.MAX_METADATA_TYPES)),
         List.of("offset", "limit", "count", "count_complete", "returned", "has_more", "types"));
@@ -1560,7 +1620,8 @@ final class HopMcpServer implements AutoCloseable {
   private static Map<String, Object> metadataObjectSchema() {
     return schema(
         fields(
-            "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+            "name",
+                boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
             "virtual_path", boundedString(4096, "Native metadata virtual path")),
         List.of("name", "virtual_path"));
   }
@@ -1569,22 +1630,39 @@ final class HopMcpServer implements AutoCloseable {
     return toolOutputSchema(
         fields(
             "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-            "query", boundedString(HopMetadataService.MAX_METADATA_QUERY_LENGTH, "Applied name filter"),
+            "query",
+                boundedString(HopMetadataService.MAX_METADATA_QUERY_LENGTH, "Applied name filter"),
             "offset", nonNegativeInteger("First metadata object offset"),
-            "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_RESULTS, "Maximum metadata objects requested"),
+            "limit",
+                boundedInteger(
+                    1,
+                    HopMetadataService.MAX_METADATA_RESULTS,
+                    "Maximum metadata objects requested"),
             "count", nonNegativeInteger("Matching metadata object count"),
             "count_complete", bool("Whether all metadata objects were inspected"),
-            "returned", boundedInteger(0, HopMetadataService.MAX_METADATA_RESULTS, "Metadata objects returned"),
+            "returned",
+                boundedInteger(
+                    0, HopMetadataService.MAX_METADATA_RESULTS, "Metadata objects returned"),
             "has_more", bool("Whether another metadata object page remains"),
             "objects", arrayOf(metadataObjectSchema(), HopMetadataService.MAX_METADATA_RESULTS)),
-        List.of("type", "query", "offset", "limit", "count", "count_complete", "returned", "has_more", "objects"));
+        List.of(
+            "type",
+            "query",
+            "offset",
+            "limit",
+            "count",
+            "count_complete",
+            "returned",
+            "has_more",
+            "objects"));
   }
 
   private static Map<String, Object> metadataGetOutputSchema() {
     return toolOutputSchema(
         fields(
             "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-            "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+            "name",
+                boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
             "metadata", metadataMapSchema(),
             "redaction_applied", bool("Whether secret-safe projection was applied")),
         List.of("type", "name", "metadata", "redaction_applied"));
@@ -1600,22 +1678,37 @@ final class HopMcpServer implements AutoCloseable {
     return toolOutputSchema(
         fields(
             "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-            "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+            "name",
+                boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
             "offset", nonNegativeInteger("First dependency offset"),
-            "limit", boundedInteger(1, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Maximum dependencies requested"),
+            "limit",
+                boundedInteger(
+                    1, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Maximum dependencies requested"),
             "count", nonNegativeInteger("Dependent definition/component count"),
             "count_complete", bool("Whether the bounded dependency scan completed"),
-            "returned", boundedInteger(0, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Dependencies returned"),
+            "returned",
+                boundedInteger(
+                    0, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Dependencies returned"),
             "has_more", bool("Whether another dependency page remains"),
             "used_by", arrayOf(dependency, HopMetadataService.MAX_DEPENDENCY_RESULTS)),
-        List.of("type", "name", "offset", "limit", "count", "count_complete", "returned", "has_more", "used_by"));
+        List.of(
+            "type",
+            "name",
+            "offset",
+            "limit",
+            "count",
+            "count_complete",
+            "returned",
+            "has_more",
+            "used_by"));
   }
 
   private static Map<String, Object> connectionTestOutputSchema() {
     return toolOutputSchema(
         fields(
             "type", enumStr("rdbms"),
-            "name", boundedString(HopConnectionService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+            "name",
+                boundedString(HopConnectionService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
             "status", enumStr("success", "failure", "timeout"),
             "success", bool("Whether the native connection test succeeded"),
             "timeout_seconds",
@@ -1623,9 +1716,18 @@ final class HopMcpServer implements AutoCloseable {
                     1,
                     HopConnectionService.MAX_TIMEOUT_SECONDS,
                     "Configured native connection-test timeout"),
-            "message", boundedString(SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Redacted diagnostic message"),
+            "message",
+                boundedString(
+                    SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Redacted diagnostic message"),
             "redaction_applied", bool("Whether diagnostic redaction was applied")),
-        List.of("type", "name", "status", "success", "timeout_seconds", "message", "redaction_applied"));
+        List.of(
+            "type",
+            "name",
+            "status",
+            "success",
+            "timeout_seconds",
+            "message",
+            "redaction_applied"));
   }
 
   private static Map<String, Object> schemaCompareOutputSchema() {
@@ -1641,13 +1743,19 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             fields(
                 "name", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Column name"),
-                "type", boundedString(HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Hop value type or expected type"),
-                "original_type_name", boundedString(HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Native database type name"),
+                "type",
+                    boundedString(
+                        HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH,
+                        "Hop value type or expected type"),
+                "original_type_name",
+                    boundedString(
+                        HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Native database type name"),
                 "length", nullableInteger,
                 "precision", nullableInteger,
                 "scale", nullableInteger,
                 "nullable", nullableBoolean),
-            List.of("name", "type", "original_type_name", "length", "precision", "scale", "nullable"));
+            List.of(
+                "name", "type", "original_type_name", "length", "precision", "scale", "nullable"));
     Map<String, Object> nullableColumn = Map.of("anyOf", List.of(column, Map.of("type", "null")));
     Map<String, Object> difference =
         schema(
@@ -1661,25 +1769,35 @@ final class HopMcpServer implements AutoCloseable {
                     "PRECISION_CHANGED",
                     "SCALE_CHANGED",
                     "NULLABILITY_CHANGED"),
-                "attribute", enumStr("column", "type", "length", "precision", "scale", "nullable"),
-                "column", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Affected column"),
-                "expected", nullableColumn,
-                "actual", nullableColumn),
+                "attribute",
+                enumStr("column", "type", "length", "precision", "scale", "nullable"),
+                "column",
+                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Affected column"),
+                "expected",
+                nullableColumn,
+                "actual",
+                nullableColumn),
             List.of("code", "attribute", "column", "expected", "actual"));
     return toolOutputSchema(
         fields(
             "type", enumStr("rdbms"),
-            "connection", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
-            "schema", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database schema name"),
+            "connection",
+                boundedString(
+                    HopSchemaCompareService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+            "schema",
+                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database schema name"),
             "table", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database table name"),
             "status", enumStr("success"),
             "matches", bool("Whether the actual schema matches the expected schema"),
-            "expected_count", boundedInteger(0, HopSchemaCompareService.MAX_FIELDS, "Expected columns"),
+            "expected_count",
+                boundedInteger(0, HopSchemaCompareService.MAX_FIELDS, "Expected columns"),
             "actual_count", nonNegativeInteger("Native columns discovered"),
-            "actual_fields_returned", boundedInteger(0, HopSchemaCompareService.MAX_FIELDS, "Native columns returned"),
+            "actual_fields_returned",
+                boundedInteger(0, HopSchemaCompareService.MAX_FIELDS, "Native columns returned"),
             "actual_truncated", bool("Whether native columns exceeded the bound"),
             "comparison_complete", bool("Whether all native columns were compared"),
-            "difference_count", boundedInteger(0, HopSchemaCompareService.MAX_DIFFERENCES, "Schema differences"),
+            "difference_count",
+                boundedInteger(0, HopSchemaCompareService.MAX_DIFFERENCES, "Schema differences"),
             "difference_count_complete", bool("Whether all differences fit the response bound"),
             "differences", arrayOf(difference, HopSchemaCompareService.MAX_DIFFERENCES),
             "expected_fields", arrayOf(column, HopSchemaCompareService.MAX_FIELDS),
@@ -1720,9 +1838,7 @@ final class HopMcpServer implements AutoCloseable {
                 "from", boundedString(512, "Native source component name"),
                 "to", boundedString(512, "Native target component name"),
                 "kind", enumStr("pipeline", "workflow"),
-                "properties",
-                    boundedObject(
-                        bool("Native hop property value"), 3)),
+                "properties", boundedObject(bool("Native hop property value"), 3)),
             List.of("from", "to", "kind", "properties"));
     Map<String, Object> hopChange =
         schema(
@@ -1738,14 +1854,17 @@ final class HopMcpServer implements AutoCloseable {
                 "properties", stringArray(HopDefinitionDiffService.MAX_PROPERTIES)),
             List.of("name", "properties"));
     Map<String, Object> definitionChange =
-        schema(
-            fields(
-                "properties", stringArray(4)),
-            List.of("properties"));
+        schema(fields("properties", stringArray(4)), List.of("properties"));
     return toolOutputSchema(
         fields(
-            "path_a", boundedString(HopDefinitionDiffService.MAX_PATH_LENGTH, "Project-relative first definition path"),
-            "path_b", boundedString(HopDefinitionDiffService.MAX_PATH_LENGTH, "Project-relative second definition path"),
+            "path_a",
+                boundedString(
+                    HopDefinitionDiffService.MAX_PATH_LENGTH,
+                    "Project-relative first definition path"),
+            "path_b",
+                boundedString(
+                    HopDefinitionDiffService.MAX_PATH_LENGTH,
+                    "Project-relative second definition path"),
             "kind", enumStr("pipeline", "workflow"),
             "identical", bool("Whether all compared semantic sections match"),
             "definition_changed", definitionChange,
@@ -1790,8 +1909,12 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> column =
         schema(
             fields(
-                "name", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Expected column name"),
-                "type", boundedString(HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Expected Hop or database type"),
+                "name",
+                    boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Expected column name"),
+                "type",
+                    boundedString(
+                        HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH,
+                        "Expected Hop or database type"),
                 "length", nullableInteger,
                 "precision", nullableInteger,
                 "scale", nullableInteger,
@@ -1812,22 +1935,33 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> query =
         schema(
             fields(
-                "table", boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Table selector"),
-                "metadata", boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Metadata selector"),
-                "definition", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition selector")),
+                "table",
+                    boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Table selector"),
+                "metadata",
+                    boundedString(
+                        HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Metadata selector"),
+                "definition",
+                    boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition selector")),
             List.of());
     Map<String, Object> node =
         schema(
             fields(
-                "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Project-relative definition path"),
+                "path",
+                    boundedString(
+                        HopImpactAnalysisService.MAX_PATH_LENGTH,
+                        "Project-relative definition path"),
                 "kind", enumStr("pipeline", "workflow"),
                 "depth", boundedInteger(0, HopImpactAnalysisService.MAX_DEPTH, "Traversal depth")),
             List.of("path", "kind", "depth"));
     Map<String, Object> dependency =
         schema(
             fields(
-                "from", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Source definition path"),
-                "to", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Target definition path"),
+                "from",
+                    boundedString(
+                        HopImpactAnalysisService.MAX_PATH_LENGTH, "Source definition path"),
+                "to",
+                    boundedString(
+                        HopImpactAnalysisService.MAX_PATH_LENGTH, "Target definition path"),
                 "type", enumStr("definition_reference"),
                 "from_kind", enumStr("pipeline", "workflow", "definition"),
                 "to_kind", enumStr("pipeline", "workflow", "definition")),
@@ -1842,7 +1976,10 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             fields(
                 "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition path"),
-                "metadata", boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Redacted metadata reference")),
+                "metadata",
+                    boundedString(
+                        HopImpactAnalysisService.MAX_SELECTOR_LENGTH,
+                        "Redacted metadata reference")),
             List.of("path", "metadata"));
     Map<String, Object> lineage =
         schema(
@@ -1850,24 +1987,37 @@ final class HopMcpServer implements AutoCloseable {
                 "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition path"),
                 "from", boundedString(512, "Source component name"),
                 "to", boundedString(512, "Target component name"),
-                "depth", boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Structural lineage depth")),
+                "depth",
+                    boundedInteger(
+                        1, HopImpactAnalysisService.MAX_DEPTH, "Structural lineage depth")),
             List.of("path", "from", "to", "depth"));
     return toolOutputSchema(
         fields(
             "query", query,
             "nodes", arrayOf(node, HopImpactAnalysisService.MAX_RESULTS),
             "dependencies", arrayOf(dependency, HopImpactAnalysisService.MAX_EDGES),
-            "metadata_references", arrayOf(metadataReference, HopImpactAnalysisService.MAX_METADATA_REFERENCES),
-            "table_references", arrayOf(tableReference, HopImpactAnalysisService.MAX_TABLE_REFERENCES),
+            "metadata_references",
+                arrayOf(metadataReference, HopImpactAnalysisService.MAX_METADATA_REFERENCES),
+            "table_references",
+                arrayOf(tableReference, HopImpactAnalysisService.MAX_TABLE_REFERENCES),
             "pipeline_workflow_references", arrayOf(dependency, HopImpactAnalysisService.MAX_EDGES),
             "lineage", arrayOf(lineage, HopImpactAnalysisService.MAX_EDGES),
-            "node_count", boundedInteger(0, HopImpactAnalysisService.MAX_RESULTS, "Impacted definition count"),
-            "returned_nodes", boundedInteger(0, HopImpactAnalysisService.MAX_RESULTS, "Returned impacted definitions"),
-            "edge_count", boundedInteger(0, HopImpactAnalysisService.MAX_EDGES, "Dependency edge count"),
-            "returned_edges", boundedInteger(0, HopImpactAnalysisService.MAX_EDGES, "Returned dependency edges"),
-            "max_depth_applied", boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Applied depth bound"),
-            "max_edges_applied", boundedInteger(1, HopImpactAnalysisService.MAX_EDGES, "Applied edge bound"),
-            "max_results_applied", boundedInteger(1, HopImpactAnalysisService.MAX_RESULTS, "Applied result bound"),
+            "node_count",
+                boundedInteger(
+                    0, HopImpactAnalysisService.MAX_RESULTS, "Impacted definition count"),
+            "returned_nodes",
+                boundedInteger(
+                    0, HopImpactAnalysisService.MAX_RESULTS, "Returned impacted definitions"),
+            "edge_count",
+                boundedInteger(0, HopImpactAnalysisService.MAX_EDGES, "Dependency edge count"),
+            "returned_edges",
+                boundedInteger(0, HopImpactAnalysisService.MAX_EDGES, "Returned dependency edges"),
+            "max_depth_applied",
+                boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Applied depth bound"),
+            "max_edges_applied",
+                boundedInteger(1, HopImpactAnalysisService.MAX_EDGES, "Applied edge bound"),
+            "max_results_applied",
+                boundedInteger(1, HopImpactAnalysisService.MAX_RESULTS, "Applied result bound"),
             "count_complete", bool("Whether the bounded project scan is complete"),
             "results_truncated", bool("Whether one or more result sections were truncated"),
             "has_more", bool("Whether a narrower page or larger bound can reveal more results"),
@@ -1897,52 +2047,93 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> profile =
         schema(
             fields(
-                "path", boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "Project-relative definition path"),
-                "run_configuration", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Native run configuration name"),
+                "path",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_PATH_LENGTH,
+                        "Project-relative definition path"),
+                "run_configuration",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_NAME_LENGTH, "Native run configuration name"),
                 "parameter_names", stringArray(HopEnvironmentDiffService.MAX_PARAMETERS)),
             List.of("path", "run_configuration", "parameter_names"));
     Map<String, Object> valueChange =
         schema(
             fields(
-                "name", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Changed variable or metadata key"),
-                "before", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value before the change"),
-                "after", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value after the change"),
+                "name",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Changed variable or metadata key"),
+                "before",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Non-sensitive value before the change"),
+                "after",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Non-sensitive value after the change"),
                 "redacted", bool("Whether one of the compared values was redacted")),
             List.of("name", "before", "after", "redacted"));
     Map<String, Object> propertyChange =
         schema(
             fields(
-                "property", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Changed run configuration property"),
-                "before", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value before the change"),
-                "after", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value after the change"),
+                "property",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Changed run configuration property"),
+                "before",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Non-sensitive value before the change"),
+                "after",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Non-sensitive value after the change"),
                 "redacted", bool("Whether one of the compared values was redacted")),
             List.of("property", "before", "after", "redacted"));
     Map<String, Object> parameterChange =
         schema(
             fields(
-                "name", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Changed parameter name"),
-                "property", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Changed parameter property"),
-                "before", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive default before the change"),
-                "after", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive default after the change"),
+                "name",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_NAME_LENGTH, "Changed parameter name"),
+                "property",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_NAME_LENGTH, "Changed parameter property"),
+                "before",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Non-sensitive default before the change"),
+                "after",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_VALUE_LENGTH,
+                        "Non-sensitive default after the change"),
                 "redacted", bool("Whether one of the compared defaults was redacted")),
             List.of("name", "property", "before", "after", "redacted"));
     Map<String, Object> unresolved =
         schema(
             fields(
                 "environment", enumStr("a", "b"),
-                "name", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Unresolved variable reference name"),
+                "name",
+                    boundedString(
+                        HopEnvironmentDiffService.MAX_NAME_LENGTH,
+                        "Unresolved variable reference name"),
                 "source", enumStr("definition_or_run_configuration")),
             List.of("environment", "name", "source"));
     return toolOutputSchema(
         fields(
-            "path_a", boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "First definition path"),
-            "path_b", boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "Second definition path"),
+            "path_a",
+                boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "First definition path"),
+            "path_b",
+                boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "Second definition path"),
             "kind", enumStr("pipeline", "workflow"),
             "profiles", schema(fields("a", profile, "b", profile), List.of("a", "b")),
             "variables_changed", arrayOf(valueChange, HopEnvironmentDiffService.MAX_CHANGES),
-            "metadata_references_changed", arrayOf(valueChange, HopEnvironmentDiffService.MAX_CHANGES),
-            "run_configuration_changed", arrayOf(propertyChange, HopEnvironmentDiffService.MAX_CHANGES),
-            "parameter_defaults_changed", arrayOf(parameterChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "metadata_references_changed",
+                arrayOf(valueChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "run_configuration_changed",
+                arrayOf(propertyChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "parameter_defaults_changed",
+                arrayOf(parameterChange, HopEnvironmentDiffService.MAX_CHANGES),
             "unresolved_variables", arrayOf(unresolved, HopEnvironmentDiffService.MAX_VARIABLES),
             "identical", bool("Whether no bounded environment difference was found"),
             "redaction_applied", bool("Whether secret-like values were redacted"),
@@ -1978,8 +2169,12 @@ final class HopMcpServer implements AutoCloseable {
                 "active", bool("Observed native active flag"),
                 "duration_ms", boundedInteger(0, Long.MAX_VALUE, "Observed execution duration"),
                 "state_status", boundedString(64, "Observed native state status"),
-                "state_description", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted native state description"),
-                "error_count", boundedInteger(0, HopExecutionRepository.MAX_ERRORS, "Observed native error count"),
+                "state_description",
+                    boundedString(
+                        HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted native state description"),
+                "error_count",
+                    boundedInteger(
+                        0, HopExecutionRepository.MAX_ERRORS, "Observed native error count"),
                 "errors", stringArray(20),
                 "reason", boundedString(128, "Reason execution evidence was unavailable")),
             List.of("available"));
@@ -1988,14 +2183,17 @@ final class HopMcpServer implements AutoCloseable {
             fields(
                 "timestamp", boundedInteger(0, Long.MAX_VALUE, "Log timestamp"),
                 "level", boundedString(32, "Log level"),
-                "message", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted log message")),
+                "message",
+                    boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted log message")),
             List.of("timestamp", "level", "message"));
     Map<String, Object> logsEvidence =
         schema(
             fields(
                 "available", bool("Whether log evidence was available"),
-                "event_count", boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Returned log event count"),
-                "error_count", boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Observed ERROR/FATAL count"),
+                "event_count",
+                    boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Returned log event count"),
+                "error_count",
+                    boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Observed ERROR/FATAL count"),
                 "errors", arrayOf(logError, HopDiagnosisService.MAX_LOG_ERRORS),
                 "truncated", bool("Whether log evidence was truncated"),
                 "reason", boundedString(128, "Reason log evidence was unavailable")),
@@ -2004,7 +2202,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             fields(
                 "available", bool("Whether persisted metrics were available"),
-                "component_count", boundedInteger(0, HopDiagnosisService.MAX_METRICS, "Returned metric component count"),
+                "component_count",
+                    boundedInteger(
+                        0, HopDiagnosisService.MAX_METRICS, "Returned metric component count"),
                 "truncated", bool("Whether metrics were truncated"),
                 "components", arrayOf(componentMetricsSchema(), HopDiagnosisService.MAX_METRICS),
                 "reason", boundedString(128, "Reason metrics were unavailable")),
@@ -2012,15 +2212,20 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> metadataReference =
         schema(
             fields(
-                "path", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Metadata property path"),
-                "value", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted metadata reference value"),
+                "path",
+                    boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Metadata property path"),
+                "value",
+                    boundedString(
+                        HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted metadata reference value"),
                 "redacted", bool("Whether the metadata value was redacted")),
             List.of("path", "value", "redacted"));
     Map<String, Object> parameter =
         schema(
             fields(
                 "name", boundedString(HopDiagnosisService.MAX_NAME_LENGTH, "Parameter name"),
-                "default", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted parameter default"),
+                "default",
+                    boundedString(
+                        HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted parameter default"),
                 "redacted", bool("Whether the parameter default was redacted")),
             List.of("name", "default", "redacted"));
     Map<String, Object> metadataEvidence =
@@ -2029,7 +2234,8 @@ final class HopMcpServer implements AutoCloseable {
                 "available", bool("Whether definition metadata evidence was available"),
                 "type", boundedString(32, "Definition type"),
                 "name", boundedString(512, "Definition name"),
-                "metadata_references", arrayOf(metadataReference, HopDiagnosisService.MAX_METADATA_REFERENCES),
+                "metadata_references",
+                    arrayOf(metadataReference, HopDiagnosisService.MAX_METADATA_REFERENCES),
                 "definition_references", stringArray(ProjectFiles.MAX_STRUCTURED_RESULTS),
                 "tables", stringArray(ProjectFiles.MAX_STRUCTURED_RESULTS),
                 "parameters", arrayOf(parameter, HopDiagnosisService.MAX_PARAMETERS),
@@ -2056,8 +2262,7 @@ final class HopMcpServer implements AutoCloseable {
                 "defaults", arrayOf(parameter, HopDiagnosisService.MAX_PARAMETERS),
                 "count", boundedInteger(0, HopDiagnosisService.MAX_PARAMETERS, "Parameter count")),
             List.of("available", "defaults", "count"));
-    Map<String, Object> engine =
-        boundedObject(boundedString(512, "Redacted engine property"), 16);
+    Map<String, Object> engine = boundedObject(boundedString(512, "Redacted engine property"), 16);
     Map<String, Object> configurationEvidence =
         schema(
             fields(
@@ -2065,9 +2270,13 @@ final class HopMcpServer implements AutoCloseable {
                 "name", boundedString(512, "Run configuration name"),
                 "run_configuration", boundedString(512, "Effective run configuration"),
                 "engine", engine,
-                "execution_info_location", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Execution information location"),
-                "data_profile", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Execution data profile"),
-                "unresolved_references", stringArray(HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES),
+                "execution_info_location",
+                    boundedString(
+                        HopDiagnosisService.MAX_VALUE_LENGTH, "Execution information location"),
+                "data_profile",
+                    boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Execution data profile"),
+                "unresolved_references",
+                    stringArray(HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES),
                 "redaction_applied", bool("Whether configuration values were redacted"),
                 "reason", boundedString(128, "Reason run configuration evidence was unavailable")),
             List.of("available"));
@@ -2080,15 +2289,28 @@ final class HopMcpServer implements AutoCloseable {
                 "run_configuration", boundedString(512, "Previous run configuration"),
                 "start_epoch_ms", boundedInteger(0, Long.MAX_VALUE, "Previous start timestamp"),
                 "duration_ms", boundedInteger(0, Long.MAX_VALUE, "Previous duration")),
-            List.of("execution_id", "status", "failed", "run_configuration", "start_epoch_ms", "duration_ms"));
+            List.of(
+                "execution_id",
+                "status",
+                "failed",
+                "run_configuration",
+                "start_epoch_ms",
+                "duration_ms"));
     Map<String, Object> previousEvidence =
         schema(
             fields(
                 "available", bool("Whether previous execution evidence was available"),
-                "count", boundedInteger(0, HopExecutionRepository.MAX_HISTORY_RESULTS, "Previous execution count"),
-                "returned", boundedInteger(0, HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS, "Returned previous executions"),
+                "count",
+                    boundedInteger(
+                        0, HopExecutionRepository.MAX_HISTORY_RESULTS, "Previous execution count"),
+                "returned",
+                    boundedInteger(
+                        0,
+                        HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS,
+                        "Returned previous executions"),
                 "has_more", bool("Whether more previous executions exist"),
-                "executions", arrayOf(previousExecution, HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS),
+                "executions",
+                    arrayOf(previousExecution, HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS),
                 "reason", boundedString(128, "Reason previous execution evidence was unavailable")),
             List.of("available"));
     Map<String, Object> evidence =
@@ -2102,7 +2324,15 @@ final class HopMcpServer implements AutoCloseable {
                 "parameters", parametersEvidence,
                 "run_configuration", configurationEvidence,
                 "previous_executions", previousEvidence),
-            List.of("execution", "logs", "component_metrics", "metadata", "connections", "parameters", "run_configuration", "previous_executions"));
+            List.of(
+                "execution",
+                "logs",
+                "component_metrics",
+                "metadata",
+                "connections",
+                "parameters",
+                "run_configuration",
+                "previous_executions"));
     Map<String, Object> fact =
         schema(
             fields(
@@ -2117,7 +2347,9 @@ final class HopMcpServer implements AutoCloseable {
             fields(
                 "code", boundedString(128, "Possible cause code"),
                 "confidence", enumStr("low", "medium", "high"),
-                "explanation", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Explicitly unverified explanation"),
+                "explanation",
+                    boundedString(
+                        HopDiagnosisService.MAX_VALUE_LENGTH, "Explicitly unverified explanation"),
                 "evidence", stringArray(16),
                 "verified", bool("Always false unless separately verified by evidence")),
             List.of("code", "confidence", "explanation", "evidence", "verified"));
@@ -2125,16 +2357,25 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             fields(
                 "code", boundedString(128, "Recommendation code"),
-                "reason", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Non-mutating recommendation reason"),
+                "reason",
+                    boundedString(
+                        HopDiagnosisService.MAX_VALUE_LENGTH, "Non-mutating recommendation reason"),
                 "tool", boundedString(128, "Suggested next MCP tool"),
                 "requires_preview", bool("Whether a future mutation would require preview"),
                 "auto_applied", bool("Whether any change was automatically applied")),
             List.of("code", "reason", "tool", "requires_preview", "auto_applied"));
     return toolOutputSchema(
         fields(
-            "location", boundedString(HopDiagnosisService.MAX_LOCATION_LENGTH, "Native execution information location"),
-            "execution_id", boundedString(HopDiagnosisService.MAX_EXECUTION_ID_LENGTH, "Native execution ID"),
-            "path", boundedString(HopDiagnosisService.MAX_PATH_LENGTH, "Project-relative execution definition path"),
+            "location",
+                boundedString(
+                    HopDiagnosisService.MAX_LOCATION_LENGTH,
+                    "Native execution information location"),
+            "execution_id",
+                boundedString(HopDiagnosisService.MAX_EXECUTION_ID_LENGTH, "Native execution ID"),
+            "path",
+                boundedString(
+                    HopDiagnosisService.MAX_PATH_LENGTH,
+                    "Project-relative execution definition path"),
             "run_configuration", boundedString(512, "Observed execution run configuration"),
             "evidence", evidence,
             "facts", arrayOf(fact, HopDiagnosisService.MAX_FACTS),
@@ -2167,35 +2408,67 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> effective =
         schema(
             fields(
-                "run_configuration", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Effective native run configuration"),
+                "run_configuration",
+                    boundedString(
+                        HopRunConfigurationService.MAX_NAME_LENGTH,
+                        "Effective native run configuration"),
                 "engine", engine,
-                "execution_info_location", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Effective execution information location"),
-                "data_profile", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Effective execution data profile")),
+                "execution_info_location",
+                    boundedString(
+                        HopRunConfigurationService.MAX_VALUE_LENGTH,
+                        "Effective execution information location"),
+                "data_profile",
+                    boundedString(
+                        HopRunConfigurationService.MAX_VALUE_LENGTH,
+                        "Effective execution data profile")),
             List.of("run_configuration", "engine", "execution_info_location", "data_profile"));
     Map<String, Object> variable =
         schema(
             fields(
                 "name", boundedString(1024, "Configuration variable name"),
-                "value", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Resolved or redacted variable value"),
+                "value",
+                    boundedString(
+                        HopRunConfigurationService.MAX_VALUE_LENGTH,
+                        "Resolved or redacted variable value"),
                 "resolved", bool("Whether no variable reference remains"),
-                "description", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Variable description"),
+                "description",
+                    boundedString(
+                        HopRunConfigurationService.MAX_VALUE_LENGTH, "Variable description"),
                 "redacted", bool("Whether the variable value was redacted")),
             List.of("name", "value", "resolved", "description", "redacted"));
     return toolOutputSchema(
         fields(
             "kind", enumStr("pipeline", "workflow"),
-            "name", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Run configuration name"),
-            "path", boundedString(HopRunConfigurationService.MAX_PATH_LENGTH, "Project-relative definition path"),
-            "run_configuration", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Effective native run configuration"),
-            "description", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Run configuration description"),
-            "execution_info_location", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Execution information location name"),
-            "data_profile", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Execution data profile name"),
+            "name",
+                boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Run configuration name"),
+            "path",
+                boundedString(
+                    HopRunConfigurationService.MAX_PATH_LENGTH, "Project-relative definition path"),
+            "run_configuration",
+                boundedString(
+                    HopRunConfigurationService.MAX_NAME_LENGTH,
+                    "Effective native run configuration"),
+            "description",
+                boundedString(
+                    HopRunConfigurationService.MAX_VALUE_LENGTH, "Run configuration description"),
+            "execution_info_location",
+                boundedString(
+                    HopRunConfigurationService.MAX_VALUE_LENGTH,
+                    "Execution information location name"),
+            "data_profile",
+                boundedString(
+                    HopRunConfigurationService.MAX_VALUE_LENGTH, "Execution data profile name"),
             "default_selection", bool("Whether this is the default run configuration"),
             "engine", engine,
-            "parameters", boundedObject(boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Redacted parameter value"), HopRunConfigurationService.MAX_PARAMETERS),
+            "parameters",
+                boundedObject(
+                    boundedString(
+                        HopRunConfigurationService.MAX_VALUE_LENGTH, "Redacted parameter value"),
+                    HopRunConfigurationService.MAX_PARAMETERS),
             "effective_configuration", effective,
             "variables", arrayOf(variable, HopRunConfigurationService.MAX_VARIABLES),
-            "unresolved_references", stringArray(HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES),
+            "unresolved_references",
+                stringArray(HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES),
             "variables_truncated", bool("Whether configured variables exceeded the bound"),
             "redaction_applied", bool("Whether secret-safe projection was applied")),
         List.of(
@@ -2566,16 +2839,24 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> execution = executionSummarySchema();
     return toolOutputSchema(
         fields(
-            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
-            "path", boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Applied definition path filter"),
+            "location",
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "path",
+                boundedString(
+                    HopExecutionRepository.MAX_FILTER_LENGTH, "Applied definition path filter"),
             "status", boundedString(32, "Applied execution status filter"),
             "from_epoch_ms", nonNegativeInteger("Applied start-time lower bound or zero"),
             "to_epoch_ms", nonNegativeInteger("Applied start-time upper bound or zero"),
             "offset", nonNegativeInteger("First history offset"),
-            "limit", boundedInteger(1, HopExecutionRepository.MAX_HISTORY_RESULTS, "Maximum history results"),
+            "limit",
+                boundedInteger(
+                    1, HopExecutionRepository.MAX_HISTORY_RESULTS, "Maximum history results"),
             "count", nonNegativeInteger("Matching executions in the bounded scan"),
             "count_complete", bool("Whether the native location was fully scanned"),
-            "returned", boundedInteger(0, HopExecutionRepository.MAX_HISTORY_RESULTS, "Executions returned"),
+            "returned",
+                boundedInteger(
+                    0, HopExecutionRepository.MAX_HISTORY_RESULTS, "Executions returned"),
             "has_more", bool("Whether another history page remains"),
             "scan_truncated", bool("Whether the bounded native scan stopped early"),
             "executions", arrayOf(execution, HopExecutionRepository.MAX_HISTORY_RESULTS)),
@@ -2598,23 +2879,41 @@ final class HopMcpServer implements AutoCloseable {
   private static Map<String, Object> executionDetailOutputSchema() {
     return toolOutputSchema(
         fields(
-            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "location",
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
             "execution", executionSummarySchema(),
             "state", executionStateSchema(),
-            "children_count", boundedInteger(0, HopExecutionRepository.MAX_CHILD_IDS, "Bounded immediate child count"),
-            "metrics", arrayOf(componentMetricsSchema(), HopExecutionRepository.MAX_COMPONENT_METRICS),
-            "details", boundedObject(boundedString(4096, "Redacted native state detail"), HopExecutionRepository.MAX_DETAILS),
+            "children_count",
+                boundedInteger(
+                    0, HopExecutionRepository.MAX_CHILD_IDS, "Bounded immediate child count"),
+            "metrics",
+                arrayOf(componentMetricsSchema(), HopExecutionRepository.MAX_COMPONENT_METRICS),
+            "details",
+                boundedObject(
+                    boundedString(4096, "Redacted native state detail"),
+                    HopExecutionRepository.MAX_DETAILS),
             "errors", stringArray(HopExecutionRepository.MAX_ERRORS),
             "logging_available", bool("Whether large execution logging was loaded")),
         List.of(
-            "location", "execution", "state", "children_count", "metrics", "details", "errors", "logging_available"));
+            "location",
+            "execution",
+            "state",
+            "children_count",
+            "metrics",
+            "details",
+            "errors",
+            "logging_available"));
   }
 
   private static Map<String, Object> executionChildrenOutputSchema() {
     Map<String, Object> child = new LinkedHashMap<>(executionSummarySchema());
     @SuppressWarnings("unchecked")
     Map<String, Object> childProperties = (Map<String, Object>) child.get("properties");
-    childProperties.put("depth", boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Depth from the root execution"));
+    childProperties.put(
+        "depth",
+        boundedInteger(
+            1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Depth from the root execution"));
     @SuppressWarnings("unchecked")
     List<String> required = (List<String>) child.get("required");
     required = new ArrayList<>(required);
@@ -2622,28 +2921,49 @@ final class HopMcpServer implements AutoCloseable {
     child.put("required", required);
     return toolOutputSchema(
         fields(
-            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "location",
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
             "root_execution_id", boundedString(256, "Root execution ID"),
-            "max_depth", boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Applied depth bound"),
-            "max_nodes", boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_NODES, "Applied node bound"),
+            "max_depth",
+                boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Applied depth bound"),
+            "max_nodes",
+                boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_NODES, "Applied node bound"),
             "visited", nonNegativeInteger("Visited execution IDs"),
-            "returned", boundedInteger(0, HopExecutionRepository.MAX_CHILDREN_NODES, "Returned child executions"),
+            "returned",
+                boundedInteger(
+                    0, HopExecutionRepository.MAX_CHILDREN_NODES, "Returned child executions"),
             "truncated", bool("Whether the child traversal hit a bound"),
             "children", arrayOf(child, HopExecutionRepository.MAX_CHILDREN_NODES)),
         List.of(
-            "location", "root_execution_id", "max_depth", "max_nodes", "visited", "returned", "truncated", "children"));
+            "location",
+            "root_execution_id",
+            "max_depth",
+            "max_nodes",
+            "visited",
+            "returned",
+            "truncated",
+            "children"));
   }
 
   private static Map<String, Object> executionMetricsOutputSchema() {
     return toolOutputSchema(
         fields(
-            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "location",
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
             "execution_id", boundedString(256, "Native execution ID"),
             "available", bool("Whether native component metrics were stored"),
-            "component_count", boundedInteger(0, HopExecutionRepository.MAX_COMPONENT_METRICS, "Returned component metric rows"),
+            "component_count",
+                boundedInteger(
+                    0,
+                    HopExecutionRepository.MAX_COMPONENT_METRICS,
+                    "Returned component metric rows"),
             "truncated", bool("Whether component metrics exceeded the response bound"),
-            "components", arrayOf(componentMetricsSchema(), HopExecutionRepository.MAX_COMPONENT_METRICS)),
-        List.of("location", "execution_id", "available", "component_count", "truncated", "components"));
+            "components",
+                arrayOf(componentMetricsSchema(), HopExecutionRepository.MAX_COMPONENT_METRICS)),
+        List.of(
+            "location", "execution_id", "available", "component_count", "truncated", "components"));
   }
 
   private static Map<String, Object> dataProfileOutputSchema() {
@@ -2679,13 +2999,22 @@ final class HopMcpServer implements AutoCloseable {
                 "samples"));
     return toolOutputSchema(
         fields(
-            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "location",
+                boundedString(
+                    HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
             "execution_id", boundedString(256, "Native execution ID"),
-            "transform", boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Applied transform"),
+            "transform",
+                boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Applied transform"),
             "available", bool("Whether stored execution data was available"),
             "source", enumStr("stored_execution_data"),
-            "data_sets_scanned", boundedInteger(0, HopExecutionRepository.MAX_PROFILE_DATA_SETS, "Bounded stored data sets inspected"),
-            "rows_scanned", boundedInteger(0, HopExecutionRepository.MAX_PROFILE_ROWS, "Bounded stored rows inspected"),
+            "data_sets_scanned",
+                boundedInteger(
+                    0,
+                    HopExecutionRepository.MAX_PROFILE_DATA_SETS,
+                    "Bounded stored data sets inspected"),
+            "rows_scanned",
+                boundedInteger(
+                    0, HopExecutionRepository.MAX_PROFILE_ROWS, "Bounded stored rows inspected"),
             "rows_truncated", bool("Whether stored row inspection hit its bound"),
             "fields", boundedObject(field, HopExecutionRepository.MAX_PROFILE_FIELDS)),
         List.of(
@@ -2704,7 +3033,9 @@ final class HopMcpServer implements AutoCloseable {
     return schema(
         fields(
             "execution_id", boundedString(256, "Native execution ID"),
-            "path", boundedString(4096, "Project-relative definition path or protected external marker"),
+            "path",
+                boundedString(
+                    4096, "Project-relative definition path or protected external marker"),
             "name", boundedString(512, "Native execution name"),
             "type", boundedString(32, "Native pipeline or workflow type"),
             "parent_id", boundedString(256, "Parent execution ID"),
@@ -2765,11 +3096,15 @@ final class HopMcpServer implements AutoCloseable {
         fields(
             "component", boundedString(512, "Native component name"),
             "copy", boundedString(128, "Native component copy"),
-            "metrics", boundedObject(boundedInteger(Long.MIN_VALUE, Long.MAX_VALUE, "Native metric value"), HopExecutionRepository.MAX_METRIC_VALUES)),
+            "metrics",
+                boundedObject(
+                    boundedInteger(Long.MIN_VALUE, Long.MAX_VALUE, "Native metric value"),
+                    HopExecutionRepository.MAX_METRIC_VALUES)),
         List.of("component", "copy", "metrics"));
   }
 
-  private static Map<String, Object> boundedObject(Map<String, Object> valueSchema, int maxProperties) {
+  private static Map<String, Object> boundedObject(
+      Map<String, Object> valueSchema, int maxProperties) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("type", "object");
     result.put("additionalProperties", valueSchema);

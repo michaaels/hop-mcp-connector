@@ -74,10 +74,8 @@ class HopDefinitionDiffServiceTest {
     HopDefinitionDiffService service =
         new HopDefinitionDiffService(new ProjectFiles(project), variables, metadataProvider);
 
-    assertThrows(
-        IllegalArgumentException.class, () -> service.compare("one.hpl", "two.hwf"));
-    assertThrows(
-        Exception.class, () -> service.compare("../outside.hpl", "one.hpl"));
+    assertThrows(IllegalArgumentException.class, () -> service.compare("one.hpl", "two.hwf"));
+    assertThrows(Exception.class, () -> service.compare("../outside.hpl", "one.hpl"));
   }
 
   @Test

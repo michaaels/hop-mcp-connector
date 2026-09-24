@@ -51,7 +51,8 @@ final class HopMetadataService {
       Map<String, Object> type = typeRow(classes.get(i));
       if (type != null) all.add(type);
     }
-    all.sort(Comparator.comparing(row -> String.valueOf(row.get("key")), String.CASE_INSENSITIVE_ORDER));
+    all.sort(
+        Comparator.comparing(row -> String.valueOf(row.get("key")), String.CASE_INSENSITIVE_ORDER));
     int end = Math.min(all.size(), offset + limit);
     List<Map<String, Object>> page =
         offset >= all.size() ? List.of() : new ArrayList<>(all.subList(offset, end));
@@ -126,10 +127,14 @@ final class HopMetadataService {
     Map<String, Object> projected = projectMetadata(metadata);
     return new LinkedHashMap<>(
         Map.of(
-            "type", metadataKey(managedClass),
-            "name", name,
-            "metadata", projected,
-            "redaction_applied", true));
+            "type",
+            metadataKey(managedClass),
+            "name",
+            name,
+            "metadata",
+            projected,
+            "redaction_applied",
+            true));
   }
 
   Map<String, Object> dependencies(String type, String name, int offset, int limit)
@@ -194,8 +199,7 @@ final class HopMetadataService {
       for (Object rawComponent : components) {
         if (!(rawComponent instanceof Map<?, ?> component)) continue;
         Object componentNameValue = component.get("name");
-        String componentName =
-            componentNameValue == null ? "" : String.valueOf(componentNameValue);
+        String componentName = componentNameValue == null ? "" : String.valueOf(componentNameValue);
         if (componentName.isBlank()) continue;
         Map<String, Object> detail = HopXml.component(path, definition, componentName);
         if (containsString(detail, metadataName, 0)) {
@@ -248,7 +252,9 @@ final class HopMetadataService {
     }
     try {
       int fields = 0;
-      for (Class<?> current = object.getClass(); current != null && fields < MAX_METADATA_FIELDS; current = current.getSuperclass()) {
+      for (Class<?> current = object.getClass();
+          current != null && fields < MAX_METADATA_FIELDS;
+          current = current.getSuperclass()) {
         for (Field field : current.getDeclaredFields()) {
           HopMetadataProperty property = field.getAnnotation(HopMetadataProperty.class);
           if (property == null
@@ -257,13 +263,16 @@ final class HopMetadataService {
               || field.isSynthetic()
               || fields >= MAX_METADATA_FIELDS) continue;
           String key = propertyKey(field.getName(), property);
-          Object value = property.password() ? SensitiveData.redactedMarker() : readField(field, object);
+          Object value =
+              property.password() ? SensitiveData.redactedMarker() : readField(field, object);
           result.put(key, property.password() ? value : projectValue(value, key, depth + 1, seen));
           fields++;
         }
       }
       if (fields < MAX_METADATA_FIELDS) {
-        for (Class<?> current = object.getClass(); current != null && fields < MAX_METADATA_FIELDS; current = current.getSuperclass()) {
+        for (Class<?> current = object.getClass();
+            current != null && fields < MAX_METADATA_FIELDS;
+            current = current.getSuperclass()) {
           for (Method method : current.getDeclaredMethods()) {
             HopMetadataProperty property = method.getAnnotation(HopMetadataProperty.class);
             if (property == null
@@ -275,8 +284,10 @@ final class HopMetadataService {
                 || fields >= MAX_METADATA_FIELDS) continue;
             String key = propertyKey(method.getName(), property);
             if (result.containsKey(key)) continue;
-            Object value = property.password() ? SensitiveData.redactedMarker() : invoke(method, object);
-            result.put(key, property.password() ? value : projectValue(value, key, depth + 1, seen));
+            Object value =
+                property.password() ? SensitiveData.redactedMarker() : invoke(method, object);
+            result.put(
+                key, property.password() ? value : projectValue(value, key, depth + 1, seen));
             fields++;
           }
         }
@@ -291,7 +302,8 @@ final class HopMetadataService {
     if (value == null) return null;
     if (SensitiveData.isSensitiveKey(key)) return SensitiveData.redactedMarker();
     if (value instanceof String text) return SensitiveData.redactSensitiveText(text);
-    if (value instanceof Number || value instanceof Boolean || value instanceof Enum<?>) return value;
+    if (value instanceof Number || value instanceof Boolean || value instanceof Enum<?>)
+      return value;
     if (value instanceof Character || value instanceof java.time.temporal.TemporalAccessor) {
       return SensitiveData.redactSensitiveText(String.valueOf(value));
     }
@@ -300,7 +312,8 @@ final class HopMetadataService {
       if (value instanceof byte[]) return "<binary>";
       List<Object> result = new ArrayList<>();
       int size = Math.min(Array.getLength(value), MAX_METADATA_COLLECTION_ITEMS);
-      for (int i = 0; i < size; i++) result.add(projectValue(Array.get(value, i), key, depth + 1, seen));
+      for (int i = 0; i < size; i++)
+        result.add(projectValue(Array.get(value, i), key, depth + 1, seen));
       if (Array.getLength(value) > size) result.add(TRUNCATED);
       return result;
     }
@@ -412,27 +425,32 @@ final class HopMetadataService {
   }
 
   private static boolean matchesQuery(String name, String query) {
-    return query.isBlank() || name.toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT));
+    return query.isBlank()
+        || name.toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT));
   }
 
   private static String boundedQuery(String query) {
     if (query == null) return "";
     if (query.length() > MAX_METADATA_QUERY_LENGTH) {
-      throw new IllegalArgumentException("query exceeds " + MAX_METADATA_QUERY_LENGTH + " characters");
+      throw new IllegalArgumentException(
+          "query exceeds " + MAX_METADATA_QUERY_LENGTH + " characters");
     }
     return query;
   }
 
   private static void requireName(String value, String field) {
-    if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " is required");
+    if (value == null || value.isBlank())
+      throw new IllegalArgumentException(field + " is required");
     if (value.length() > MAX_METADATA_NAME_LENGTH) {
-      throw new IllegalArgumentException(field + " exceeds " + MAX_METADATA_NAME_LENGTH + " characters");
+      throw new IllegalArgumentException(
+          field + " exceeds " + MAX_METADATA_NAME_LENGTH + " characters");
     }
   }
 
   private static void validatePage(int offset, int limit, int maxLimit) {
     if (offset < 0 || offset > ProjectFiles.MAX_SCAN_FILES)
-      throw new IllegalArgumentException("offset must be between 0 and " + ProjectFiles.MAX_SCAN_FILES);
+      throw new IllegalArgumentException(
+          "offset must be between 0 and " + ProjectFiles.MAX_SCAN_FILES);
     if (limit < 1 || limit > maxLimit)
       throw new IllegalArgumentException("limit must be between 1 and " + maxLimit);
   }

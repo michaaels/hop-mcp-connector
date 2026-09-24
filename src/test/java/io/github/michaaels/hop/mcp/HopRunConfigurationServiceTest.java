@@ -7,9 +7,9 @@ import java.util.List;
 import java.util.Map;
 import org.apache.hop.core.variables.DescribedVariable;
 import org.apache.hop.core.variables.Variables;
+import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 import org.apache.hop.pipeline.config.PipelineRunConfiguration;
 import org.apache.hop.pipeline.engines.local.LocalPipelineRunConfiguration;
-import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 import org.junit.jupiter.api.Test;
 
 class HopRunConfigurationServiceTest {
@@ -60,16 +60,20 @@ class HopRunConfigurationServiceTest {
     configuration.setEngineRunConfiguration(engine);
     provider.getSerializer(PipelineRunConfiguration.class).save(configuration);
 
-    HopRunConfigurationService service =
-        new HopRunConfigurationService(provider, new Variables());
+    HopRunConfigurationService service = new HopRunConfigurationService(provider, new Variables());
     Map<String, Object> result =
-        service.resolveConfiguration("pipelines/orders.hpl", "local", Map.of("PARAM_DIR", "C:/data"));
+        service.resolveConfiguration(
+            "pipelines/orders.hpl", "local", Map.of("PARAM_DIR", "C:/data"));
 
     assertEquals("pipelines/orders.hpl", result.get("path"));
     assertEquals("local", result.get("run_configuration"));
-    assertEquals("C:/data/out", ((Map<?, ?>) ((List<?>) result.get("variables")).get(0)).get("value"));
-    assertEquals("Local", ((Map<?, ?>) result.get("effective_configuration")).get("engine") instanceof Map<?, ?> engineMap
-        ? engineMap.get("plugin_id")
-        : "");
+    assertEquals(
+        "C:/data/out", ((Map<?, ?>) ((List<?>) result.get("variables")).get(0)).get("value"));
+    assertEquals(
+        "Local",
+        ((Map<?, ?>) result.get("effective_configuration")).get("engine")
+                instanceof Map<?, ?> engineMap
+            ? engineMap.get("plugin_id")
+            : "");
   }
 }

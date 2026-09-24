@@ -5,12 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
-import java.nio.file.Path;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
+import org.apache.hop.core.row.RowBuffer;
+import org.apache.hop.core.row.RowMeta;
+import org.apache.hop.core.row.value.ValueMetaInteger;
+import org.apache.hop.core.row.value.ValueMetaNumber;
 import org.apache.hop.execution.Execution;
 import org.apache.hop.execution.ExecutionData;
 import org.apache.hop.execution.ExecutionDataSetMeta;
@@ -18,10 +21,6 @@ import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionStateComponentMetrics;
 import org.apache.hop.execution.ExecutionType;
 import org.apache.hop.execution.IExecutionInfoLocation;
-import org.apache.hop.core.row.RowBuffer;
-import org.apache.hop.core.row.RowMeta;
-import org.apache.hop.core.row.value.ValueMetaInteger;
-import org.apache.hop.core.row.value.ValueMetaNumber;
 import org.junit.jupiter.api.Test;
 
 class HopExecutionRepositoryTest {
@@ -30,8 +29,10 @@ class HopExecutionRepositoryTest {
     Path root = Files.createTempDirectory("hop-mcp-execution-repository");
     ProjectFiles files = new ProjectFiles(root);
 
-    Execution execution = execution("root", root.resolve("pipelines/orders.hpl").toString(), null, 1000L);
-    Execution child = execution("child", root.resolve("pipelines/orders.hpl").toString(), "root", 1100L);
+    Execution execution =
+        execution("root", root.resolve("pipelines/orders.hpl").toString(), null, 1000L);
+    Execution child =
+        execution("child", root.resolve("pipelines/orders.hpl").toString(), "root", 1100L);
     ExecutionState rootState = state("root", null, false, true, 1500L);
     rootState.setStatusDescription("Finished");
     rootState.setExecutionEndDate(new Date(1500L));
@@ -46,24 +47,27 @@ class HopExecutionRepositoryTest {
     Map<String, ExecutionState> states = Map.of("root", rootState, "child", childState);
     IExecutionInfoLocation location = fakeLocation(executions, states);
     HopExecutionRepository repository =
-        new HopExecutionRepository(
-            files,
-            null,
-            null,
-            (name, action) -> action.apply(location));
+        new HopExecutionRepository(files, null, null, (name, action) -> action.apply(location));
 
-    Map<String, Object> history = repository.history("local", "orders", "finished", 900L, 1600L, 0, 10);
+    Map<String, Object> history =
+        repository.history("local", "orders", "finished", 900L, 1600L, 0, 10);
     assertEquals(1, history.get("count"));
-    assertEquals("pipelines/orders.hpl", ((Map<?, ?>) ((List<?>) history.get("executions")).get(0)).get("path"));
+    assertEquals(
+        "pipelines/orders.hpl",
+        ((Map<?, ?>) ((List<?>) history.get("executions")).get(0)).get("path"));
 
     Map<String, Object> detail = repository.detail("local", "root");
     assertEquals(true, detail.get("logging_available") == Boolean.FALSE);
     assertEquals(1, ((List<?>) detail.get("metrics")).size());
-    assertEquals(42L, ((Map<?, ?>) ((Map<?, ?>) ((List<?>) detail.get("metrics")).get(0)).get("metrics")).get("Rows read"));
+    assertEquals(
+        42L,
+        ((Map<?, ?>) ((Map<?, ?>) ((List<?>) detail.get("metrics")).get(0)).get("metrics"))
+            .get("Rows read"));
 
     Map<String, Object> children = repository.children("local", "root", 2, 10);
     assertEquals(1, children.get("returned"));
-    assertEquals("child", ((Map<?, ?>) ((List<?>) children.get("children")).get(0)).get("execution_id"));
+    assertEquals(
+        "child", ((Map<?, ?>) ((List<?>) children.get("children")).get(0)).get("execution_id"));
 
     Map<String, Object> metrics = repository.metrics("local", "root");
     assertEquals(true, metrics.get("available"));
@@ -76,11 +80,7 @@ class HopExecutionRepositoryTest {
     data.setDataSets(
         Map.of(
             "rows",
-            new RowBuffer(
-                rowMeta,
-                List.of(
-                    new Object[] {1L, 10.0},
-                    new Object[] {null, 20.0}))));
+            new RowBuffer(rowMeta, List.of(new Object[] {1L, 10.0}, new Object[] {null, 20.0}))));
     data.setSetMetaData(
         Map.of("rows", new ExecutionDataSetMeta("rows", "root", "Table Input", "0", "Rows")));
     Map<String, Object> profile =
@@ -88,7 +88,8 @@ class HopExecutionRepositoryTest {
                 files,
                 null,
                 null,
-                (name, action) -> action.apply(fakeLocation(executions, states, Map.of("root", data))))
+                (name, action) ->
+                    action.apply(fakeLocation(executions, states, Map.of("root", data))))
             .profile("local", "root", "Table Input", List.of("CUSTOMER_ID", "TRAFFIC_MB"));
     Map<?, ?> profileFields = (Map<?, ?>) profile.get("fields");
     assertEquals(2L, profile.get("rows_scanned"));
@@ -105,14 +106,18 @@ class HopExecutionRepositoryTest {
     Path root = Files.createTempDirectory("hop-mcp-execution-bounds");
     HopExecutionRepository repository =
         new HopExecutionRepository(
-            new ProjectFiles(root), null, null, (name, action) -> action.apply(fakeLocation(Map.of(), Map.of())));
+            new ProjectFiles(root),
+            null,
+            null,
+            (name, action) -> action.apply(fakeLocation(Map.of(), Map.of())));
 
     assertThrows(
         IllegalArgumentException.class,
         () -> repository.history("local", null, null, 2L, 1L, 0, 10));
     assertThrows(
         IllegalArgumentException.class,
-        () -> repository.children("local", "id", HopExecutionRepository.MAX_CHILDREN_DEPTH + 1, 10));
+        () ->
+            repository.children("local", "id", HopExecutionRepository.MAX_CHILDREN_DEPTH + 1, 10));
     assertThrows(
         IllegalArgumentException.class,
         () -> repository.history("", null, null, null, null, 0, 10));

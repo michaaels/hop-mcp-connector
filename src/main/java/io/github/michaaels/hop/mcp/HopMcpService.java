@@ -211,12 +211,7 @@ final class HopMcpService implements AutoCloseable {
   }
 
   Map<String, Object> impactAnalysis(
-      String table,
-      String metadata,
-      String definition,
-      int maxDepth,
-      int maxEdges,
-      int maxResults)
+      String table, String metadata, String definition, int maxDepth, int maxEdges, int maxResults)
       throws Exception {
     return impactAnalysis.analyze(table, metadata, definition, maxDepth, maxEdges, maxResults);
   }
@@ -537,7 +532,8 @@ final class HopMcpService implements AutoCloseable {
       int limit)
       throws Exception {
     requireExecution();
-    return executionRepository.history(location, path, status, fromEpochMs, toEpochMs, offset, limit);
+    return executionRepository.history(
+        location, path, status, fromEpochMs, toEpochMs, offset, limit);
   }
 
   Map<String, Object> executionDetail(String location, String executionId) throws Exception {
@@ -545,8 +541,8 @@ final class HopMcpService implements AutoCloseable {
     return executionRepository.detail(location, executionId);
   }
 
-  Map<String, Object> executionChildren(String location, String executionId, int maxDepth, int maxNodes)
-      throws Exception {
+  Map<String, Object> executionChildren(
+      String location, String executionId, int maxDepth, int maxNodes) throws Exception {
     requireExecution();
     return executionRepository.children(location, executionId, maxDepth, maxNodes);
   }

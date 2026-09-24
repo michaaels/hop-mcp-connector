@@ -44,12 +44,7 @@ final class HopImpactAnalysisService {
   }
 
   Map<String, Object> analyze(
-      String table,
-      String metadata,
-      String definition,
-      int maxDepth,
-      int maxEdges,
-      int maxResults)
+      String table, String metadata, String definition, int maxDepth, int maxEdges, int maxResults)
       throws Exception {
     Selector selector = selector(table, metadata, definition);
     validateBounds(maxDepth, maxEdges, maxResults);
@@ -91,10 +86,10 @@ final class HopImpactAnalysisService {
     }
 
     Set<String> initial = matchingDefinitions(definitions, selector);
-    Traversal traversal =
-        traverse(initial, inbound, definitions, maxDepth, maxEdges, maxResults);
+    Traversal traversal = traverse(initial, inbound, definitions, maxDepth, maxEdges, maxResults);
     List<Map<String, Object>> nodes = nodeOutput(traversal.nodes(), definitions);
-    List<Map<String, Object>> tableReferences = tableReferences(selector, traversal.nodes(), definitions);
+    List<Map<String, Object>> tableReferences =
+        tableReferences(selector, traversal.nodes(), definitions);
     List<Map<String, Object>> metadataReferences =
         metadataReferences(selector, traversal.nodes(), definitions);
     List<Map<String, Object>> lineage = lineage(traversal.nodes(), definitions, maxEdges);
@@ -269,9 +264,7 @@ final class HopImpactAnalysisService {
   }
 
   private static List<Map<String, Object>> lineage(
-      Map<String, Integer> nodes,
-      Map<String, Definition> definitions,
-      int maxEdges) {
+      Map<String, Integer> nodes, Map<String, Definition> definitions, int maxEdges) {
     List<Map<String, Object>> result = new ArrayList<>();
     for (String path : nodes.keySet()) {
       Definition definition = definitions.get(path);
@@ -310,21 +303,21 @@ final class HopImpactAnalysisService {
 
   private Path resolveReference(String source, String reference) {
     try {
-      if (reference == null || reference.isBlank() || reference.length() > MAX_PATH_LENGTH) return null;
-      String resolvedReference =
-          reference.replace("${PROJECT_HOME}", files.root().toString());
+      if (reference == null || reference.isBlank() || reference.length() > MAX_PATH_LENGTH)
+        return null;
+      String resolvedReference = reference.replace("${PROJECT_HOME}", files.root().toString());
       if (variables != null) resolvedReference = variables.resolve(resolvedReference);
       if (resolvedReference == null || resolvedReference.isBlank()) return null;
       Path sourcePath = files.root().resolve(source).normalize();
       Path sourceFolder = sourcePath.getParent();
       if (sourceFolder == null) return null;
       resolvedReference =
-          resolvedReference.replace(
-              "${Internal.Entry.Current.Folder}", sourceFolder.toString());
+          resolvedReference.replace("${Internal.Entry.Current.Folder}", sourceFolder.toString());
       Path raw = Path.of(resolvedReference);
       Path candidate = raw.isAbsolute() ? raw : sourceFolder.resolve(raw);
       candidate = candidate.normalize();
-      if (!candidate.startsWith(files.root()) || !Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
+      if (!candidate.startsWith(files.root())
+          || !Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
         return null;
       }
       Path real = candidate.toRealPath();
@@ -334,9 +327,12 @@ final class HopImpactAnalysisService {
     }
   }
 
-  private static Selector selector(String table, String metadata, String definition) throws Exception {
+  private static Selector selector(String table, String metadata, String definition)
+      throws Exception {
     int count = count(table) + count(metadata) + count(definition);
-    if (count != 1) throw new IllegalArgumentException("Exactly one of table, metadata or definition is required");
+    if (count != 1)
+      throw new IllegalArgumentException(
+          "Exactly one of table, metadata or definition is required");
     if (count(table) == 1) return Selector.table(requireSelector(table, "table"));
     if (count(metadata) == 1) return Selector.metadata(requireSelector(metadata, "metadata"));
     String path = requireSelector(definition, "definition");

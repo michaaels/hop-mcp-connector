@@ -9,12 +9,12 @@ import java.util.regex.Pattern;
 import org.apache.hop.core.variables.DescribedVariable;
 import org.apache.hop.core.variables.IVariables;
 import org.apache.hop.core.variables.Variables;
+import org.apache.hop.metadata.api.IHopMetadataProvider;
+import org.apache.hop.metadata.api.IHopMetadataSerializer;
 import org.apache.hop.pipeline.config.IPipelineEngineRunConfiguration;
 import org.apache.hop.pipeline.config.PipelineRunConfiguration;
 import org.apache.hop.workflow.config.IWorkflowEngineRunConfiguration;
 import org.apache.hop.workflow.config.WorkflowRunConfiguration;
-import org.apache.hop.metadata.api.IHopMetadataProvider;
-import org.apache.hop.metadata.api.IHopMetadataSerializer;
 
 /** Bounded, secret-safe resolution of native Hop pipeline and workflow run configurations. */
 final class HopRunConfigurationService {
@@ -73,7 +73,10 @@ final class HopRunConfigurationService {
       }
     }
     IPipelineEngineRunConfiguration engine = configuration.getEngineRunConfiguration();
-    Map<String, Object> engineResult = engine(engine == null ? null : engine.getEnginePluginId(), engine == null ? null : engine.getEnginePluginName());
+    Map<String, Object> engineResult =
+        engine(
+            engine == null ? null : engine.getEnginePluginId(),
+            engine == null ? null : engine.getEnginePluginName());
     return result(
         "pipeline",
         configuration.getName(),
@@ -106,7 +109,9 @@ final class HopRunConfigurationService {
         configuration.getExecutionInfoLocationName(),
         "",
         configuration.isDefaultSelection(),
-        engine(engine == null ? null : engine.getEnginePluginId(), engine == null ? null : engine.getEnginePluginName()),
+        engine(
+            engine == null ? null : engine.getEnginePluginId(),
+            engine == null ? null : engine.getEnginePluginName()),
         parameters,
         List.of(),
         List.of());
@@ -197,8 +202,7 @@ final class HopRunConfigurationService {
       String value = parameter.getValue();
       result.put(
           key,
-          SensitiveData.isSensitiveKey(key)
-                  || containsSensitiveReference(value)
+          SensitiveData.isSensitiveKey(key) || containsSensitiveReference(value)
               ? SensitiveData.REDACTED
               : boundedValue(value));
     }

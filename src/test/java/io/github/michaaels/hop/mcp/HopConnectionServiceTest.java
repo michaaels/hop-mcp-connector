@@ -24,8 +24,7 @@ class HopConnectionServiceTest {
               configuredTimeout.set(variables.getVariable("HOP_DATABASE_CONNECTION_TIMEOUT"));
               DatabaseTestResults result = new DatabaseTestResults();
               result.setSuccess(false);
-              result.setMessage(
-                  "jdbc:postgresql://user:secret@example/db?password=second-secret");
+              result.setMessage("jdbc:postgresql://user:secret@example/db?password=second-secret");
               return result;
             },
             name -> null);

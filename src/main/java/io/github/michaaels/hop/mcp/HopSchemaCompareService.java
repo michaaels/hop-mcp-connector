@@ -72,7 +72,12 @@ final class HopSchemaCompareService {
 
   HopSchemaCompareService(
       IHopMetadataProvider metadataProvider, IVariables variables, boolean allowDeepCheck) {
-    this(metadataProvider, variables, allowDeepCheck, HopSchemaCompareService::loadNativeSchema, null);
+    this(
+        metadataProvider,
+        variables,
+        allowDeepCheck,
+        HopSchemaCompareService::loadNativeSchema,
+        null);
   }
 
   HopSchemaCompareService(
@@ -84,8 +89,10 @@ final class HopSchemaCompareService {
     this.metadataProvider = metadataProvider;
     this.variables = variables;
     this.allowDeepCheck = allowDeepCheck;
-    this.schemaLoader = schemaLoader == null ? HopSchemaCompareService::loadNativeSchema : schemaLoader;
-    this.connectionLoader = connectionLoader == null ? this::loadNativeConnection : connectionLoader;
+    this.schemaLoader =
+        schemaLoader == null ? HopSchemaCompareService::loadNativeSchema : schemaLoader;
+    this.connectionLoader =
+        connectionLoader == null ? this::loadNativeConnection : connectionLoader;
   }
 
   Map<String, Object> compare(
@@ -104,11 +111,13 @@ final class HopSchemaCompareService {
     List<ExpectedColumn> expected = parseExpected(expectedValues);
     DatabaseMeta connection = connectionLoader.load(connectionName);
     if (connection == null) {
-      throw McpException.validation("METADATA_NOT_FOUND", "The RDBMS metadata object was not found.");
+      throw McpException.validation(
+          "METADATA_NOT_FOUND", "The RDBMS metadata object was not found.");
     }
     SchemaReadResult actual = loadWithTimeout(connection, schemaName, tableName, timeoutSeconds);
     if (actual == null) {
-      throw McpException.validation("SCHEMA_UNAVAILABLE", "The native database did not return table metadata.");
+      throw McpException.validation(
+          "SCHEMA_UNAVAILABLE", "The native database did not return table metadata.");
     }
     return compareValues(connectionName, schemaName, tableName, expected, actual);
   }
@@ -147,7 +156,8 @@ final class HopSchemaCompareService {
             addDifference(
                 differences,
                 differenceCount,
-                difference("COLUMN_REMOVED", "column", expectedColumn.name(), expectedColumn, null));
+                difference(
+                    "COLUMN_REMOVED", "column", expectedColumn.name(), expectedColumn, null));
         continue;
       }
       differenceCount =
@@ -243,7 +253,8 @@ final class HopSchemaCompareService {
       boolean matches) {
     if (matches) return differenceCount;
     int next = differenceCount + 1;
-    addDifference(differences, next, difference(code, attribute, expected.name(), expected, actual));
+    addDifference(
+        differences, next, difference(code, attribute, expected.name(), expected, actual));
     return next;
   }
 
@@ -299,8 +310,10 @@ final class HopSchemaCompareService {
       DatabaseMeta connection, String schema, String table, int timeoutSeconds) throws Exception {
     Variables boundedVariables = new Variables();
     if (variables != null) boundedVariables.initializeFrom(variables);
-    boundedVariables.setVariable(Const.HOP_DATABASE_CONNECTION_TIMEOUT, Integer.toString(timeoutSeconds));
-    boundedVariables.setVariable(Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
+    boundedVariables.setVariable(
+        Const.HOP_DATABASE_CONNECTION_TIMEOUT, Integer.toString(timeoutSeconds));
+    boundedVariables.setVariable(
+        Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
     ExecutorService executor =
         Executors.newSingleThreadExecutor(
             runnable -> {
@@ -379,7 +392,8 @@ final class HopSchemaCompareService {
     }
     DatabaseMeta connection = serializer.load(name);
     if (connection == null) {
-      throw McpException.validation("METADATA_NOT_FOUND", "The RDBMS metadata object was not found.");
+      throw McpException.validation(
+          "METADATA_NOT_FOUND", "The RDBMS metadata object was not found.");
     }
     return connection;
   }
@@ -413,8 +427,11 @@ final class HopSchemaCompareService {
 
   private static Integer integer(Object value, String name) {
     if (value == null) return null;
-    if (!(value instanceof Number number) || number.longValue() < -1 || number.longValue() > Integer.MAX_VALUE) {
-      throw new IllegalArgumentException(name + " must be an integer between -1 and " + Integer.MAX_VALUE);
+    if (!(value instanceof Number number)
+        || number.longValue() < -1
+        || number.longValue() > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException(
+          name + " must be an integer between -1 and " + Integer.MAX_VALUE);
     }
     return number.intValue();
   }
@@ -428,7 +445,8 @@ final class HopSchemaCompareService {
   private static boolean typeMatches(String expected, SchemaColumn actual) {
     String wanted = normalizeType(expected);
     return wanted.equals(normalizeType(actual.type()))
-        || (!blank(actual.originalTypeName()) && wanted.equals(normalizeType(actual.originalTypeName())));
+        || (!blank(actual.originalTypeName())
+            && wanted.equals(normalizeType(actual.originalTypeName())));
   }
 
   private void requireDeepCheck() {
@@ -459,7 +477,8 @@ final class HopSchemaCompareService {
   }
 
   private static String text(Object value, String name, int maxLength) {
-    if (value == null || String.valueOf(value).isBlank()) throw new IllegalArgumentException(name + " is required");
+    if (value == null || String.valueOf(value).isBlank())
+      throw new IllegalArgumentException(name + " is required");
     String result = String.valueOf(value);
     requireText(result, name, maxLength);
     return result;
@@ -474,7 +493,9 @@ final class HopSchemaCompareService {
   }
 
   private static String safeName(String value) {
-    return SensitiveData.isSensitiveKey(value) ? SensitiveData.redactedMarker() : bounded(value, MAX_NAME_LENGTH);
+    return SensitiveData.isSensitiveKey(value)
+        ? SensitiveData.redactedMarker()
+        : bounded(value, MAX_NAME_LENGTH);
   }
 
   private static String bounded(String value, int maxLength) {

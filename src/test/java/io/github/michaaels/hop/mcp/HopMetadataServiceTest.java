@@ -3,7 +3,6 @@ package io.github.michaaels.hop.mcp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,7 +10,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.hop.core.exception.HopException;
-import org.apache.hop.core.variables.Variables;
 import org.apache.hop.metadata.api.HopMetadata;
 import org.apache.hop.metadata.api.HopMetadataBase;
 import org.apache.hop.metadata.api.HopMetadataProperty;
@@ -43,12 +41,11 @@ class HopMetadataServiceTest {
     Map<?, ?> metadata = (Map<?, ?>) fetched.get("metadata");
     assertEquals("db.example", metadata.get("host"));
     assertEquals(SensitiveData.redactedMarker(), metadata.get("password"));
-    assertEquals(SensitiveData.redactedMarker(), ((Map<?, ?>) metadata.get("attributes")).get("token"));
+    assertEquals(
+        SensitiveData.redactedMarker(), ((Map<?, ?>) metadata.get("attributes")).get("token"));
     assertFalse(JsonUtil.toJson(fetched).contains("super-secret"));
 
-    assertThrows(
-        McpException.class,
-        () -> service.get("secret-test", "missing"));
+    assertThrows(McpException.class, () -> service.get("secret-test", "missing"));
     assertThrows(IllegalArgumentException.class, () -> service.list("secret-test", "", 0, 201));
   }
 

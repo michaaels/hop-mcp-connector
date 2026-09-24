@@ -88,7 +88,8 @@ final class HopConnectionService {
     if (variables != null) boundedVariables.initializeFrom(variables);
     boundedVariables.setVariable(
         Const.HOP_DATABASE_CONNECTION_TIMEOUT, Integer.toString(timeoutSeconds));
-    boundedVariables.setVariable(Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
+    boundedVariables.setVariable(
+        Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
 
     ExecutorService executor =
         Executors.newSingleThreadExecutor(
@@ -114,22 +115,20 @@ final class HopConnectionService {
       return result(name, success ? "success" : "failure", success, timeoutSeconds, message);
     } catch (TimeoutException timeout) {
       future.cancel(true);
-      return
-          result(
-              name,
-              "timeout",
-              false,
-              timeoutSeconds,
-              "The native connection test exceeded the configured timeout.");
+      return result(
+          name,
+          "timeout",
+          false,
+          timeoutSeconds,
+          "The native connection test exceeded the configured timeout.");
     } catch (ExecutionException execution) {
       Throwable cause = execution.getCause();
-      return
-          result(
-              name,
-              "failure",
-              false,
-              timeoutSeconds,
-              cause == null ? "The native connection test failed." : cause.getMessage());
+      return result(
+          name,
+          "failure",
+          false,
+          timeoutSeconds,
+          cause == null ? "The native connection test failed." : cause.getMessage());
     } finally {
       executor.shutdownNow();
     }

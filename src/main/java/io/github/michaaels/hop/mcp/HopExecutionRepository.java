@@ -1,8 +1,8 @@
 package io.github.michaaels.hop.mcp;
 
-import java.nio.file.Path;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,8 +26,8 @@ import org.apache.hop.execution.ExecutionState;
 import org.apache.hop.execution.ExecutionStateComponentMetrics;
 import org.apache.hop.execution.ExecutionType;
 import org.apache.hop.execution.IExecutionInfoLocation;
-import org.apache.hop.metadata.api.IHopMetadataSerializer;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
+import org.apache.hop.metadata.api.IHopMetadataSerializer;
 
 /** Reads execution history and metrics from Hop's configured native execution information store. */
 @SuppressWarnings("unchecked")
@@ -89,8 +89,10 @@ final class HopExecutionRepository {
         try {
           BigDecimal decimal = new BigDecimal(String.valueOf(number));
           numericSum = numericSum == null ? decimal : numericSum.add(decimal);
-          numericMin = numericMin == null || decimal.compareTo(numericMin) < 0 ? decimal : numericMin;
-          numericMax = numericMax == null || decimal.compareTo(numericMax) > 0 ? decimal : numericMax;
+          numericMin =
+              numericMin == null || decimal.compareTo(numericMin) < 0 ? decimal : numericMin;
+          numericMax =
+              numericMax == null || decimal.compareTo(numericMax) > 0 ? decimal : numericMax;
           return;
         } catch (NumberFormatException ignored) {
           // The native value is still safe to expose as a bounded sample.
@@ -113,7 +115,11 @@ final class HopExecutionRepository {
       if (numericMin != null) {
         result.put("min", numberValue(numericMin));
         result.put("max", numberValue(numericMax));
-        result.put("average", numberValue(numericSum.divide(BigDecimal.valueOf(observedRows - nulls), 8, RoundingMode.HALF_UP)));
+        result.put(
+            "average",
+            numberValue(
+                numericSum.divide(
+                    BigDecimal.valueOf(observedRows - nulls), 8, RoundingMode.HALF_UP)));
       } else if (textMin != null) {
         result.put("min", textMin);
         result.put("max", textMax);
@@ -123,7 +129,9 @@ final class HopExecutionRepository {
 
     private static Object numberValue(BigDecimal value) {
       try {
-        return value.stripTrailingZeros().scale() <= 0 ? value.longValueExact() : value.doubleValue();
+        return value.stripTrailingZeros().scale() <= 0
+            ? value.longValueExact()
+            : value.doubleValue();
       } catch (ArithmeticException ignored) {
         return value.doubleValue();
       }
@@ -167,76 +175,82 @@ final class HopExecutionRepository {
     validateEpochRange(fromEpochMs, toEpochMs);
     validatePage(offset, limit);
 
-    return (Map<String, Object>) locationAccess.with(
-        locationName,
-        location -> {
-          List<String> ids = location.getExecutionIds(false, MAX_HISTORY_SCAN + 1);
-          boolean scanTruncated = ids.size() > MAX_HISTORY_SCAN;
-          if (scanTruncated) ids = ids.subList(0, MAX_HISTORY_SCAN);
+    return (Map<String, Object>)
+        locationAccess.with(
+            locationName,
+            location -> {
+              List<String> ids = location.getExecutionIds(false, MAX_HISTORY_SCAN + 1);
+              boolean scanTruncated = ids.size() > MAX_HISTORY_SCAN;
+              if (scanTruncated) ids = ids.subList(0, MAX_HISTORY_SCAN);
 
-          List<Map<String, Object>> matches = new ArrayList<>();
-          for (String id : ids) {
-            Execution execution = location.getExecution(id);
-            ExecutionState state = execution == null ? null : location.getExecutionState(id, false);
-            if (execution == null || !matches(execution, state, path, normalizedStatus, fromEpochMs, toEpochMs)) {
-              continue;
-            }
-            matches.add(summary(execution, state));
-          }
-          matches.sort(
-              Comparator.comparingLong(
-                      (Map<String, Object> row) -> ((Number) row.get("start_epoch_ms")).longValue())
-                  .reversed()
-                  .thenComparing(row -> String.valueOf(row.get("execution_id"))));
+              List<Map<String, Object>> matches = new ArrayList<>();
+              for (String id : ids) {
+                Execution execution = location.getExecution(id);
+                ExecutionState state =
+                    execution == null ? null : location.getExecutionState(id, false);
+                if (execution == null
+                    || !matches(execution, state, path, normalizedStatus, fromEpochMs, toEpochMs)) {
+                  continue;
+                }
+                matches.add(summary(execution, state));
+              }
+              matches.sort(
+                  Comparator.comparingLong(
+                          (Map<String, Object> row) ->
+                              ((Number) row.get("start_epoch_ms")).longValue())
+                      .reversed()
+                      .thenComparing(row -> String.valueOf(row.get("execution_id"))));
 
-          int from = Math.min(offset, matches.size());
-          int to = Math.min(from + limit, matches.size());
-          List<Map<String, Object>> page = new ArrayList<>(matches.subList(from, to));
-          boolean hasMore = to < matches.size() || scanTruncated;
-          Map<String, Object> result = new LinkedHashMap<>();
-          result.put("location", locationName);
-          result.put("path", path == null ? "" : path);
-          result.put("status", normalizedStatus);
-          result.put("from_epoch_ms", fromEpochMs == null ? 0L : fromEpochMs);
-          result.put("to_epoch_ms", toEpochMs == null ? 0L : toEpochMs);
-          result.put("offset", offset);
-          result.put("limit", limit);
-          result.put("count", matches.size());
-          result.put("count_complete", !scanTruncated);
-          result.put("returned", page.size());
-          result.put("has_more", hasMore);
-          result.put("scan_truncated", scanTruncated);
-          result.put("executions", page);
-          return result;
-        });
+              int from = Math.min(offset, matches.size());
+              int to = Math.min(from + limit, matches.size());
+              List<Map<String, Object>> page = new ArrayList<>(matches.subList(from, to));
+              boolean hasMore = to < matches.size() || scanTruncated;
+              Map<String, Object> result = new LinkedHashMap<>();
+              result.put("location", locationName);
+              result.put("path", path == null ? "" : path);
+              result.put("status", normalizedStatus);
+              result.put("from_epoch_ms", fromEpochMs == null ? 0L : fromEpochMs);
+              result.put("to_epoch_ms", toEpochMs == null ? 0L : toEpochMs);
+              result.put("offset", offset);
+              result.put("limit", limit);
+              result.put("count", matches.size());
+              result.put("count_complete", !scanTruncated);
+              result.put("returned", page.size());
+              result.put("has_more", hasMore);
+              result.put("scan_truncated", scanTruncated);
+              result.put("executions", page);
+              return result;
+            });
   }
 
   Map<String, Object> detail(String locationName, String executionId) throws Exception {
     validateLocation(locationName);
     validateExecutionId(executionId);
-    return (Map<String, Object>) locationAccess.with(
-        locationName,
-        location -> {
-          Execution execution = location.getExecution(executionId);
-          if (execution == null) {
-            throw McpException.validation(
-                "EXECUTION_NOT_FOUND", "The native execution was not found.");
-          }
-          ExecutionState state = location.getExecutionState(executionId, false);
-          Map<String, Object> result = new LinkedHashMap<>();
-          result.put("location", locationName);
-          result.put("execution", summary(execution, state));
-          result.put("state", state == null ? stateRow(executionId) : stateRow(state));
-          result.put(
-              "children_count",
-              state == null || state.getChildIds() == null ? 0 : Math.min(MAX_CHILD_IDS, state.getChildIds().size()));
-          result.put("metrics", state == null ? List.of() : metricRows(state.getMetrics()));
-          result.put(
-              "details", state == null ? Map.of() : boundedDetails(state.getDetails()));
-          result.put("errors", state == null ? List.of() : errorDetails(state));
-          result.put("logging_available", false);
-          return result;
-        });
+    return (Map<String, Object>)
+        locationAccess.with(
+            locationName,
+            location -> {
+              Execution execution = location.getExecution(executionId);
+              if (execution == null) {
+                throw McpException.validation(
+                    "EXECUTION_NOT_FOUND", "The native execution was not found.");
+              }
+              ExecutionState state = location.getExecutionState(executionId, false);
+              Map<String, Object> result = new LinkedHashMap<>();
+              result.put("location", locationName);
+              result.put("execution", summary(execution, state));
+              result.put("state", state == null ? stateRow(executionId) : stateRow(state));
+              result.put(
+                  "children_count",
+                  state == null || state.getChildIds() == null
+                      ? 0
+                      : Math.min(MAX_CHILD_IDS, state.getChildIds().size()));
+              result.put("metrics", state == null ? List.of() : metricRows(state.getMetrics()));
+              result.put("details", state == null ? Map.of() : boundedDetails(state.getDetails()));
+              result.put("errors", state == null ? List.of() : errorDetails(state));
+              result.put("logging_available", false);
+              return result;
+            });
   }
 
   Map<String, Object> children(String locationName, String executionId, int maxDepth, int maxNodes)
@@ -244,85 +258,92 @@ final class HopExecutionRepository {
     validateLocation(locationName);
     validateExecutionId(executionId);
     if (maxDepth < 1 || maxDepth > MAX_CHILDREN_DEPTH) {
-      throw new IllegalArgumentException(
-          "max_depth must be between 1 and " + MAX_CHILDREN_DEPTH);
+      throw new IllegalArgumentException("max_depth must be between 1 and " + MAX_CHILDREN_DEPTH);
     }
     if (maxNodes < 1 || maxNodes > MAX_CHILDREN_NODES) {
-      throw new IllegalArgumentException(
-          "max_nodes must be between 1 and " + MAX_CHILDREN_NODES);
+      throw new IllegalArgumentException("max_nodes must be between 1 and " + MAX_CHILDREN_NODES);
     }
 
-    return (Map<String, Object>) locationAccess.with(
-        locationName,
-        location -> {
-          Execution root = location.getExecution(executionId);
-          if (root == null) {
-            throw McpException.validation(
-                "EXECUTION_NOT_FOUND", "The native execution was not found.");
-          }
-          Deque<Child> queue = new ArrayDeque<>();
-          List<Map<String, Object>> rows = new ArrayList<>();
-          java.util.Set<String> visited = new java.util.HashSet<>();
-          visited.add(executionId);
-          queue.add(new Child(root, 0));
-          boolean truncated = false;
-          while (!queue.isEmpty()) {
-            Child current = queue.removeFirst();
-            if (current.depth() >= maxDepth) {
-              continue;
-            }
-            List<Execution> children = location.findExecutions(current.execution().getId());
-            for (Execution child : children) {
-              if (child == null || child.getId() == null || !visited.add(child.getId())) continue;
-              if (rows.size() >= maxNodes) {
-                truncated = true;
-                break;
+    return (Map<String, Object>)
+        locationAccess.with(
+            locationName,
+            location -> {
+              Execution root = location.getExecution(executionId);
+              if (root == null) {
+                throw McpException.validation(
+                    "EXECUTION_NOT_FOUND", "The native execution was not found.");
               }
-              ExecutionState state = location.getExecutionState(child.getId(), false);
-              Map<String, Object> row = summary(child, state);
-              row.put("depth", current.depth() + 1);
-              rows.add(row);
-              queue.addLast(new Child(child, current.depth() + 1));
-            }
-            if (truncated) break;
-          }
-          if (!queue.isEmpty()) truncated = true;
-          Map<String, Object> result = new LinkedHashMap<>();
-          result.put("location", locationName);
-          result.put("root_execution_id", executionId);
-          result.put("max_depth", maxDepth);
-          result.put("max_nodes", maxNodes);
-          result.put("visited", visited.size());
-          result.put("returned", rows.size());
-          result.put("truncated", truncated);
-          result.put("children", rows);
-          return result;
-        });
+              Deque<Child> queue = new ArrayDeque<>();
+              List<Map<String, Object>> rows = new ArrayList<>();
+              java.util.Set<String> visited = new java.util.HashSet<>();
+              visited.add(executionId);
+              queue.add(new Child(root, 0));
+              boolean truncated = false;
+              while (!queue.isEmpty()) {
+                Child current = queue.removeFirst();
+                if (current.depth() >= maxDepth) {
+                  continue;
+                }
+                List<Execution> children = location.findExecutions(current.execution().getId());
+                for (Execution child : children) {
+                  if (child == null || child.getId() == null || !visited.add(child.getId()))
+                    continue;
+                  if (rows.size() >= maxNodes) {
+                    truncated = true;
+                    break;
+                  }
+                  ExecutionState state = location.getExecutionState(child.getId(), false);
+                  Map<String, Object> row = summary(child, state);
+                  row.put("depth", current.depth() + 1);
+                  rows.add(row);
+                  queue.addLast(new Child(child, current.depth() + 1));
+                }
+                if (truncated) break;
+              }
+              if (!queue.isEmpty()) truncated = true;
+              Map<String, Object> result = new LinkedHashMap<>();
+              result.put("location", locationName);
+              result.put("root_execution_id", executionId);
+              result.put("max_depth", maxDepth);
+              result.put("max_nodes", maxNodes);
+              result.put("visited", visited.size());
+              result.put("returned", rows.size());
+              result.put("truncated", truncated);
+              result.put("children", rows);
+              return result;
+            });
   }
 
   Map<String, Object> metrics(String locationName, String executionId) throws Exception {
     validateLocation(locationName);
     validateExecutionId(executionId);
-    return (Map<String, Object>) locationAccess.with(
-        locationName,
-        location -> {
-          Execution execution = location.getExecution(executionId);
-          if (execution == null) {
-            throw McpException.validation(
-                "EXECUTION_NOT_FOUND", "The native execution was not found.");
-          }
-          ExecutionState state = location.getExecutionState(executionId, false);
-          List<Map<String, Object>> rows =
-              state == null ? List.of() : metricRows(state.getMetrics());
-          Map<String, Object> result = new LinkedHashMap<>();
-          result.put("location", locationName);
-          result.put("execution_id", executionId);
-          result.put("available", state != null && state.getMetrics() != null && !state.getMetrics().isEmpty());
-          result.put("component_count", rows.size());
-          result.put("truncated", state != null && state.getMetrics() != null && state.getMetrics().size() > rows.size());
-          result.put("components", rows);
-          return result;
-        });
+    return (Map<String, Object>)
+        locationAccess.with(
+            locationName,
+            location -> {
+              Execution execution = location.getExecution(executionId);
+              if (execution == null) {
+                throw McpException.validation(
+                    "EXECUTION_NOT_FOUND", "The native execution was not found.");
+              }
+              ExecutionState state = location.getExecutionState(executionId, false);
+              List<Map<String, Object>> rows =
+                  state == null ? List.of() : metricRows(state.getMetrics());
+              Map<String, Object> result = new LinkedHashMap<>();
+              result.put("location", locationName);
+              result.put("execution_id", executionId);
+              result.put(
+                  "available",
+                  state != null && state.getMetrics() != null && !state.getMetrics().isEmpty());
+              result.put("component_count", rows.size());
+              result.put(
+                  "truncated",
+                  state != null
+                      && state.getMetrics() != null
+                      && state.getMetrics().size() > rows.size());
+              result.put("components", rows);
+              return result;
+            });
   }
 
   Map<String, Object> profile(
@@ -333,7 +354,8 @@ final class HopExecutionRepository {
     if (transform != null && transform.length() > MAX_FILTER_LENGTH) {
       throw new IllegalArgumentException("transform exceeds " + MAX_FILTER_LENGTH + " characters");
     }
-    if (fields == null || fields.isEmpty()) throw new IllegalArgumentException("fields are required");
+    if (fields == null || fields.isEmpty())
+      throw new IllegalArgumentException("fields are required");
     if (fields.size() > MAX_PROFILE_FIELDS) {
       throw new IllegalArgumentException("fields cannot exceed " + MAX_PROFILE_FIELDS + " entries");
     }
@@ -365,8 +387,12 @@ final class HopExecutionRepository {
                   }
                   RowBuffer buffer = entry.getValue();
                   ExecutionDataSetMeta meta =
-                      data.getSetMetaData() == null ? null : data.getSetMetaData().get(entry.getKey());
-                  if (!matchesTransform(meta, transform) || buffer == null || buffer.getRowMeta() == null) continue;
+                      data.getSetMetaData() == null
+                          ? null
+                          : data.getSetMetaData().get(entry.getKey());
+                  if (!matchesTransform(meta, transform)
+                      || buffer == null
+                      || buffer.getRowMeta() == null) continue;
                   IRowMeta rowMeta = buffer.getRowMeta();
                   List<Object[]> rows = buffer.getBuffer() == null ? List.of() : buffer.getBuffer();
                   Map<String, Integer> fieldIndexes = new LinkedHashMap<>();
@@ -466,7 +492,8 @@ final class HopExecutionRepository {
     ExecutionInfoLocation metadata = serializer.load(locationName);
     if (metadata == null) {
       throw McpException.validation(
-          "EXECUTION_LOCATION_NOT_FOUND", "The native execution information location was not found.");
+          "EXECUTION_LOCATION_NOT_FOUND",
+          "The native execution information location was not found.");
     }
     IExecutionInfoLocation location = metadata.getExecutionInfoLocation();
     if (location == null) {
@@ -541,7 +568,8 @@ final class HopExecutionRepository {
     return row;
   }
 
-  private static List<Map<String, Object>> metricRows(List<ExecutionStateComponentMetrics> metrics) {
+  private static List<Map<String, Object>> metricRows(
+      List<ExecutionStateComponentMetrics> metrics) {
     if (metrics == null || metrics.isEmpty()) return List.of();
     List<Map<String, Object>> rows = new ArrayList<>();
     int count = 0;
@@ -677,8 +705,10 @@ final class HopExecutionRepository {
   }
 
   private static void validateEpochRange(Long fromEpochMs, Long toEpochMs) {
-    if (fromEpochMs != null && fromEpochMs < 0L) throw new IllegalArgumentException("from_epoch_ms must be non-negative");
-    if (toEpochMs != null && toEpochMs < 0L) throw new IllegalArgumentException("to_epoch_ms must be non-negative");
+    if (fromEpochMs != null && fromEpochMs < 0L)
+      throw new IllegalArgumentException("from_epoch_ms must be non-negative");
+    if (toEpochMs != null && toEpochMs < 0L)
+      throw new IllegalArgumentException("to_epoch_ms must be non-negative");
     if (fromEpochMs != null && toEpochMs != null && fromEpochMs > toEpochMs) {
       throw new IllegalArgumentException("from_epoch_ms must not exceed to_epoch_ms");
     }

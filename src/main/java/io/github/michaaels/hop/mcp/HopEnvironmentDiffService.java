@@ -121,7 +121,8 @@ final class HopEnvironmentDiffService {
         runConfigurations.resolveConfiguration(relativePath, runConfiguration, parameters);
     boolean truncated = definition.truncated();
     Object unresolved = resolved.get("unresolved_references");
-    if (unresolved instanceof List<?> list && list.size() >= HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES) {
+    if (unresolved instanceof List<?> list
+        && list.size() >= HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES) {
       truncated = true;
     }
     return new Profile(relativePath, runConfiguration, parameters, definition, resolved, truncated);
@@ -188,16 +189,14 @@ final class HopEnvironmentDiffService {
   }
 
   private static void collectMetadata(
-      Element element,
-      String parentPath,
-      Map<String, SafeValue> result,
-      boolean[] truncated) {
+      Element element, String parentPath, Map<String, SafeValue> result, boolean[] truncated) {
     NodeList children = element.getChildNodes();
     for (int i = 0; i < children.getLength(); i++) {
       Node child = children.item(i);
       if (child.getNodeType() != Node.ELEMENT_NODE) continue;
       Element current = (Element) child;
-      String path = parentPath.isEmpty() ? current.getTagName() : parentPath + "." + current.getTagName();
+      String path =
+          parentPath.isEmpty() ? current.getTagName() : parentPath + "." + current.getTagName();
       if (hasElementChildren(current)) {
         collectMetadata(current, path, result, truncated);
         continue;
@@ -245,7 +244,8 @@ final class HopEnvironmentDiffService {
     Object engine = profile.resolved().get("engine");
     if (engine instanceof Map<?, ?> map) {
       result.put("engine.plugin_id", safeValue("plugin_id", stringValue(map.get("plugin_id"))));
-      result.put("engine.plugin_name", safeValue("plugin_name", stringValue(map.get("plugin_name"))));
+      result.put(
+          "engine.plugin_name", safeValue("plugin_name", stringValue(map.get("plugin_name"))));
     }
     return result;
   }
@@ -276,8 +276,7 @@ final class HopEnvironmentDiffService {
   }
 
   private static List<Map<String, Object>> compareParameterDefaults(
-      Map<String, Map<String, SafeValue>> before,
-      Map<String, Map<String, SafeValue>> after) {
+      Map<String, Map<String, SafeValue>> before, Map<String, Map<String, SafeValue>> after) {
     List<Map<String, Object>> changed = new ArrayList<>();
     Set<String> names = new TreeSet<>(before.keySet());
     names.addAll(after.keySet());
@@ -310,7 +309,8 @@ final class HopEnvironmentDiffService {
     return result;
   }
 
-  private void addUnresolved(List<Map<String, Object>> result, String environment, Profile profile) {
+  private void addUnresolved(
+      List<Map<String, Object>> result, String environment, Profile profile) {
     Set<String> names = new LinkedHashSet<>();
     Object nativeUnresolved = profile.resolved().get("unresolved_references");
     if (nativeUnresolved instanceof List<?> list) {
@@ -327,7 +327,14 @@ final class HopEnvironmentDiffService {
     }
     for (String name : names) {
       if (result.size() >= MAX_VARIABLES) break;
-      result.add(Map.of("environment", environment, "name", clip(name), "source", "definition_or_run_configuration"));
+      result.add(
+          Map.of(
+              "environment",
+              environment,
+              "name",
+              clip(name),
+              "source",
+              "definition_or_run_configuration"));
     }
   }
 
@@ -346,7 +353,11 @@ final class HopEnvironmentDiffService {
     return Map.of(
         "path", profile.path(),
         "run_configuration", safeValue("run_configuration", profile.runConfiguration()).value(),
-        "parameter_names", profile.parameters().keySet().stream().sorted().map(HopEnvironmentDiffService::clip).toList());
+        "parameter_names",
+            profile.parameters().keySet().stream()
+                .sorted()
+                .map(HopEnvironmentDiffService::clip)
+                .toList());
   }
 
   private PathPair validatePaths(String pathA, String pathB) throws Exception {
@@ -357,7 +368,8 @@ final class HopEnvironmentDiffService {
     String firstKind = kind(first);
     String secondKind = kind(second);
     if (firstKind == null || secondKind == null || !firstKind.equals(secondKind)) {
-      throw new IllegalArgumentException("path_a and path_b must be matching .hpl or .hwf definitions");
+      throw new IllegalArgumentException(
+          "path_a and path_b must be matching .hpl or .hwf definitions");
     }
     return new PathPair(first, second, firstKind, files.relative(first), files.relative(second));
   }
@@ -385,7 +397,8 @@ final class HopEnvironmentDiffService {
   private static String defaultConfiguration(String value) {
     if (value == null || value.isBlank()) return "local";
     if (value.length() > MAX_NAME_LENGTH) {
-      throw new IllegalArgumentException("run configuration name exceeds " + MAX_NAME_LENGTH + " characters");
+      throw new IllegalArgumentException(
+          "run configuration name exceeds " + MAX_NAME_LENGTH + " characters");
     }
     return value;
   }
@@ -414,8 +427,7 @@ final class HopEnvironmentDiffService {
 
   private static SafeValue safeValue(String key, String value) {
     String raw = value == null ? "" : value;
-    boolean redacted =
-        SensitiveData.isSensitiveKey(key) || containsSensitiveReference(raw);
+    boolean redacted = SensitiveData.isSensitiveKey(key) || containsSensitiveReference(raw);
     String safe = redacted ? SensitiveData.REDACTED : SensitiveData.redactSensitiveText(raw);
     if (safe == null) safe = "";
     return new SafeValue(clip(safe), redacted);
