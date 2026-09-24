@@ -5,7 +5,6 @@ import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.Deque;
 import java.util.LinkedHashMap;
@@ -296,8 +295,8 @@ final class HopExecutionRepository {
             locationName, location -> metricsAtLocation(location, locationName, executionId));
   }
 
-  Map<String, Object> diagnosticSnapshot(
-      String locationName, String executionId, int previousLimit) throws Exception {
+  Map<String, Object> diagnosticSnapshot(String locationName, String executionId, int previousLimit)
+      throws Exception {
     validateLocation(locationName);
     validateExecutionId(executionId);
     if (previousLimit < 1 || previousLimit > MAX_HISTORY_RESULTS) {
@@ -308,15 +307,11 @@ final class HopExecutionRepository {
         locationAccess.with(
             locationName,
             location -> {
-              Map<String, Object> detail =
-                  detailAtLocation(location, locationName, executionId);
+              Map<String, Object> detail = detailAtLocation(location, locationName, executionId);
               Map<String, Object> execution =
-                  detail.get("execution") instanceof Map<?, ?> raw
-                      ? castObjectMap(raw)
-                      : Map.of();
+                  detail.get("execution") instanceof Map<?, ?> raw ? castObjectMap(raw) : Map.of();
               String path = String.valueOf(execution.getOrDefault("path", ""));
-              Map<String, Object> metrics =
-                  metricsAtLocation(location, locationName, executionId);
+              Map<String, Object> metrics = metricsAtLocation(location, locationName, executionId);
               Map<String, Object> history =
                   historyAtLocation(
                       location, locationName, path, "", null, null, 0, previousLimit + 1);
@@ -448,8 +443,7 @@ final class HopExecutionRepository {
       IExecutionInfoLocation location, String locationName, String executionId) throws Exception {
     Execution execution = location.getExecution(executionId);
     if (execution == null) {
-      throw McpException.validation(
-          "EXECUTION_NOT_FOUND", "The native execution was not found.");
+      throw McpException.validation("EXECUTION_NOT_FOUND", "The native execution was not found.");
     }
     ExecutionState state = location.getExecutionState(executionId, false);
     Map<String, Object> result = new LinkedHashMap<>();
@@ -472,8 +466,7 @@ final class HopExecutionRepository {
       IExecutionInfoLocation location, String locationName, String executionId) throws Exception {
     Execution execution = location.getExecution(executionId);
     if (execution == null) {
-      throw McpException.validation(
-          "EXECUTION_NOT_FOUND", "The native execution was not found.");
+      throw McpException.validation("EXECUTION_NOT_FOUND", "The native execution was not found.");
     }
     ExecutionState state = location.getExecutionState(executionId, false);
     List<Map<String, Object>> rows = state == null ? List.of() : metricRows(state.getMetrics());

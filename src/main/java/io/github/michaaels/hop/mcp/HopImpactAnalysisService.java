@@ -183,8 +183,7 @@ final class HopImpactAnalysisService {
   }
 
   private static List<Map<String, Object>> nodeOutput(
-      Map<String, Integer> nodes,
-      Map<String, HopProjectDefinitionIndex.Entry> definitions) {
+      Map<String, Integer> nodes, Map<String, HopProjectDefinitionIndex.Entry> definitions) {
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map.Entry<String, Integer> node : nodes.entrySet()) {
       HopProjectDefinitionIndex.Entry definition = definitions.get(node.getKey());
@@ -282,9 +281,7 @@ final class HopImpactAnalysisService {
         edge.put("to", target);
         edge.put("type", "definition_reference");
         edge.put("from_kind", current.kind());
-        edge.put(
-            "to_kind",
-            targetDefinition == null ? kind(target) : targetDefinition.kind());
+        edge.put("to_kind", targetDefinition == null ? kind(target) : targetDefinition.kind());
         result.add(edge);
       }
     }
@@ -303,8 +300,7 @@ final class HopImpactAnalysisService {
       Path sourceFolder = sourcePath.getParent();
       if (sourceFolder == null) return null;
       resolvedReference =
-          resolvedReference.replace(
-              "${Internal.Entry.Current.Folder}", sourceFolder.toString());
+          resolvedReference.replace("${Internal.Entry.Current.Folder}", sourceFolder.toString());
       Path raw = Path.of(resolvedReference);
       Path candidate = raw.isAbsolute() ? raw : sourceFolder.resolve(raw);
       candidate = candidate.normalize();

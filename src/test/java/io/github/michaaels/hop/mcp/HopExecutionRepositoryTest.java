@@ -147,8 +147,7 @@ class HopExecutionRepositoryTest {
         new HopExecutionRepository(
             new ProjectFiles(root), null, null, (name, action) -> action.apply(location));
 
-    Map<String, Object> result =
-        repository.history("local", "target.hpl", null, null, null, 0, 1);
+    Map<String, Object> result = repository.history("local", "target.hpl", null, null, null, 0, 1);
 
     assertEquals(1, result.get("returned"));
     assertEquals(true, result.get("has_more"));

@@ -8,11 +8,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import org.apache.hop.metadata.api.HopMetadata;
 import org.apache.hop.metadata.api.HopMetadataProperty;
 import org.apache.hop.metadata.api.IHopMetadata;
@@ -161,8 +159,7 @@ final class HopMetadataService {
     dependencyScan:
     for (HopProjectDefinitionIndex.Entry definition : snapshot.definitions().values()) {
       if (!definition.containsText(name)) continue;
-      List<String> components =
-          definition.componentsContaining(name, MAX_DEPENDENCY_RESULTS + 1);
+      List<String> components = definition.componentsContaining(name, MAX_DEPENDENCY_RESULTS + 1);
       if (components.isEmpty()) components = List.of("unknown");
       for (String component : components) {
         if (usedBy.size() >= MAX_DEPENDENCY_RESULTS) {

@@ -24,9 +24,9 @@ import org.w3c.dom.NodeList;
 /**
  * Incremental in-memory index of project pipeline/workflow definitions.
  *
- * <p>The index is intentionally project-local and bounded by the same scan/read budgets as
- * {@link ProjectFiles}. Unchanged definitions are reused across MCP calls based on size and last
- * modified time; changed definitions are reparsed individually.
+ * <p>The index is intentionally project-local and bounded by the same scan/read budgets as {@link
+ * ProjectFiles}. Unchanged definitions are reused across MCP calls based on size and last modified
+ * time; changed definitions are reparsed individually.
  */
 final class HopProjectDefinitionIndex {
   static final int MAX_COMPONENTS = ProjectFiles.MAX_STRUCTURED_RESULTS;
@@ -151,7 +151,8 @@ final class HopProjectDefinitionIndex {
         Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS));
   }
 
-  private Entry read(Path path, String relative, long size, FileTime lastModified) throws Exception {
+  private Entry read(Path path, String relative, long size, FileTime lastModified)
+      throws Exception {
     byte[] content = files.readBytes(path);
     String xml =
         StandardCharsets.UTF_8
@@ -196,9 +197,7 @@ final class HopProjectDefinitionIndex {
         String name = childText(element, "name");
         if (name == null || name.isBlank()) continue;
         String text = element.getTextContent();
-        result.add(
-            new ComponentText(
-                name, text == null ? "" : text.toLowerCase(Locale.ROOT)));
+        result.add(new ComponentText(name, text == null ? "" : text.toLowerCase(Locale.ROOT)));
       }
       if (truncated) break;
     }
