@@ -207,49 +207,16 @@ final class HopExecutionRepository {
     return (Map<String, Object>)
         locationAccess.with(
             locationName,
-            location -> {
-              List<String> ids = location.getExecutionIds(false, MAX_HISTORY_SCAN + 1);
-              boolean scanTruncated = ids.size() > MAX_HISTORY_SCAN;
-              if (scanTruncated) ids = ids.subList(0, MAX_HISTORY_SCAN);
-
-              List<Map<String, Object>> matches = new ArrayList<>();
-              for (String id : ids) {
-                Execution execution = location.getExecution(id);
-                ExecutionState state =
-                    execution == null ? null : location.getExecutionState(id, false);
-                if (execution == null
-                    || !matches(execution, state, path, normalizedStatus, fromEpochMs, toEpochMs)) {
-                  continue;
-                }
-                matches.add(summary(execution, state));
-              }
-              matches.sort(
-                  Comparator.comparingLong(
-                          (Map<String, Object> row) ->
-                              ((Number) row.get("start_epoch_ms")).longValue())
-                      .reversed()
-                      .thenComparing(row -> String.valueOf(row.get("execution_id"))));
-
-              int from = Math.min(offset, matches.size());
-              int to = Math.min(from + limit, matches.size());
-              List<Map<String, Object>> page = new ArrayList<>(matches.subList(from, to));
-              boolean hasMore = to < matches.size() || scanTruncated;
-              Map<String, Object> result = new LinkedHashMap<>();
-              result.put("location", locationName);
-              result.put("path", path == null ? "" : path);
-              result.put("status", normalizedStatus);
-              result.put("from_epoch_ms", fromEpochMs == null ? 0L : fromEpochMs);
-              result.put("to_epoch_ms", toEpochMs == null ? 0L : toEpochMs);
-              result.put("offset", offset);
-              result.put("limit", limit);
-              result.put("count", matches.size());
-              result.put("count_complete", !scanTruncated);
-              result.put("returned", page.size());
-              result.put("has_more", hasMore);
-              result.put("scan_truncated", scanTruncated);
-              result.put("executions", page);
-              return result;
-            });
+            location ->
+                historyAtLocation(
+                    location,
+                    locationName,
+                    path,
+                    normalizedStatus,
+                    fromEpochMs,
+                    toEpochMs,
+                    offset,
+                    limit));
   }
 
   Map<String, Object> detail(String locationName, String executionId) throws Exception {
@@ -491,13 +458,60 @@ final class HopExecutionRepository {
             });
   }
 
-  private boolean matches(
-      Execution execution,
-      ExecutionState state,
+  private Map<String, Object> historyAtLocation(
+      IExecutionInfoLocation location,
+      String locationName,
       String path,
-      String status,
+      String normalizedStatus,
       Long fromEpochMs,
-      Long toEpochMs) {
+      Long toEpochMs,
+      int offset,
+      int limit)
+      throws Exception {
+    List<String> ids = location.getExecutionIds(false, MAX_HISTORY_SCAN + 1);
+    boolean scanTruncated = ids.size() > MAX_HISTORY_SCAN;
+    if (scanTruncated) ids = ids.subList(0, MAX_HISTORY_SCAN);
+
+    List<Map<String, Object>> page = new ArrayList<>();
+    int matched = 0;
+    boolean pageLimitReached = false;
+    for (String id : ids) {
+      Execution execution = location.getExecution(id);
+      if (execution == null || !matchesExecution(execution, path, fromEpochMs, toEpochMs)) continue;
+
+      ExecutionState state = location.getExecutionState(id, false);
+      if (!normalizedStatus.isBlank() && !normalizedStatus.equals(statusOf(state))) continue;
+
+      matched++;
+      if (matched <= offset) continue;
+      if (page.size() < limit) {
+        page.add(summary(execution, state));
+      } else {
+        pageLimitReached = true;
+        break;
+      }
+    }
+
+    boolean hasMore = pageLimitReached || scanTruncated;
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("location", locationName);
+    result.put("path", path == null ? "" : path);
+    result.put("status", normalizedStatus);
+    result.put("from_epoch_ms", fromEpochMs == null ? 0L : fromEpochMs);
+    result.put("to_epoch_ms", toEpochMs == null ? 0L : toEpochMs);
+    result.put("offset", offset);
+    result.put("limit", limit);
+    result.put("count", matched);
+    result.put("count_complete", !hasMore);
+    result.put("returned", page.size());
+    result.put("has_more", hasMore);
+    result.put("scan_truncated", scanTruncated);
+    result.put("executions", page);
+    return result;
+  }
+
+  private boolean matchesExecution(
+      Execution execution, String path, Long fromEpochMs, Long toEpochMs) {
     String query = path == null ? "" : path.trim().toLowerCase(Locale.ROOT);
     if (!query.isBlank()) {
       String filename = safePath(execution.getFilename()).toLowerCase(Locale.ROOT);
@@ -506,9 +520,7 @@ final class HopExecutionRepository {
     }
     long start = epoch(execution.getExecutionStartDate());
     if (fromEpochMs != null && start < fromEpochMs) return false;
-    if (toEpochMs != null && start > toEpochMs) return false;
-    if (status.isBlank()) return true;
-    return status.equals(statusOf(state));
+    return toEpochMs == null || start <= toEpochMs;
   }
 
   private static boolean matchesTransform(ExecutionDataSetMeta metadata, String transform) {
