@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -109,6 +110,196 @@ final class HopMcpServer implements AutoCloseable {
                 sDefault(a, "query", null),
                 iDefault(a, "offset", 0),
                 iDefault(a, "limit", 50)));
+    add(
+        "hop_metadata_types",
+        "List native Apache Hop metadata types from the metadata plugin registry with pagination.",
+        schema(
+            Map.of(
+                "offset", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of metadata types to skip"),
+                "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_TYPES, "Maximum metadata types to return")),
+            List.of()),
+        a -> service.metadataTypes(iDefault(a, "offset", 0), iDefault(a, "limit", 50)));
+    add(
+        "hop_metadata_list",
+        "List named native Apache Hop metadata objects without loading sensitive values.",
+        schema(
+            Map.of(
+                "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                "query", boundedString(HopMetadataService.MAX_METADATA_QUERY_LENGTH, "Optional case-insensitive name filter"),
+                "offset", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of metadata objects to skip"),
+                "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_RESULTS, "Maximum metadata objects to return")),
+            List.of("type")),
+        a ->
+            service.metadataList(
+                s(a, "type"),
+                sDefault(a, "query", null),
+                iDefault(a, "offset", 0),
+                iDefault(a, "limit", 50)));
+    add(
+        "hop_metadata_get",
+        "Read one native Apache Hop metadata object through a bounded, secret-redacted projection.",
+        schema(
+            Map.of(
+                "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name")),
+            List.of("type", "name")),
+        a -> service.metadataGet(s(a, "type"), s(a, "name")));
+    add(
+        "hop_metadata_dependencies",
+        "Find bounded project definitions and components that reference one native Apache Hop metadata object.",
+        schema(
+            Map.of(
+                "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+                "offset", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Number of dependent definitions to skip"),
+                "limit", boundedInteger(1, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Maximum dependencies to return")),
+            List.of("type", "name")),
+        a ->
+            service.metadataDependencies(
+                s(a, "type"),
+                s(a, "name"),
+                iDefault(a, "offset", 0),
+                iDefault(a, "limit", 50)));
+    add(
+        "hop_test_connection",
+        "Test one native Apache Hop RDBMS connection with a bounded timeout. Requires --allow-deep-check and may contact an external system.",
+        schema(
+            Map.of(
+                "type", enumStr("rdbms"),
+                "name",
+                boundedString(HopConnectionService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+                "timeout_seconds",
+                boundedInteger(
+                    1,
+                    HopConnectionService.MAX_TIMEOUT_SECONDS,
+                    "Maximum native connection-test duration")),
+            List.of("name")),
+        a ->
+            service.testConnection(
+                sDefault(a, "type", "rdbms"),
+                s(a, "name"),
+                iDefault(a, "timeout_seconds", HopConnectionService.DEFAULT_TIMEOUT_SECONDS)));
+    add(
+        "hop_schema_compare",
+        "Compare an expected schema with native metadata from an Apache Hop RDBMS table. Requires --allow-deep-check, may contact an external system, and never emits DDL.",
+        schema(
+            Map.of(
+                "connection",
+                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+                "schema",
+                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Optional database schema name"),
+                "table",
+                boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database table name"),
+                "expected",
+                expectedSchema(),
+                "timeout_seconds",
+                boundedInteger(
+                    1,
+                    HopSchemaCompareService.MAX_TIMEOUT_SECONDS,
+                    "Maximum native schema-inspection duration")),
+            List.of("connection", "table", "expected")),
+        a ->
+            service.schemaCompare(
+                s(a, "connection"),
+                sDefault(a, "schema", ""),
+                s(a, "table"),
+                expectedFields(a.get("expected")),
+                iDefault(a, "timeout_seconds", HopSchemaCompareService.DEFAULT_TIMEOUT_SECONDS)));
+    add(
+        "hop_definition_diff",
+        "Compare two project-relative Apache Hop pipeline or workflow definitions semantically through native Hop objects; never performs a line-by-line XML diff or writes files.",
+        schema(
+            Map.of(
+                "path_a",
+                boundedString(
+                    HopDefinitionDiffService.MAX_PATH_LENGTH,
+                    "First project-relative .hpl or .hwf definition path"),
+                "path_b",
+                boundedString(
+                    HopDefinitionDiffService.MAX_PATH_LENGTH,
+                    "Second project-relative .hpl or .hwf definition path")),
+            List.of("path_a", "path_b")),
+        a -> service.definitionDiff(s(a, "path_a"), s(a, "path_b")));
+    add(
+        "hop_impact_analysis",
+        "Build a bounded project-local impact graph from a table, metadata reference or definition path, combining dependencies, references, pipeline/workflow links and structural lineage.",
+        schema(
+            Map.of(
+                "table",
+                boundedString(
+                    HopImpactAnalysisService.MAX_SELECTOR_LENGTH,
+                    "Optional table or schema.table selector"),
+                "metadata",
+                boundedString(
+                    HopImpactAnalysisService.MAX_SELECTOR_LENGTH,
+                    "Optional metadata object reference selector"),
+                "definition",
+                boundedString(
+                    HopImpactAnalysisService.MAX_PATH_LENGTH,
+                    "Optional project-relative .hpl or .hwf definition selector"),
+                "max_depth",
+                boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Maximum dependency traversal depth"),
+                "max_edges",
+                boundedInteger(1, HopImpactAnalysisService.MAX_EDGES, "Maximum dependency and lineage edges"),
+                "max_results",
+                boundedInteger(1, HopImpactAnalysisService.MAX_RESULTS, "Maximum impacted definitions")),
+            List.of()),
+        a ->
+            service.impactAnalysis(
+                sDefault(a, "table", null),
+                sDefault(a, "metadata", null),
+                sDefault(a, "definition", null),
+                iDefault(a, "max_depth", 10),
+                iDefault(a, "max_edges", 200),
+                iDefault(a, "max_results", 100)));
+    add(
+        "hop_environment_diff",
+        "Compare two project-relative Apache Hop definitions and their native run configurations, returning only bounded non-sensitive environment changes and unresolved variable names.",
+        schema(
+            Map.of(
+                "path_a",
+                boundedString(
+                    HopEnvironmentDiffService.MAX_PATH_LENGTH,
+                    "First project-relative .hpl or .hwf definition path"),
+                "path_b",
+                boundedString(
+                    HopEnvironmentDiffService.MAX_PATH_LENGTH,
+                    "Second project-relative .hpl or .hwf definition path"),
+                "run_configuration_a",
+                boundedString(
+                    HopEnvironmentDiffService.MAX_NAME_LENGTH,
+                    "Native run configuration for path_a, default local"),
+                "run_configuration_b",
+                boundedString(
+                    HopEnvironmentDiffService.MAX_NAME_LENGTH,
+                    "Native run configuration for path_b, default local"),
+                "parameters_a",
+                stringMapSchema("Optional bounded parameter values for path_a; sensitive values are redacted"),
+                "parameters_b",
+                stringMapSchema("Optional bounded parameter values for path_b; sensitive values are redacted")),
+            List.of("path_a", "path_b")),
+        a ->
+            service.environmentDiff(
+                s(a, "path_a"),
+                s(a, "path_b"),
+                sDefault(a, "run_configuration_a", "local"),
+                sDefault(a, "run_configuration_b", "local"),
+                stringMap(a.get("parameters_a"), "parameters_a"),
+                stringMap(a.get("parameters_b"), "parameters_b")));
+    add(
+        "hop_resolve_configuration",
+        "Resolve one native Apache Hop pipeline or workflow run configuration for a project-relative definition, expanding bounded parameters and variables without exposing secrets.",
+        schema(
+            Map.of(
+                "path", boundedString(HopRunConfigurationService.MAX_PATH_LENGTH, "Project-relative .hpl/.hwf definition path"),
+                "run_configuration", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Native run configuration name, default local"),
+                "parameters", stringMapSchema("Optional bounded parameter values; sensitive values are redacted")),
+            List.of("path")),
+        a ->
+            service.resolveConfiguration(
+                s(a, "path"),
+                sDefault(a, "run_configuration", "local"),
+                stringMap(a.get("parameters"), "parameters")));
     add(
         "hop_component_types",
         "List native Hop transforms or workflow actions available for semantic authoring.",
@@ -369,6 +560,143 @@ final class HopMcpServer implements AutoCloseable {
             List.of("operation_id")),
         a -> service.executionStatus(s(a, "operation_id")));
     add(
+        "hop_execution_history",
+        "Read bounded execution history from a configured native Apache Hop Execution Information Location. Requires --allow-execution because the location may be external.",
+        schema(
+            Map.of(
+                "location",
+                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                "path",
+                boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Optional case-insensitive definition path or name filter"),
+                "status",
+                enumStr(
+                    "running",
+                    "finished",
+                    "failed",
+                    "unknown",
+                    "RUNNING",
+                    "FINISHED",
+                    "FAILED",
+                    "UNKNOWN"),
+                "from_epoch_ms",
+                boundedInteger(0, Long.MAX_VALUE, "Optional inclusive execution start lower bound"),
+                "to_epoch_ms",
+                boundedInteger(0, Long.MAX_VALUE, "Optional inclusive execution start upper bound"),
+                "offset",
+                boundedInteger(0, HopExecutionRepository.MAX_HISTORY_SCAN, "Number of executions to skip"),
+                "limit",
+                boundedInteger(1, HopExecutionRepository.MAX_HISTORY_RESULTS, "Maximum executions to return")),
+            List.of("location")),
+        a ->
+            service.executionHistory(
+                s(a, "location"),
+                sDefault(a, "path", null),
+                sDefault(a, "status", null),
+                longDefault(a, "from_epoch_ms"),
+                longDefault(a, "to_epoch_ms"),
+                iDefault(a, "offset", 0),
+                iDefault(a, "limit", 50)));
+    add(
+        "hop_execution_detail",
+        "Read one execution and its bounded native state, without loading large logging text.",
+        schema(
+            Map.of(
+                "location",
+                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                "execution_id",
+                boundedString(256, "Native Hop execution ID")),
+            List.of("location", "execution_id")),
+        a -> service.executionDetail(s(a, "location"), s(a, "execution_id")));
+    add(
+        "hop_execution_children",
+        "Traverse a bounded native Hop execution tree by parent-child execution IDs.",
+        schema(
+            Map.of(
+                "location",
+                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                "execution_id",
+                boundedString(256, "Root native Hop execution ID"),
+                "max_depth",
+                boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Maximum child traversal depth"),
+                "max_nodes",
+                boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_NODES, "Maximum child executions to return")),
+            List.of("location", "execution_id")),
+        a ->
+            service.executionChildren(
+                s(a, "location"),
+                s(a, "execution_id"),
+                iDefault(a, "max_depth", 10),
+                iDefault(a, "max_nodes", 100)));
+    add(
+        "hop_execution_metrics",
+        "Read component metrics persisted by a native Hop Execution Information Location. No synthetic CPU/RAM metrics are added.",
+        schema(
+            Map.of(
+                "location",
+                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                "execution_id",
+                boundedString(256, "Native Hop execution ID")),
+        List.of("location", "execution_id")),
+        a -> service.executionMetrics(s(a, "location"), s(a, "execution_id")));
+    add(
+        "hop_diagnose_execution",
+        "Aggregate bounded execution status, redacted logs, native component metrics, definition metadata, connections, parameters, run configuration and previous executions into facts, explicitly unverified possible causes and non-mutating recommendations. Requires --allow-execution.",
+        schema(
+            Map.of(
+                "location",
+                boundedString(
+                    HopDiagnosisService.MAX_LOCATION_LENGTH,
+                    "Native Execution Information Location metadata name"),
+                "execution_id",
+                boundedString(
+                    HopDiagnosisService.MAX_EXECUTION_ID_LENGTH,
+                    "Native Hop execution ID"),
+                "channel_id",
+                boundedString(
+                    HopDiagnosisService.MAX_CHANNEL_ID_LENGTH,
+                    "Optional execution log channel ID"),
+                "include_general",
+                bool("Include general log messages, default true"),
+                "from",
+                logCursor("First log cursor, default last 200"),
+                "to",
+                logCursor("Last log cursor, default current"),
+                "max_previous",
+                boundedInteger(
+                    1,
+                    HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS,
+                    "Maximum previous executions to compare")),
+            List.of("location", "execution_id")),
+        a ->
+            service.diagnoseExecution(
+                s(a, "location"),
+                s(a, "execution_id"),
+                sDefault(a, "channel_id", null),
+                boolDefault(a, "include_general", true),
+                iDefault(a, "from", -1),
+                iDefault(a, "to", 0),
+                iDefault(a, "max_previous", 10)));
+    add(
+        "hop_data_profile",
+        "Read bounded profiling data already stored by a native Hop Execution Information Location; this tool never executes a pipeline or scans an arbitrary source.",
+        schema(
+            Map.of(
+                "location",
+                boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Native Execution Information Location metadata name"),
+                "execution_id",
+                boundedString(256, "Native Hop execution ID"),
+                "transform",
+                boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Native transform name"),
+                "fields",
+                stringArray(HopExecutionRepository.MAX_PROFILE_FIELDS)),
+            List.of("location", "execution_id", "transform", "fields")),
+        a ->
+            service.dataProfile(
+                s(a, "location"),
+                s(a, "execution_id"),
+                s(a, "transform"),
+                strings(a.get("fields"), "fields")));
+    add(
         "hop_stop_execution",
         "Request cancellation of an asynchronous execution.",
         schema(
@@ -553,7 +881,7 @@ final class HopMcpServer implements AutoCloseable {
     boolean idempotent = true;
     boolean openWorld = false;
     switch (name) {
-      case "hop_deep_check" -> openWorld = true;
+      case "hop_deep_check", "hop_test_connection", "hop_schema_compare" -> openWorld = true;
       case "hop_execute", "hop_start_execution", "hop_test_definition" -> {
         readOnly = false;
         destructive = true;
@@ -605,11 +933,27 @@ final class HopMcpServer implements AutoCloseable {
           case "hop_component" -> componentOutputSchema();
           case "hop_component_lineage" -> lineageOutputSchema();
           case "hop_plugins" -> pluginsOutputSchema();
+          case "hop_metadata_types" -> metadataTypesOutputSchema();
+          case "hop_metadata_list" -> metadataListOutputSchema();
+          case "hop_metadata_get" -> metadataGetOutputSchema();
+          case "hop_metadata_dependencies" -> metadataDependenciesOutputSchema();
+          case "hop_test_connection" -> connectionTestOutputSchema();
+          case "hop_schema_compare" -> schemaCompareOutputSchema();
+          case "hop_definition_diff" -> definitionDiffOutputSchema();
+          case "hop_impact_analysis" -> impactAnalysisOutputSchema();
+          case "hop_environment_diff" -> environmentDiffOutputSchema();
+          case "hop_resolve_configuration" -> runConfigurationOutputSchema();
           case "hop_component_types" -> componentTypesOutputSchema();
           case "hop_component_schema" -> componentSchemaOutputSchema();
           case "hop_execute" -> executionOutputSchema();
           case "hop_start_execution", "hop_stop_execution" -> executionStatusOutputSchema();
           case "hop_execution_status" -> executionStatusOutputSchema();
+          case "hop_execution_history" -> executionHistoryOutputSchema();
+          case "hop_execution_detail" -> executionDetailOutputSchema();
+          case "hop_execution_children" -> executionChildrenOutputSchema();
+          case "hop_execution_metrics" -> executionMetricsOutputSchema();
+          case "hop_diagnose_execution" -> diagnosisOutputSchema();
+          case "hop_data_profile" -> dataProfileOutputSchema();
           case "hop_deep_check" -> deepCheckOutputSchema();
           case "hop_test_definition" -> testDefinitionOutputSchema();
           case "hop_logs" -> logsOutputSchema();
@@ -1159,6 +1503,719 @@ final class HopMcpServer implements AutoCloseable {
             "plugins"));
   }
 
+  private static Map<String, Object> metadataTypeSchema() {
+    return schema(
+        fields(
+            "key", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+            "name", boundedString(1024, "Native metadata type name"),
+            "description", boundedString(4096, "Native metadata type description"),
+            "category", boundedString(256, "Native metadata category")),
+        List.of("key", "name"));
+  }
+
+  private static Map<String, Object> metadataValueSchema() {
+    Map<String, Object> scalar =
+        Map.of(
+            "anyOf",
+            List.of(
+                boundedString(8192, "Redacted metadata scalar"),
+                boundedInteger(-1_000_000_000L, 1_000_000_000L, "Metadata integer"),
+                Map.of("type", "number"),
+                bool("Metadata boolean"),
+                Map.of("type", "null")));
+    Map<String, Object> object = new LinkedHashMap<>();
+    object.put("type", "object");
+    object.put("additionalProperties", scalar);
+    object.put("maxProperties", HopMetadataService.MAX_METADATA_FIELDS);
+    Map<String, Object> array = new LinkedHashMap<>();
+    array.put("type", "array");
+    array.put("items", scalar);
+    array.put("maxItems", HopMetadataService.MAX_METADATA_COLLECTION_ITEMS + 1);
+    return Map.of("anyOf", List.of(scalar, object, array));
+  }
+
+  private static Map<String, Object> metadataMapSchema() {
+    return Map.of(
+        "type",
+        "object",
+        "additionalProperties",
+        metadataValueSchema(),
+        "maxProperties",
+        HopMetadataService.MAX_METADATA_FIELDS);
+  }
+
+  private static Map<String, Object> metadataTypesOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "offset", nonNegativeInteger("First metadata type offset"),
+            "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_TYPES, "Maximum metadata types requested"),
+            "count", nonNegativeInteger("Metadata types discovered"),
+            "count_complete", bool("Whether all metadata types were inspected"),
+            "returned", boundedInteger(0, HopMetadataService.MAX_METADATA_TYPES, "Metadata types returned"),
+            "has_more", bool("Whether another metadata type page remains"),
+            "types", arrayOf(metadataTypeSchema(), HopMetadataService.MAX_METADATA_TYPES)),
+        List.of("offset", "limit", "count", "count_complete", "returned", "has_more", "types"));
+  }
+
+  private static Map<String, Object> metadataObjectSchema() {
+    return schema(
+        fields(
+            "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+            "virtual_path", boundedString(4096, "Native metadata virtual path")),
+        List.of("name", "virtual_path"));
+  }
+
+  private static Map<String, Object> metadataListOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+            "query", boundedString(HopMetadataService.MAX_METADATA_QUERY_LENGTH, "Applied name filter"),
+            "offset", nonNegativeInteger("First metadata object offset"),
+            "limit", boundedInteger(1, HopMetadataService.MAX_METADATA_RESULTS, "Maximum metadata objects requested"),
+            "count", nonNegativeInteger("Matching metadata object count"),
+            "count_complete", bool("Whether all metadata objects were inspected"),
+            "returned", boundedInteger(0, HopMetadataService.MAX_METADATA_RESULTS, "Metadata objects returned"),
+            "has_more", bool("Whether another metadata object page remains"),
+            "objects", arrayOf(metadataObjectSchema(), HopMetadataService.MAX_METADATA_RESULTS)),
+        List.of("type", "query", "offset", "limit", "count", "count_complete", "returned", "has_more", "objects"));
+  }
+
+  private static Map<String, Object> metadataGetOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+            "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+            "metadata", metadataMapSchema(),
+            "redaction_applied", bool("Whether secret-safe projection was applied")),
+        List.of("type", "name", "metadata", "redaction_applied"));
+  }
+
+  private static Map<String, Object> metadataDependenciesOutputSchema() {
+    Map<String, Object> dependency =
+        schema(
+            fields(
+                "path", boundedString(4096, "Project-relative definition path"),
+                "component", boundedString(1024, "Referencing transform/action or unknown")),
+            List.of("path", "component"));
+    return toolOutputSchema(
+        fields(
+            "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+            "name", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+            "offset", nonNegativeInteger("First dependency offset"),
+            "limit", boundedInteger(1, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Maximum dependencies requested"),
+            "count", nonNegativeInteger("Dependent definition/component count"),
+            "count_complete", bool("Whether the bounded dependency scan completed"),
+            "returned", boundedInteger(0, HopMetadataService.MAX_DEPENDENCY_RESULTS, "Dependencies returned"),
+            "has_more", bool("Whether another dependency page remains"),
+            "used_by", arrayOf(dependency, HopMetadataService.MAX_DEPENDENCY_RESULTS)),
+        List.of("type", "name", "offset", "limit", "count", "count_complete", "returned", "has_more", "used_by"));
+  }
+
+  private static Map<String, Object> connectionTestOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "type", enumStr("rdbms"),
+            "name", boundedString(HopConnectionService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+            "status", enumStr("success", "failure", "timeout"),
+            "success", bool("Whether the native connection test succeeded"),
+            "timeout_seconds",
+                boundedInteger(
+                    1,
+                    HopConnectionService.MAX_TIMEOUT_SECONDS,
+                    "Configured native connection-test timeout"),
+            "message", boundedString(SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Redacted diagnostic message"),
+            "redaction_applied", bool("Whether diagnostic redaction was applied")),
+        List.of("type", "name", "status", "success", "timeout_seconds", "message", "redaction_applied"));
+  }
+
+  private static Map<String, Object> schemaCompareOutputSchema() {
+    Map<String, Object> nullableBoolean =
+        Map.of("anyOf", List.of(bool("Whether the column accepts nulls"), Map.of("type", "null")));
+    Map<String, Object> nullableInteger =
+        Map.of(
+            "anyOf",
+            List.of(
+                boundedInteger(-1, Integer.MAX_VALUE, "Native column size attribute"),
+                Map.of("type", "null")));
+    Map<String, Object> column =
+        schema(
+            fields(
+                "name", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Column name"),
+                "type", boundedString(HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Hop value type or expected type"),
+                "original_type_name", boundedString(HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Native database type name"),
+                "length", nullableInteger,
+                "precision", nullableInteger,
+                "scale", nullableInteger,
+                "nullable", nullableBoolean),
+            List.of("name", "type", "original_type_name", "length", "precision", "scale", "nullable"));
+    Map<String, Object> nullableColumn = Map.of("anyOf", List.of(column, Map.of("type", "null")));
+    Map<String, Object> difference =
+        schema(
+            fields(
+                "code",
+                enumStr(
+                    "COLUMN_ADDED",
+                    "COLUMN_REMOVED",
+                    "TYPE_CHANGED",
+                    "LENGTH_CHANGED",
+                    "PRECISION_CHANGED",
+                    "SCALE_CHANGED",
+                    "NULLABILITY_CHANGED"),
+                "attribute", enumStr("column", "type", "length", "precision", "scale", "nullable"),
+                "column", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Affected column"),
+                "expected", nullableColumn,
+                "actual", nullableColumn),
+            List.of("code", "attribute", "column", "expected", "actual"));
+    return toolOutputSchema(
+        fields(
+            "type", enumStr("rdbms"),
+            "connection", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "RDBMS metadata object name"),
+            "schema", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database schema name"),
+            "table", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Database table name"),
+            "status", enumStr("success"),
+            "matches", bool("Whether the actual schema matches the expected schema"),
+            "expected_count", boundedInteger(0, HopSchemaCompareService.MAX_FIELDS, "Expected columns"),
+            "actual_count", nonNegativeInteger("Native columns discovered"),
+            "actual_fields_returned", boundedInteger(0, HopSchemaCompareService.MAX_FIELDS, "Native columns returned"),
+            "actual_truncated", bool("Whether native columns exceeded the bound"),
+            "comparison_complete", bool("Whether all native columns were compared"),
+            "difference_count", boundedInteger(0, HopSchemaCompareService.MAX_DIFFERENCES, "Schema differences"),
+            "difference_count_complete", bool("Whether all differences fit the response bound"),
+            "differences", arrayOf(difference, HopSchemaCompareService.MAX_DIFFERENCES),
+            "expected_fields", arrayOf(column, HopSchemaCompareService.MAX_FIELDS),
+            "actual_fields", arrayOf(column, HopSchemaCompareService.MAX_FIELDS),
+            "redaction_applied", bool("Whether secret-like column names were redacted")),
+        List.of(
+            "type",
+            "connection",
+            "schema",
+            "table",
+            "status",
+            "matches",
+            "expected_count",
+            "actual_count",
+            "actual_fields_returned",
+            "actual_truncated",
+            "comparison_complete",
+            "difference_count",
+            "difference_count_complete",
+            "differences",
+            "expected_fields",
+            "actual_fields",
+            "redaction_applied"));
+  }
+
+  private static Map<String, Object> definitionDiffOutputSchema() {
+    Map<String, Object> componentChange =
+        schema(
+            fields(
+                "name", boundedString(512, "Changed native transform or action name"),
+                "kind", enumStr("transform", "action"),
+                "properties", stringArray(HopDefinitionDiffService.MAX_PROPERTIES),
+                "properties_truncated", bool("Whether changed property names reached the bound")),
+            List.of("name", "kind", "properties", "properties_truncated"));
+    Map<String, Object> hop =
+        schema(
+            fields(
+                "from", boundedString(512, "Native source component name"),
+                "to", boundedString(512, "Native target component name"),
+                "kind", enumStr("pipeline", "workflow"),
+                "properties",
+                    boundedObject(
+                        bool("Native hop property value"), 3)),
+            List.of("from", "to", "kind", "properties"));
+    Map<String, Object> hopChange =
+        schema(
+            fields(
+                "from", boundedString(512, "Native source component name"),
+                "to", boundedString(512, "Native target component name"),
+                "properties", stringArray(3)),
+            List.of("from", "to", "properties"));
+    Map<String, Object> parameterChange =
+        schema(
+            fields(
+                "name", boundedString(512, "Changed native parameter name"),
+                "properties", stringArray(HopDefinitionDiffService.MAX_PROPERTIES)),
+            List.of("name", "properties"));
+    Map<String, Object> definitionChange =
+        schema(
+            fields(
+                "properties", stringArray(4)),
+            List.of("properties"));
+    return toolOutputSchema(
+        fields(
+            "path_a", boundedString(HopDefinitionDiffService.MAX_PATH_LENGTH, "Project-relative first definition path"),
+            "path_b", boundedString(HopDefinitionDiffService.MAX_PATH_LENGTH, "Project-relative second definition path"),
+            "kind", enumStr("pipeline", "workflow"),
+            "identical", bool("Whether all compared semantic sections match"),
+            "definition_changed", definitionChange,
+            "components_added", stringArray(HopDefinitionDiffService.MAX_COMPONENTS),
+            "components_removed", stringArray(HopDefinitionDiffService.MAX_COMPONENTS),
+            "components_changed", arrayOf(componentChange, HopDefinitionDiffService.MAX_COMPONENTS),
+            "hops_added", arrayOf(hop, HopDefinitionDiffService.MAX_HOPS),
+            "hops_removed", arrayOf(hop, HopDefinitionDiffService.MAX_HOPS),
+            "hops_changed", arrayOf(hopChange, HopDefinitionDiffService.MAX_HOPS),
+            "parameters_changed", arrayOf(parameterChange, HopDefinitionDiffService.MAX_PARAMETERS),
+            "metadata_references_changed", stringArray(HopDefinitionDiffService.MAX_PROPERTIES),
+            "metadata_references_added", stringArray(HopDefinitionDiffService.MAX_REFERENCES),
+            "metadata_references_removed", stringArray(HopDefinitionDiffService.MAX_REFERENCES),
+            "redaction_applied", bool("Whether returned names and references were redacted"),
+            "truncated", bool("Whether a bounded section was truncated"),
+            "comparison_complete", bool("Whether all bounded sections were compared")),
+        List.of(
+            "path_a",
+            "path_b",
+            "kind",
+            "identical",
+            "definition_changed",
+            "components_added",
+            "components_removed",
+            "components_changed",
+            "hops_added",
+            "hops_removed",
+            "hops_changed",
+            "parameters_changed",
+            "metadata_references_changed",
+            "metadata_references_added",
+            "metadata_references_removed",
+            "redaction_applied",
+            "truncated",
+            "comparison_complete"));
+  }
+
+  private static Map<String, Object> expectedSchema() {
+    Map<String, Object> nullableBoolean = Map.of("type", "boolean");
+    Map<String, Object> nullableInteger =
+        boundedInteger(-1, Integer.MAX_VALUE, "Expected column size attribute");
+    Map<String, Object> column =
+        schema(
+            fields(
+                "name", boundedString(HopSchemaCompareService.MAX_NAME_LENGTH, "Expected column name"),
+                "type", boundedString(HopSchemaCompareService.MAX_FIELD_TYPE_LENGTH, "Expected Hop or database type"),
+                "length", nullableInteger,
+                "precision", nullableInteger,
+                "scale", nullableInteger,
+                "nullable", nullableBoolean),
+            List.of("name", "type"));
+    return Map.of(
+        "type",
+        "array",
+        "description",
+        "Expected table columns; omitted size and nullability attributes are not compared.",
+        "items",
+        column,
+        "maxItems",
+        HopSchemaCompareService.MAX_FIELDS);
+  }
+
+  private static Map<String, Object> impactAnalysisOutputSchema() {
+    Map<String, Object> query =
+        schema(
+            fields(
+                "table", boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Table selector"),
+                "metadata", boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Metadata selector"),
+                "definition", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition selector")),
+            List.of());
+    Map<String, Object> node =
+        schema(
+            fields(
+                "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Project-relative definition path"),
+                "kind", enumStr("pipeline", "workflow"),
+                "depth", boundedInteger(0, HopImpactAnalysisService.MAX_DEPTH, "Traversal depth")),
+            List.of("path", "kind", "depth"));
+    Map<String, Object> dependency =
+        schema(
+            fields(
+                "from", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Source definition path"),
+                "to", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Target definition path"),
+                "type", enumStr("definition_reference"),
+                "from_kind", enumStr("pipeline", "workflow", "definition"),
+                "to_kind", enumStr("pipeline", "workflow", "definition")),
+            List.of("from", "to", "type", "from_kind", "to_kind"));
+    Map<String, Object> tableReference =
+        schema(
+            fields(
+                "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition path"),
+                "table", boundedString(1024, "Redacted table reference")),
+            List.of("path", "table"));
+    Map<String, Object> metadataReference =
+        schema(
+            fields(
+                "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition path"),
+                "metadata", boundedString(HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Redacted metadata reference")),
+            List.of("path", "metadata"));
+    Map<String, Object> lineage =
+        schema(
+            fields(
+                "path", boundedString(HopImpactAnalysisService.MAX_PATH_LENGTH, "Definition path"),
+                "from", boundedString(512, "Source component name"),
+                "to", boundedString(512, "Target component name"),
+                "depth", boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Structural lineage depth")),
+            List.of("path", "from", "to", "depth"));
+    return toolOutputSchema(
+        fields(
+            "query", query,
+            "nodes", arrayOf(node, HopImpactAnalysisService.MAX_RESULTS),
+            "dependencies", arrayOf(dependency, HopImpactAnalysisService.MAX_EDGES),
+            "metadata_references", arrayOf(metadataReference, HopImpactAnalysisService.MAX_METADATA_REFERENCES),
+            "table_references", arrayOf(tableReference, HopImpactAnalysisService.MAX_TABLE_REFERENCES),
+            "pipeline_workflow_references", arrayOf(dependency, HopImpactAnalysisService.MAX_EDGES),
+            "lineage", arrayOf(lineage, HopImpactAnalysisService.MAX_EDGES),
+            "node_count", boundedInteger(0, HopImpactAnalysisService.MAX_RESULTS, "Impacted definition count"),
+            "returned_nodes", boundedInteger(0, HopImpactAnalysisService.MAX_RESULTS, "Returned impacted definitions"),
+            "edge_count", boundedInteger(0, HopImpactAnalysisService.MAX_EDGES, "Dependency edge count"),
+            "returned_edges", boundedInteger(0, HopImpactAnalysisService.MAX_EDGES, "Returned dependency edges"),
+            "max_depth_applied", boundedInteger(1, HopImpactAnalysisService.MAX_DEPTH, "Applied depth bound"),
+            "max_edges_applied", boundedInteger(1, HopImpactAnalysisService.MAX_EDGES, "Applied edge bound"),
+            "max_results_applied", boundedInteger(1, HopImpactAnalysisService.MAX_RESULTS, "Applied result bound"),
+            "count_complete", bool("Whether the bounded project scan is complete"),
+            "results_truncated", bool("Whether one or more result sections were truncated"),
+            "has_more", bool("Whether a narrower page or larger bound can reveal more results"),
+            "redaction_applied", bool("Whether returned selectors and names were redacted")),
+        List.of(
+            "query",
+            "nodes",
+            "dependencies",
+            "metadata_references",
+            "table_references",
+            "pipeline_workflow_references",
+            "lineage",
+            "node_count",
+            "returned_nodes",
+            "edge_count",
+            "returned_edges",
+            "max_depth_applied",
+            "max_edges_applied",
+            "max_results_applied",
+            "count_complete",
+            "results_truncated",
+            "has_more",
+            "redaction_applied"));
+  }
+
+  private static Map<String, Object> environmentDiffOutputSchema() {
+    Map<String, Object> profile =
+        schema(
+            fields(
+                "path", boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "Project-relative definition path"),
+                "run_configuration", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Native run configuration name"),
+                "parameter_names", stringArray(HopEnvironmentDiffService.MAX_PARAMETERS)),
+            List.of("path", "run_configuration", "parameter_names"));
+    Map<String, Object> valueChange =
+        schema(
+            fields(
+                "name", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Changed variable or metadata key"),
+                "before", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value before the change"),
+                "after", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value after the change"),
+                "redacted", bool("Whether one of the compared values was redacted")),
+            List.of("name", "before", "after", "redacted"));
+    Map<String, Object> propertyChange =
+        schema(
+            fields(
+                "property", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Changed run configuration property"),
+                "before", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value before the change"),
+                "after", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive value after the change"),
+                "redacted", bool("Whether one of the compared values was redacted")),
+            List.of("property", "before", "after", "redacted"));
+    Map<String, Object> parameterChange =
+        schema(
+            fields(
+                "name", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Changed parameter name"),
+                "property", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Changed parameter property"),
+                "before", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive default before the change"),
+                "after", boundedString(HopEnvironmentDiffService.MAX_VALUE_LENGTH, "Non-sensitive default after the change"),
+                "redacted", bool("Whether one of the compared defaults was redacted")),
+            List.of("name", "property", "before", "after", "redacted"));
+    Map<String, Object> unresolved =
+        schema(
+            fields(
+                "environment", enumStr("a", "b"),
+                "name", boundedString(HopEnvironmentDiffService.MAX_NAME_LENGTH, "Unresolved variable reference name"),
+                "source", enumStr("definition_or_run_configuration")),
+            List.of("environment", "name", "source"));
+    return toolOutputSchema(
+        fields(
+            "path_a", boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "First definition path"),
+            "path_b", boundedString(HopEnvironmentDiffService.MAX_PATH_LENGTH, "Second definition path"),
+            "kind", enumStr("pipeline", "workflow"),
+            "profiles", schema(fields("a", profile, "b", profile), List.of("a", "b")),
+            "variables_changed", arrayOf(valueChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "metadata_references_changed", arrayOf(valueChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "run_configuration_changed", arrayOf(propertyChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "parameter_defaults_changed", arrayOf(parameterChange, HopEnvironmentDiffService.MAX_CHANGES),
+            "unresolved_variables", arrayOf(unresolved, HopEnvironmentDiffService.MAX_VARIABLES),
+            "identical", bool("Whether no bounded environment difference was found"),
+            "redaction_applied", bool("Whether secret-like values were redacted"),
+            "truncated", bool("Whether a bounded section was truncated"),
+            "comparison_complete", bool("Whether all bounded sections were compared")),
+        List.of(
+            "path_a",
+            "path_b",
+            "kind",
+            "profiles",
+            "variables_changed",
+            "metadata_references_changed",
+            "run_configuration_changed",
+            "parameter_defaults_changed",
+            "unresolved_variables",
+            "identical",
+            "redaction_applied",
+            "truncated",
+            "comparison_complete"));
+  }
+
+  private static Map<String, Object> diagnosisOutputSchema() {
+    Map<String, Object> scalar =
+        Map.of(
+            "anyOf",
+            List.of(Map.of("type", "string"), Map.of("type", "boolean"), Map.of("type", "number")));
+    Map<String, Object> executionEvidence =
+        schema(
+            fields(
+                "available", bool("Whether execution state evidence was available"),
+                "status", boundedString(64, "Observed native execution status"),
+                "failed", bool("Observed native failure flag"),
+                "active", bool("Observed native active flag"),
+                "duration_ms", boundedInteger(0, Long.MAX_VALUE, "Observed execution duration"),
+                "state_status", boundedString(64, "Observed native state status"),
+                "state_description", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted native state description"),
+                "error_count", boundedInteger(0, HopExecutionRepository.MAX_ERRORS, "Observed native error count"),
+                "errors", stringArray(20),
+                "reason", boundedString(128, "Reason execution evidence was unavailable")),
+            List.of("available"));
+    Map<String, Object> logError =
+        schema(
+            fields(
+                "timestamp", boundedInteger(0, Long.MAX_VALUE, "Log timestamp"),
+                "level", boundedString(32, "Log level"),
+                "message", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted log message")),
+            List.of("timestamp", "level", "message"));
+    Map<String, Object> logsEvidence =
+        schema(
+            fields(
+                "available", bool("Whether log evidence was available"),
+                "event_count", boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Returned log event count"),
+                "error_count", boundedInteger(0, ProjectFiles.MAX_LOG_EVENTS, "Observed ERROR/FATAL count"),
+                "errors", arrayOf(logError, HopDiagnosisService.MAX_LOG_ERRORS),
+                "truncated", bool("Whether log evidence was truncated"),
+                "reason", boundedString(128, "Reason log evidence was unavailable")),
+            List.of("available"));
+    Map<String, Object> metricsEvidence =
+        schema(
+            fields(
+                "available", bool("Whether persisted metrics were available"),
+                "component_count", boundedInteger(0, HopDiagnosisService.MAX_METRICS, "Returned metric component count"),
+                "truncated", bool("Whether metrics were truncated"),
+                "components", arrayOf(componentMetricsSchema(), HopDiagnosisService.MAX_METRICS),
+                "reason", boundedString(128, "Reason metrics were unavailable")),
+            List.of("available"));
+    Map<String, Object> metadataReference =
+        schema(
+            fields(
+                "path", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Metadata property path"),
+                "value", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted metadata reference value"),
+                "redacted", bool("Whether the metadata value was redacted")),
+            List.of("path", "value", "redacted"));
+    Map<String, Object> parameter =
+        schema(
+            fields(
+                "name", boundedString(HopDiagnosisService.MAX_NAME_LENGTH, "Parameter name"),
+                "default", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Redacted parameter default"),
+                "redacted", bool("Whether the parameter default was redacted")),
+            List.of("name", "default", "redacted"));
+    Map<String, Object> metadataEvidence =
+        schema(
+            fields(
+                "available", bool("Whether definition metadata evidence was available"),
+                "type", boundedString(32, "Definition type"),
+                "name", boundedString(512, "Definition name"),
+                "metadata_references", arrayOf(metadataReference, HopDiagnosisService.MAX_METADATA_REFERENCES),
+                "definition_references", stringArray(ProjectFiles.MAX_STRUCTURED_RESULTS),
+                "tables", stringArray(ProjectFiles.MAX_STRUCTURED_RESULTS),
+                "parameters", arrayOf(parameter, HopDiagnosisService.MAX_PARAMETERS),
+                "truncated", bool("Whether definition evidence was truncated"),
+                "reason", boundedString(128, "Reason definition evidence was unavailable")),
+            List.of("available"));
+    Map<String, Object> connection =
+        schema(
+            fields(
+                "name", boundedString(512, "Referenced connection name"),
+                "metadata_available", bool("Whether native RDBMS metadata was found")),
+            List.of("name", "metadata_available"));
+    Map<String, Object> connectionsEvidence =
+        schema(
+            fields(
+                "available", bool("Whether connection references were found"),
+                "references", arrayOf(connection, HopDiagnosisService.MAX_CONNECTIONS),
+                "metadata_checked", bool("Whether native metadata lookup was attempted")),
+            List.of("available", "references", "metadata_checked"));
+    Map<String, Object> parametersEvidence =
+        schema(
+            fields(
+                "available", bool("Whether parameter defaults were available"),
+                "defaults", arrayOf(parameter, HopDiagnosisService.MAX_PARAMETERS),
+                "count", boundedInteger(0, HopDiagnosisService.MAX_PARAMETERS, "Parameter count")),
+            List.of("available", "defaults", "count"));
+    Map<String, Object> engine =
+        boundedObject(boundedString(512, "Redacted engine property"), 16);
+    Map<String, Object> configurationEvidence =
+        schema(
+            fields(
+                "available", bool("Whether native run configuration evidence was available"),
+                "name", boundedString(512, "Run configuration name"),
+                "run_configuration", boundedString(512, "Effective run configuration"),
+                "engine", engine,
+                "execution_info_location", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Execution information location"),
+                "data_profile", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Execution data profile"),
+                "unresolved_references", stringArray(HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES),
+                "redaction_applied", bool("Whether configuration values were redacted"),
+                "reason", boundedString(128, "Reason run configuration evidence was unavailable")),
+            List.of("available"));
+    Map<String, Object> previousExecution =
+        schema(
+            fields(
+                "execution_id", boundedString(256, "Previous native execution ID"),
+                "status", boundedString(64, "Previous execution status"),
+                "failed", bool("Previous execution failure flag"),
+                "run_configuration", boundedString(512, "Previous run configuration"),
+                "start_epoch_ms", boundedInteger(0, Long.MAX_VALUE, "Previous start timestamp"),
+                "duration_ms", boundedInteger(0, Long.MAX_VALUE, "Previous duration")),
+            List.of("execution_id", "status", "failed", "run_configuration", "start_epoch_ms", "duration_ms"));
+    Map<String, Object> previousEvidence =
+        schema(
+            fields(
+                "available", bool("Whether previous execution evidence was available"),
+                "count", boundedInteger(0, HopExecutionRepository.MAX_HISTORY_RESULTS, "Previous execution count"),
+                "returned", boundedInteger(0, HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS, "Returned previous executions"),
+                "has_more", bool("Whether more previous executions exist"),
+                "executions", arrayOf(previousExecution, HopDiagnosisService.MAX_PREVIOUS_EXECUTIONS),
+                "reason", boundedString(128, "Reason previous execution evidence was unavailable")),
+            List.of("available"));
+    Map<String, Object> evidence =
+        schema(
+            fields(
+                "execution", executionEvidence,
+                "logs", logsEvidence,
+                "component_metrics", metricsEvidence,
+                "metadata", metadataEvidence,
+                "connections", connectionsEvidence,
+                "parameters", parametersEvidence,
+                "run_configuration", configurationEvidence,
+                "previous_executions", previousEvidence),
+            List.of("execution", "logs", "component_metrics", "metadata", "connections", "parameters", "run_configuration", "previous_executions"));
+    Map<String, Object> fact =
+        schema(
+            fields(
+                "id", boundedString(128, "Stable fact identifier"),
+                "source", boundedString(64, "Evidence source"),
+                "name", boundedString(128, "Observed field name"),
+                "value", scalar,
+                "observed", bool("Whether the value was directly observed")),
+            List.of("id", "source", "name", "value", "observed"));
+    Map<String, Object> cause =
+        schema(
+            fields(
+                "code", boundedString(128, "Possible cause code"),
+                "confidence", enumStr("low", "medium", "high"),
+                "explanation", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Explicitly unverified explanation"),
+                "evidence", stringArray(16),
+                "verified", bool("Always false unless separately verified by evidence")),
+            List.of("code", "confidence", "explanation", "evidence", "verified"));
+    Map<String, Object> recommendation =
+        schema(
+            fields(
+                "code", boundedString(128, "Recommendation code"),
+                "reason", boundedString(HopDiagnosisService.MAX_VALUE_LENGTH, "Non-mutating recommendation reason"),
+                "tool", boundedString(128, "Suggested next MCP tool"),
+                "requires_preview", bool("Whether a future mutation would require preview"),
+                "auto_applied", bool("Whether any change was automatically applied")),
+            List.of("code", "reason", "tool", "requires_preview", "auto_applied"));
+    return toolOutputSchema(
+        fields(
+            "location", boundedString(HopDiagnosisService.MAX_LOCATION_LENGTH, "Native execution information location"),
+            "execution_id", boundedString(HopDiagnosisService.MAX_EXECUTION_ID_LENGTH, "Native execution ID"),
+            "path", boundedString(HopDiagnosisService.MAX_PATH_LENGTH, "Project-relative execution definition path"),
+            "run_configuration", boundedString(512, "Observed execution run configuration"),
+            "evidence", evidence,
+            "facts", arrayOf(fact, HopDiagnosisService.MAX_FACTS),
+            "possible_causes", arrayOf(cause, HopDiagnosisService.MAX_POSSIBLE_CAUSES),
+            "recommendations", arrayOf(recommendation, HopDiagnosisService.MAX_RECOMMENDATIONS),
+            "redaction_applied", bool("Whether evidence was redacted"),
+            "evidence_complete", bool("Whether all evidence sources were available and complete"),
+            "truncated", bool("Whether a bounded evidence section was truncated")),
+        List.of(
+            "location",
+            "execution_id",
+            "path",
+            "run_configuration",
+            "evidence",
+            "facts",
+            "possible_causes",
+            "recommendations",
+            "redaction_applied",
+            "evidence_complete",
+            "truncated"));
+  }
+
+  private static Map<String, Object> runConfigurationOutputSchema() {
+    Map<String, Object> engine =
+        schema(
+            fields(
+                "plugin_id", boundedString(512, "Native engine plugin ID"),
+                "plugin_name", boundedString(1024, "Native engine plugin name")),
+            List.of("plugin_id", "plugin_name"));
+    Map<String, Object> effective =
+        schema(
+            fields(
+                "run_configuration", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Effective native run configuration"),
+                "engine", engine,
+                "execution_info_location", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Effective execution information location"),
+                "data_profile", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Effective execution data profile")),
+            List.of("run_configuration", "engine", "execution_info_location", "data_profile"));
+    Map<String, Object> variable =
+        schema(
+            fields(
+                "name", boundedString(1024, "Configuration variable name"),
+                "value", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Resolved or redacted variable value"),
+                "resolved", bool("Whether no variable reference remains"),
+                "description", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Variable description"),
+                "redacted", bool("Whether the variable value was redacted")),
+            List.of("name", "value", "resolved", "description", "redacted"));
+    return toolOutputSchema(
+        fields(
+            "kind", enumStr("pipeline", "workflow"),
+            "name", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Run configuration name"),
+            "path", boundedString(HopRunConfigurationService.MAX_PATH_LENGTH, "Project-relative definition path"),
+            "run_configuration", boundedString(HopRunConfigurationService.MAX_NAME_LENGTH, "Effective native run configuration"),
+            "description", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Run configuration description"),
+            "execution_info_location", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Execution information location name"),
+            "data_profile", boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Execution data profile name"),
+            "default_selection", bool("Whether this is the default run configuration"),
+            "engine", engine,
+            "parameters", boundedObject(boundedString(HopRunConfigurationService.MAX_VALUE_LENGTH, "Redacted parameter value"), HopRunConfigurationService.MAX_PARAMETERS),
+            "effective_configuration", effective,
+            "variables", arrayOf(variable, HopRunConfigurationService.MAX_VARIABLES),
+            "unresolved_references", stringArray(HopRunConfigurationService.MAX_UNRESOLVED_REFERENCES),
+            "variables_truncated", bool("Whether configured variables exceeded the bound"),
+            "redaction_applied", bool("Whether secret-safe projection was applied")),
+        List.of(
+            "kind",
+            "name",
+            "path",
+            "run_configuration",
+            "description",
+            "execution_info_location",
+            "data_profile",
+            "default_selection",
+            "engine",
+            "parameters",
+            "effective_configuration",
+            "variables",
+            "unresolved_references",
+            "variables_truncated",
+            "redaction_applied"));
+  }
+
   private static Map<String, Object> liveUiStatusOutputSchema() {
     Map<String, Object> activeClients =
         Map.of(
@@ -1503,6 +2560,221 @@ final class HopMcpServer implements AutoCloseable {
             "state",
             "started_at",
             "active_executions"));
+  }
+
+  private static Map<String, Object> executionHistoryOutputSchema() {
+    Map<String, Object> execution = executionSummarySchema();
+    return toolOutputSchema(
+        fields(
+            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "path", boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Applied definition path filter"),
+            "status", boundedString(32, "Applied execution status filter"),
+            "from_epoch_ms", nonNegativeInteger("Applied start-time lower bound or zero"),
+            "to_epoch_ms", nonNegativeInteger("Applied start-time upper bound or zero"),
+            "offset", nonNegativeInteger("First history offset"),
+            "limit", boundedInteger(1, HopExecutionRepository.MAX_HISTORY_RESULTS, "Maximum history results"),
+            "count", nonNegativeInteger("Matching executions in the bounded scan"),
+            "count_complete", bool("Whether the native location was fully scanned"),
+            "returned", boundedInteger(0, HopExecutionRepository.MAX_HISTORY_RESULTS, "Executions returned"),
+            "has_more", bool("Whether another history page remains"),
+            "scan_truncated", bool("Whether the bounded native scan stopped early"),
+            "executions", arrayOf(execution, HopExecutionRepository.MAX_HISTORY_RESULTS)),
+        List.of(
+            "location",
+            "path",
+            "status",
+            "from_epoch_ms",
+            "to_epoch_ms",
+            "offset",
+            "limit",
+            "count",
+            "count_complete",
+            "returned",
+            "has_more",
+            "scan_truncated",
+            "executions"));
+  }
+
+  private static Map<String, Object> executionDetailOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "execution", executionSummarySchema(),
+            "state", executionStateSchema(),
+            "children_count", boundedInteger(0, HopExecutionRepository.MAX_CHILD_IDS, "Bounded immediate child count"),
+            "metrics", arrayOf(componentMetricsSchema(), HopExecutionRepository.MAX_COMPONENT_METRICS),
+            "details", boundedObject(boundedString(4096, "Redacted native state detail"), HopExecutionRepository.MAX_DETAILS),
+            "errors", stringArray(HopExecutionRepository.MAX_ERRORS),
+            "logging_available", bool("Whether large execution logging was loaded")),
+        List.of(
+            "location", "execution", "state", "children_count", "metrics", "details", "errors", "logging_available"));
+  }
+
+  private static Map<String, Object> executionChildrenOutputSchema() {
+    Map<String, Object> child = new LinkedHashMap<>(executionSummarySchema());
+    @SuppressWarnings("unchecked")
+    Map<String, Object> childProperties = (Map<String, Object>) child.get("properties");
+    childProperties.put("depth", boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Depth from the root execution"));
+    @SuppressWarnings("unchecked")
+    List<String> required = (List<String>) child.get("required");
+    required = new ArrayList<>(required);
+    required.add("depth");
+    child.put("required", required);
+    return toolOutputSchema(
+        fields(
+            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "root_execution_id", boundedString(256, "Root execution ID"),
+            "max_depth", boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Applied depth bound"),
+            "max_nodes", boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_NODES, "Applied node bound"),
+            "visited", nonNegativeInteger("Visited execution IDs"),
+            "returned", boundedInteger(0, HopExecutionRepository.MAX_CHILDREN_NODES, "Returned child executions"),
+            "truncated", bool("Whether the child traversal hit a bound"),
+            "children", arrayOf(child, HopExecutionRepository.MAX_CHILDREN_NODES)),
+        List.of(
+            "location", "root_execution_id", "max_depth", "max_nodes", "visited", "returned", "truncated", "children"));
+  }
+
+  private static Map<String, Object> executionMetricsOutputSchema() {
+    return toolOutputSchema(
+        fields(
+            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "execution_id", boundedString(256, "Native execution ID"),
+            "available", bool("Whether native component metrics were stored"),
+            "component_count", boundedInteger(0, HopExecutionRepository.MAX_COMPONENT_METRICS, "Returned component metric rows"),
+            "truncated", bool("Whether component metrics exceeded the response bound"),
+            "components", arrayOf(componentMetricsSchema(), HopExecutionRepository.MAX_COMPONENT_METRICS)),
+        List.of("location", "execution_id", "available", "component_count", "truncated", "components"));
+  }
+
+  private static Map<String, Object> dataProfileOutputSchema() {
+    Map<String, Object> value =
+        Map.of(
+            "anyOf",
+            List.of(
+                Map.of("type", "string", "maxLength", 4096),
+                Map.of("type", "number"),
+                Map.of("type", "integer"),
+                Map.of("type", "boolean"),
+                Map.of("type", "null")));
+    Map<String, Object> field =
+        schema(
+            fields(
+                "available", bool("Whether stored profile rows matched the field"),
+                "observed_rows", nonNegativeInteger("Stored rows observed for the field"),
+                "nulls", nonNegativeInteger("Null values in observed stored rows"),
+                "distinct", nonNegativeInteger("Observed distinct values"),
+                "distinct_truncated", bool("Whether distinct counting hit its bound"),
+                "complete", bool("Whether the stored data is known to be complete"),
+                "min", value,
+                "max", value,
+                "average", value,
+                "samples", arrayOf(value, HopExecutionRepository.MAX_PROFILE_SAMPLES)),
+            List.of(
+                "available",
+                "observed_rows",
+                "nulls",
+                "distinct",
+                "distinct_truncated",
+                "complete",
+                "samples"));
+    return toolOutputSchema(
+        fields(
+            "location", boundedString(HopExecutionRepository.MAX_LOCATION_LENGTH, "Execution Information Location"),
+            "execution_id", boundedString(256, "Native execution ID"),
+            "transform", boundedString(HopExecutionRepository.MAX_FILTER_LENGTH, "Applied transform"),
+            "available", bool("Whether stored execution data was available"),
+            "source", enumStr("stored_execution_data"),
+            "data_sets_scanned", boundedInteger(0, HopExecutionRepository.MAX_PROFILE_DATA_SETS, "Bounded stored data sets inspected"),
+            "rows_scanned", boundedInteger(0, HopExecutionRepository.MAX_PROFILE_ROWS, "Bounded stored rows inspected"),
+            "rows_truncated", bool("Whether stored row inspection hit its bound"),
+            "fields", boundedObject(field, HopExecutionRepository.MAX_PROFILE_FIELDS)),
+        List.of(
+            "location",
+            "execution_id",
+            "transform",
+            "available",
+            "source",
+            "data_sets_scanned",
+            "rows_scanned",
+            "rows_truncated",
+            "fields"));
+  }
+
+  private static Map<String, Object> executionSummarySchema() {
+    return schema(
+        fields(
+            "execution_id", boundedString(256, "Native execution ID"),
+            "path", boundedString(4096, "Project-relative definition path or protected external marker"),
+            "name", boundedString(512, "Native execution name"),
+            "type", boundedString(32, "Native pipeline or workflow type"),
+            "parent_id", boundedString(256, "Parent execution ID"),
+            "run_configuration", boundedString(256, "Native run configuration name"),
+            "registration_epoch_ms", nonNegativeInteger("Registration time"),
+            "start_epoch_ms", nonNegativeInteger("Execution start time"),
+            "end_epoch_ms", nonNegativeInteger("Execution end time or zero"),
+            "duration_ms", nonNegativeInteger("Execution duration or zero"),
+            "status", boundedString(256, "Native execution status"),
+            "failed", bool("Whether native state reports failure"),
+            "active", bool("Whether native state reports an active execution")),
+        List.of(
+            "execution_id",
+            "path",
+            "name",
+            "type",
+            "parent_id",
+            "run_configuration",
+            "registration_epoch_ms",
+            "start_epoch_ms",
+            "end_epoch_ms",
+            "duration_ms",
+            "status",
+            "failed",
+            "active"));
+  }
+
+  private static Map<String, Object> executionStateSchema() {
+    return schema(
+        fields(
+            "execution_id", boundedString(256, "Native state execution ID"),
+            "type", boundedString(32, "Native pipeline, workflow or component type"),
+            "parent_id", boundedString(256, "Parent execution ID"),
+            "name", boundedString(512, "Native state name"),
+            "status", boundedString(256, "Normalized native state status"),
+            "status_description", boundedString(512, "Redacted native status description"),
+            "failed", bool("Native failure flag"),
+            "running", bool("Native running flag"),
+            "finished", bool("Native finished flag"),
+            "end_epoch_ms", nonNegativeInteger("Native end time or zero"),
+            "child_ids", stringArray(HopExecutionRepository.MAX_CHILD_IDS)),
+        List.of(
+            "execution_id",
+            "type",
+            "parent_id",
+            "name",
+            "status",
+            "status_description",
+            "failed",
+            "running",
+            "finished",
+            "end_epoch_ms",
+            "child_ids"));
+  }
+
+  private static Map<String, Object> componentMetricsSchema() {
+    return schema(
+        fields(
+            "component", boundedString(512, "Native component name"),
+            "copy", boundedString(128, "Native component copy"),
+            "metrics", boundedObject(boundedInteger(Long.MIN_VALUE, Long.MAX_VALUE, "Native metric value"), HopExecutionRepository.MAX_METRIC_VALUES)),
+        List.of("component", "copy", "metrics"));
+  }
+
+  private static Map<String, Object> boundedObject(Map<String, Object> valueSchema, int maxProperties) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("type", "object");
+    result.put("additionalProperties", valueSchema);
+    result.put("maxProperties", maxProperties);
+    return result;
   }
 
   private static Map<String, Object> mutationOutputSchema() {
@@ -2103,6 +3375,42 @@ final class HopMcpServer implements AutoCloseable {
     return out;
   }
 
+  private static List<String> strings(Object value, String name) {
+    if (!(value instanceof List<?> list))
+      throw new IllegalArgumentException(name + " must be an array");
+    if (list.size() > HopExecutionRepository.MAX_PROFILE_FIELDS)
+      throw new IllegalArgumentException(
+          name + " cannot exceed " + HopExecutionRepository.MAX_PROFILE_FIELDS + " entries");
+    List<String> result = new ArrayList<>();
+    for (Object item : list) {
+      if (item == null || String.valueOf(item).isBlank())
+        throw new IllegalArgumentException(name + " must contain non-empty strings");
+      result.add(String.valueOf(item));
+    }
+    return result;
+  }
+
+  private static List<Map<String, Object>> expectedFields(Object value) {
+    if (!(value instanceof List<?> list))
+      throw new IllegalArgumentException("expected must be an array");
+    if (list.size() > HopSchemaCompareService.MAX_FIELDS)
+      throw new IllegalArgumentException(
+          "expected cannot exceed " + HopSchemaCompareService.MAX_FIELDS + " fields");
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Object item : list) {
+      if (!(item instanceof Map<?, ?> map))
+        throw new IllegalArgumentException("each expected field must be an object");
+      Map<String, Object> field = new LinkedHashMap<>();
+      for (Map.Entry<?, ?> entry : map.entrySet()) {
+        if (entry.getKey() == null)
+          throw new IllegalArgumentException("expected field keys cannot be null");
+        field.put(String.valueOf(entry.getKey()), entry.getValue());
+      }
+      result.add(field);
+    }
+    return result;
+  }
+
   private static List<Map<String, Object>> operations(Object value) {
     if (!(value instanceof List<?> list))
       throw new IllegalArgumentException("operations must be an array");
@@ -2154,6 +3462,13 @@ final class HopMcpServer implements AutoCloseable {
     if (v == null) return d;
     if (v instanceof Number n) return n.intValue();
     return Integer.parseInt(String.valueOf(v));
+  }
+
+  private static Long longDefault(Map<String, Object> a, String k) {
+    Object v = a.get(k);
+    if (v == null) return null;
+    if (v instanceof Number n) return n.longValue();
+    return Long.parseLong(String.valueOf(v));
   }
 
   @Override

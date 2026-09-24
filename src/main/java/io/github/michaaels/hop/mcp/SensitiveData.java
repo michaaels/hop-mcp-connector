@@ -13,7 +13,7 @@ final class SensitiveData {
   static final int MAX_SANITIZED_TEXT_LENGTH = 4096;
   private static final int MAX_KEY_LENGTH = 128;
 
-  private static final String REDACTED = "***REDACTED***";
+  static final String REDACTED = "***REDACTED***";
   private static final String SENSITIVE_XML_NAME =
       "[\\w:.-]*(?:password|passwd|pwd|token|secret|credential|authorization|auth[_-]?header|"
           + "bearer|client[_-]?secret|api[_-]?key|access[_-]?key|private[_-]?key)[\\w:.-]*";
@@ -26,6 +26,10 @@ final class SensitiveData {
   private record Assignment(String key, int valueStart, int nextPosition) {}
 
   private SensitiveData() {}
+
+  static String redactedMarker() {
+    return REDACTED;
+  }
 
   static boolean isSensitiveKey(String key) {
     if (key == null || key.isBlank()) {

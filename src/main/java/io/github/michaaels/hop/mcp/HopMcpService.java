@@ -23,6 +23,15 @@ final class HopMcpService implements AutoCloseable {
   private final boolean allowMutation;
   private final boolean allowWebApi;
   private final HopWebClient webClient;
+  private final HopMetadataService metadata;
+  private final HopConnectionService connections;
+  private final HopSchemaCompareService schemaCompare;
+  private final HopDefinitionDiffService definitionDiff;
+  private final HopImpactAnalysisService impactAnalysis;
+  private final HopEnvironmentDiffService environmentDiff;
+  private final HopRunConfigurationService runConfigurations;
+  private final HopExecutionRepository executionRepository;
+  private final HopDiagnosisService diagnosis;
   private final HopExecutionManager executionManager;
   private final HopComponentAuthoring componentAuthoring;
   private final HopDefinitionMutator definitionMutator;
@@ -86,6 +95,17 @@ final class HopMcpService implements AutoCloseable {
     this.allowMutation = allowMutation;
     this.allowWebApi = allowWebApi;
     this.webClient = webClient;
+    this.metadata = new HopMetadataService(files, metadataProvider);
+    this.connections = new HopConnectionService(metadataProvider, variables, allowDeepCheck);
+    this.schemaCompare = new HopSchemaCompareService(metadataProvider, variables, allowDeepCheck);
+    this.definitionDiff = new HopDefinitionDiffService(files, variables, metadataProvider);
+    this.impactAnalysis = new HopImpactAnalysisService(files);
+    this.runConfigurations = new HopRunConfigurationService(metadataProvider, variables);
+    this.environmentDiff = new HopEnvironmentDiffService(files, variables, runConfigurations);
+    this.executionRepository = new HopExecutionRepository(files, variables, metadataProvider);
+    this.diagnosis =
+        new HopDiagnosisService(
+            files, executionRepository, metadata, runConfigurations, this::logs);
     this.executionManager = new HopExecutionManager();
     this.componentAuthoring = new HopComponentAuthoring(metadataProvider);
     this.semanticEventSink =
@@ -115,11 +135,16 @@ final class HopMcpService implements AutoCloseable {
 
   boolean isToolEnabled(String name) {
     return switch (name) {
-      case "hop_deep_check" -> allowDeepCheck;
+      case "hop_deep_check", "hop_test_connection", "hop_schema_compare" -> allowDeepCheck;
       case "hop_test_definition",
               "hop_execute",
               "hop_start_execution",
               "hop_execution_status",
+              "hop_execution_history",
+              "hop_execution_detail",
+              "hop_execution_children",
+              "hop_execution_metrics",
+              "hop_diagnose_execution",
               "hop_stop_execution",
               "hop_logs" ->
           allowExecution;
@@ -138,6 +163,82 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> plugins() {
     return HopNative.plugins();
+  }
+
+  Map<String, Object> metadataTypes(int offset, int limit) throws Exception {
+    return metadata.types(offset, limit);
+  }
+
+  Map<String, Object> metadataList(String type, String query, int offset, int limit)
+      throws Exception {
+    return metadata.list(type, query, offset, limit);
+  }
+
+  Map<String, Object> metadataGet(String type, String name) throws Exception {
+    return metadata.get(type, name);
+  }
+
+  Map<String, Object> metadataDependencies(String type, String name, int offset, int limit)
+      throws Exception {
+    return metadata.dependencies(type, name, offset, limit);
+  }
+
+  Map<String, Object> testConnection(String name, int timeoutSeconds) throws Exception {
+    return connections.testConnection(name, timeoutSeconds);
+  }
+
+  Map<String, Object> testConnection(String type, String name, int timeoutSeconds)
+      throws Exception {
+    if (type != null && !type.isBlank() && !"rdbms".equalsIgnoreCase(type)) {
+      throw new IllegalArgumentException("Only rdbms connection testing is supported");
+    }
+    return connections.testConnection(name, timeoutSeconds);
+  }
+
+  Map<String, Object> schemaCompare(
+      String connection,
+      String schema,
+      String table,
+      List<Map<String, Object>> expected,
+      int timeoutSeconds)
+      throws Exception {
+    return schemaCompare.compare(connection, schema, table, expected, timeoutSeconds);
+  }
+
+  Map<String, Object> definitionDiff(String pathA, String pathB) throws Exception {
+    return definitionDiff.compare(pathA, pathB);
+  }
+
+  Map<String, Object> impactAnalysis(
+      String table,
+      String metadata,
+      String definition,
+      int maxDepth,
+      int maxEdges,
+      int maxResults)
+      throws Exception {
+    return impactAnalysis.analyze(table, metadata, definition, maxDepth, maxEdges, maxResults);
+  }
+
+  Map<String, Object> environmentDiff(
+      String pathA,
+      String pathB,
+      String runConfigurationA,
+      String runConfigurationB,
+      Map<String, String> parametersA,
+      Map<String, String> parametersB)
+      throws Exception {
+    return environmentDiff.compare(
+        pathA, pathB, runConfigurationA, runConfigurationB, parametersA, parametersB);
+  }
+
+  Map<String, Object> resolveRunConfiguration(String kind, String name) throws Exception {
+    return runConfigurations.resolve(kind, name);
+  }
+
+  Map<String, Object> resolveConfiguration(
+      String path, String runConfiguration, Map<String, String> parameters) throws Exception {
+    return runConfigurations.resolveConfiguration(path, runConfiguration, parameters);
   }
 
   Map<String, Object> plugins(String type, String query, int offset, int limit) {
@@ -423,6 +524,54 @@ final class HopMcpService implements AutoCloseable {
     Map<String, Object> result = executionManager.status(operationId);
     normalizeExecutionPath(result);
     return result;
+  }
+
+  Map<String, Object> executionHistory(
+      String location,
+      String path,
+      String status,
+      Long fromEpochMs,
+      Long toEpochMs,
+      int offset,
+      int limit)
+      throws Exception {
+    requireExecution();
+    return executionRepository.history(location, path, status, fromEpochMs, toEpochMs, offset, limit);
+  }
+
+  Map<String, Object> executionDetail(String location, String executionId) throws Exception {
+    requireExecution();
+    return executionRepository.detail(location, executionId);
+  }
+
+  Map<String, Object> executionChildren(String location, String executionId, int maxDepth, int maxNodes)
+      throws Exception {
+    requireExecution();
+    return executionRepository.children(location, executionId, maxDepth, maxNodes);
+  }
+
+  Map<String, Object> executionMetrics(String location, String executionId) throws Exception {
+    requireExecution();
+    return executionRepository.metrics(location, executionId);
+  }
+
+  Map<String, Object> diagnoseExecution(
+      String location,
+      String executionId,
+      String channelId,
+      boolean includeGeneral,
+      int logFrom,
+      int logTo,
+      int maxPrevious)
+      throws Exception {
+    requireExecution();
+    return diagnosis.diagnose(
+        location, executionId, channelId, includeGeneral, logFrom, logTo, maxPrevious);
+  }
+
+  Map<String, Object> dataProfile(
+      String location, String executionId, String transform, List<String> fields) throws Exception {
+    return executionRepository.profile(location, executionId, transform, fields);
   }
 
   Map<String, Object> stopExecution(String operationId) {

@@ -123,7 +123,23 @@ class HopMcpServerStdioTest {
         assertTrue(tools.contains("hop_test_definition"), tools);
         assertTrue(tools.contains("hop_execute"), tools);
         assertTrue(tools.contains("hop_execution_status"), tools);
+        assertTrue(tools.contains("hop_execution_history"), tools);
+        assertTrue(tools.contains("hop_execution_detail"), tools);
+        assertTrue(tools.contains("hop_execution_children"), tools);
+        assertTrue(tools.contains("hop_execution_metrics"), tools);
+        assertTrue(tools.contains("hop_diagnose_execution"), tools);
+        assertTrue(tools.contains("hop_data_profile"), tools);
         assertTrue(tools.contains("hop_deep_check"), tools);
+        assertTrue(tools.contains("hop_schema_compare"), tools);
+        assertTrue(tools.contains("hop_definition_diff"), tools);
+        assertTrue(tools.contains("hop_impact_analysis"), tools);
+        assertTrue(tools.contains("hop_environment_diff"), tools);
+        assertTrue(tools.contains("hop_metadata_types"), tools);
+        assertTrue(tools.contains("hop_metadata_list"), tools);
+        assertTrue(tools.contains("hop_metadata_get"), tools);
+        assertTrue(tools.contains("hop_metadata_dependencies"), tools);
+        assertTrue(tools.contains("hop_test_connection"), tools);
+        assertTrue(tools.contains("hop_resolve_configuration"), tools);
         assertTrue(tools.contains("hop_mutate_definition"), tools);
         assertFalse(tools.contains("hop_web_request"), tools);
         assertTrue(tools.contains("readOnlyHint"), tools);
@@ -151,6 +167,53 @@ class HopMcpServerStdioTest {
                 "max_scan_files")) {
           assertTrue(config.contains("\"" + property + "\""), config);
         }
+
+        requests.println(toolCall(60, "hop_metadata_types", "{\"limit\":10}"));
+        String metadataTypes = readResponse(reader, responses);
+        assertSuccessfulToolResponse(metadataTypes, 60);
+        assertStructuredOutputConforms(metadataTypes, "hop_metadata_types", outputSchemas);
+        assertTrue(metadataTypes.contains("pipeline-run-configuration"), metadataTypes);
+
+        requests.println(
+            toolCall(
+                61,
+                "hop_metadata_list",
+                "{\"type\":\"pipeline-run-configuration\",\"limit\":10}"));
+        String metadataList = readResponse(reader, responses);
+        assertSuccessfulToolResponse(metadataList, 61);
+        assertStructuredOutputConforms(metadataList, "hop_metadata_list", outputSchemas);
+        assertTrue(metadataList.contains("local"), metadataList);
+
+        requests.println(
+            toolCall(
+                62,
+                "hop_metadata_get",
+                "{\"type\":\"pipeline-run-configuration\",\"name\":\"local\"}"));
+        String metadataGet = readResponse(reader, responses);
+        assertSuccessfulToolResponse(metadataGet, 62);
+        assertStructuredOutputConforms(metadataGet, "hop_metadata_get", outputSchemas);
+        assertTrue(metadataGet.contains("redaction_applied"), metadataGet);
+
+        requests.println(
+            toolCall(
+                63,
+                "hop_metadata_dependencies",
+                "{\"type\":\"pipeline-run-configuration\",\"name\":\"local\",\"limit\":10}"));
+        String metadataDependencies = readResponse(reader, responses);
+        assertSuccessfulToolResponse(metadataDependencies, 63);
+        assertStructuredOutputConforms(
+            metadataDependencies, "hop_metadata_dependencies", outputSchemas);
+
+        requests.println(
+            toolCall(
+                64,
+                "hop_resolve_configuration",
+                "{\"path\":\"valid.hpl\",\"run_configuration\":\"local\",\"parameters\":{}}"));
+        String resolvedRunConfiguration = readResponse(reader, responses);
+        assertSuccessfulToolResponse(resolvedRunConfiguration, 64);
+        assertStructuredOutputConforms(
+            resolvedRunConfiguration, "hop_resolve_configuration", outputSchemas);
+        assertTrue(resolvedRunConfiguration.contains("\"plugin_id\""), resolvedRunConfiguration);
 
         requests.println(toolCall(4, "hop_validate", "{\"path\":\"valid.hpl\"}"));
         String firstValidation = readResponse(reader, responses);
@@ -192,6 +255,46 @@ class HopMcpServerStdioTest {
         String deepCheck = readResponse(reader, responses);
         assertResponseId(deepCheck, 50);
         assertStructuredOutputConforms(deepCheck, "hop_deep_check", outputSchemas);
+
+        requests.println(
+            toolCall(
+                69,
+                "hop_schema_compare",
+                "{\"connection\":\"missing-connection\",\"schema\":\"public\",\"table\":\"customers\",\"expected\":[{\"name\":\"id\",\"type\":\"Integer\"}]}"));
+        String schemaCompare = readResponse(reader, responses);
+        assertResponseId(schemaCompare, 69);
+        assertTrue(schemaCompare.contains("\"isError\":true"), schemaCompare);
+        assertStructuredOutputConforms(schemaCompare, "hop_schema_compare", outputSchemas);
+
+        requests.println(
+            toolCall(
+                70,
+                "hop_definition_diff",
+                "{\"path_a\":\"valid.hpl\",\"path_b\":\"valid.hpl\"}"));
+        String definitionDiff = readResponse(reader, responses);
+        assertSuccessfulToolResponse(definitionDiff, 70);
+        assertStructuredOutputConforms(definitionDiff, "hop_definition_diff", outputSchemas);
+        assertTrue(definitionDiff.contains("\"identical\":true"), definitionDiff);
+
+        requests.println(
+            toolCall(
+                71,
+                "hop_impact_analysis",
+                "{\"definition\":\"valid.hpl\",\"max_depth\":5,\"max_edges\":10,\"max_results\":10}"));
+        String impactAnalysis = readResponse(reader, responses);
+        assertSuccessfulToolResponse(impactAnalysis, 71);
+        assertStructuredOutputConforms(impactAnalysis, "hop_impact_analysis", outputSchemas);
+        assertTrue(impactAnalysis.contains("\"node_count\":1"), impactAnalysis);
+
+        requests.println(
+            toolCall(
+                72,
+                "hop_environment_diff",
+                "{\"path_a\":\"valid.hpl\",\"path_b\":\"valid.hpl\",\"run_configuration_a\":\"local\",\"run_configuration_b\":\"local\"}"));
+        String environmentDiff = readResponse(reader, responses);
+        assertSuccessfulToolResponse(environmentDiff, 72);
+        assertStructuredOutputConforms(environmentDiff, "hop_environment_diff", outputSchemas);
+        assertTrue(environmentDiff.contains("\"identical\":true"), environmentDiff);
 
         requests.println(toolCall(12, "hop_catalog", "{}"));
         String catalog = readResponse(reader, responses);
@@ -388,6 +491,48 @@ class HopMcpServerStdioTest {
         assertSuccessfulToolResponse(stoppedExecution, 58);
         assertStructuredOutputConforms(stoppedExecution, "hop_stop_execution", outputSchemas);
 
+        requests.println(
+            toolCall(
+                65,
+                "hop_execution_history",
+                "{\"location\":\"missing-location\",\"limit\":10}"));
+        String executionHistory = readResponse(reader, responses);
+        assertResponseId(executionHistory, 65);
+        assertTrue(executionHistory.contains("\"isError\":true"), executionHistory);
+
+        requests.println(
+            toolCall(
+                66,
+                "hop_execution_detail",
+                "{\"location\":\"missing-location\",\"execution_id\":\""
+                    + operationId.group(1)
+                    + "\"}"));
+        String executionDetail = readResponse(reader, responses);
+        assertResponseId(executionDetail, 66);
+        assertTrue(executionDetail.contains("\"isError\":true"), executionDetail);
+
+        requests.println(
+            toolCall(
+                67,
+                "hop_execution_children",
+                "{\"location\":\"missing-location\",\"execution_id\":\""
+                    + operationId.group(1)
+                    + "\"}"));
+        String executionChildren = readResponse(reader, responses);
+        assertResponseId(executionChildren, 67);
+        assertTrue(executionChildren.contains("\"isError\":true"), executionChildren);
+
+        requests.println(
+            toolCall(
+                68,
+                "hop_execution_metrics",
+                "{\"location\":\"missing-location\",\"execution_id\":\""
+                    + operationId.group(1)
+                    + "\"}"));
+        String executionMetrics = readResponse(reader, responses);
+        assertResponseId(executionMetrics, 68);
+        assertTrue(executionMetrics.contains("\"isError\":true"), executionMetrics);
+
         requests.println(toolCall(6, "hop_validate", "{\"path\":42}"));
         String invalidInput = readResponse(reader, responses);
         assertResponseId(invalidInput, 6);
@@ -447,10 +592,22 @@ class HopMcpServerStdioTest {
       assertResponseId(tools, 2);
       assertTrue(tools.contains("hop_config"), tools);
       assertTrue(tools.contains("hop_validate"), tools);
+      assertTrue(tools.contains("hop_resolve_configuration"), tools);
       assertFalse(tools.contains("hop_deep_check"), tools);
+      assertFalse(tools.contains("hop_schema_compare"), tools);
+      assertTrue(tools.contains("hop_definition_diff"), tools);
+      assertTrue(tools.contains("hop_impact_analysis"), tools);
+      assertTrue(tools.contains("hop_environment_diff"), tools);
+      assertFalse(tools.contains("hop_test_connection"), tools);
       assertFalse(tools.contains("hop_execute"), tools);
       assertFalse(tools.contains("hop_test_definition"), tools);
       assertFalse(tools.contains("hop_execution_status"), tools);
+      assertFalse(tools.contains("hop_execution_history"), tools);
+      assertFalse(tools.contains("hop_execution_detail"), tools);
+      assertFalse(tools.contains("hop_execution_children"), tools);
+      assertFalse(tools.contains("hop_execution_metrics"), tools);
+      assertFalse(tools.contains("hop_diagnose_execution"), tools);
+      assertTrue(tools.contains("hop_data_profile"), tools);
       assertFalse(tools.contains("hop_component_schema"), tools);
       assertFalse(tools.contains("hop_mutate_definition"), tools);
       assertFalse(tools.contains("hop_web_request"), tools);
