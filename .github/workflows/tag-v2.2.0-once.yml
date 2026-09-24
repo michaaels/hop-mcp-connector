@@ -1,0 +1,32 @@
+name: Tag v2.2.0 once
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: ${{ github.event.head_commit.message == 'ci: create v2.2.0 release tag' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Create validated release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_SHA="cc95da2ffea24c16c2bd35d5589a6abe89b3f5e7"
+          TAG="v2.2.0"
+          test "$(git rev-parse "$RELEASE_SHA^{commit}")" = "$RELEASE_SHA"
+          git show "$RELEASE_SHA:pom.xml" | grep -F '<version>2.2.0</version>'
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists" >&2
+            exit 1
+          fi
+          git tag "$TAG" "$RELEASE_SHA"
+          git push origin "refs/tags/$TAG"
