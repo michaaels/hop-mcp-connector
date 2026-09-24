@@ -8,8 +8,10 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.hop.core.row.RowBuffer;
 import org.apache.hop.core.row.RowMeta;
 import org.apache.hop.core.row.value.ValueMetaInteger;
@@ -99,6 +101,59 @@ class HopExecutionRepositoryTest {
     assertEquals(
         15.0,
         ((Number) ((Map<?, ?>) profileFields.get("TRAFFIC_MB")).get("average")).doubleValue());
+  }
+
+  @Test
+  void stopsHistoryScanAfterTheRequestedPageAndDefersStateReads() throws Exception {
+    Path root = Files.createTempDirectory("hop-mcp-execution-page");
+    Map<String, Execution> executions = new LinkedHashMap<>();
+    Map<String, ExecutionState> states = new LinkedHashMap<>();
+    for (int i = 0; i < 100; i++) {
+      String id = "e" + i;
+      String file =
+          i < 2
+              ? root.resolve("pipelines/target.hpl").toString()
+              : root.resolve("pipelines/other.hpl").toString();
+      executions.put(id, execution(id, file, null, 10_000L - i));
+      states.put(id, state(id, null, false, false, 11_000L - i));
+    }
+
+    AtomicInteger executionReads = new AtomicInteger();
+    AtomicInteger stateReads = new AtomicInteger();
+    IExecutionInfoLocation location =
+        (IExecutionInfoLocation)
+            Proxy.newProxyInstance(
+                IExecutionInfoLocation.class.getClassLoader(),
+                new Class<?>[] {IExecutionInfoLocation.class},
+                (proxy, method, args) -> {
+                  if (method.getName().equals("getExecutionIds")) {
+                    return List.copyOf(executions.keySet());
+                  }
+                  if (method.getName().equals("getExecution")) {
+                    executionReads.incrementAndGet();
+                    return executions.get(String.valueOf(args[0]));
+                  }
+                  if (method.getName().equals("getExecutionState")) {
+                    stateReads.incrementAndGet();
+                    return states.get(String.valueOf(args[0]));
+                  }
+                  if (method.getReturnType() == boolean.class) return false;
+                  if (method.getReturnType() == int.class) return 0;
+                  if (method.getReturnType() == long.class) return 0L;
+                  return null;
+                });
+
+    HopExecutionRepository repository =
+        new HopExecutionRepository(
+            new ProjectFiles(root), null, null, (name, action) -> action.apply(location));
+
+    Map<String, Object> result =
+        repository.history("local", "target.hpl", null, null, null, 0, 1);
+
+    assertEquals(1, result.get("returned"));
+    assertEquals(true, result.get("has_more"));
+    assertEquals(2, executionReads.get());
+    assertEquals(2, stateReads.get());
   }
 
   @Test
