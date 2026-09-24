@@ -1,5 +1,6 @@
 package io.github.michaaels.hop.mcp;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
@@ -8,6 +9,7 @@ import java.nio.file.Path;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.hop.core.HopEnvironment;
 import org.apache.hop.core.variables.Variables;
 import org.apache.hop.execution.Execution;
@@ -61,9 +63,16 @@ class HopDiagnosisServiceTest {
         fakeLocation(
             Map.of("current", current, "previous", previous),
             Map.of("current", currentState, "previous", previousState));
+    AtomicInteger locationSessions = new AtomicInteger();
     HopExecutionRepository repository =
         new HopExecutionRepository(
-            new ProjectFiles(project), null, null, (name, action) -> action.apply(location));
+            new ProjectFiles(project),
+            null,
+            null,
+            (name, action) -> {
+              locationSessions.incrementAndGet();
+              return action.apply(location);
+            });
     HopMetadataService metadata =
         new HopMetadataService(new ProjectFiles(project), metadataProvider);
     HopRunConfigurationService runConfigurations =
@@ -96,6 +105,7 @@ class HopDiagnosisServiceTest {
     assertTrue(String.valueOf(result.get("recommendations")).contains("hop_environment_diff"));
     assertTrue(String.valueOf(result.get("evidence")).contains(SensitiveData.REDACTED));
     assertTrue((Boolean) result.get("redaction_applied"));
+    assertEquals(1, locationSessions.get());
   }
 
   private static void saveLocalConfiguration(MemoryMetadataProvider metadataProvider)
