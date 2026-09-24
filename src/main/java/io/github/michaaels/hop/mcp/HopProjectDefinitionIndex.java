@@ -38,7 +38,7 @@ final class HopProjectDefinitionIndex {
   record Entry(
       String path,
       String kind,
-      String xml,
+      String searchText,
       Map<String, Object> inspection,
       Set<String> tables,
       Set<String> references,
@@ -51,14 +51,17 @@ final class HopProjectDefinitionIndex {
       boolean componentsTruncated) {
 
     boolean containsText(String query) {
-      return containsIgnoreCase(xml, query);
+      return query != null
+          && !query.isBlank()
+          && searchText.contains(query.toLowerCase(Locale.ROOT));
     }
 
     List<String> componentsContaining(String query, int maxItems) {
       if (query == null || query.isBlank() || maxItems < 1) return List.of();
+      String normalized = query.toLowerCase(Locale.ROOT);
       List<String> result = new ArrayList<>();
       for (ComponentText component : components) {
-        if (containsIgnoreCase(component.text(), query)) {
+        if (component.text().contains(normalized)) {
           result.add(component.name());
           if (result.size() >= maxItems) break;
         }
@@ -165,7 +168,7 @@ final class HopProjectDefinitionIndex {
     return new Entry(
         relative,
         kind(relative),
-        xml,
+        xml.toLowerCase(Locale.ROOT),
         inspection,
         Collections.unmodifiableSet(new LinkedHashSet<>(tables)),
         Collections.unmodifiableSet(new LinkedHashSet<>(references)),
@@ -193,7 +196,9 @@ final class HopProjectDefinitionIndex {
         String name = childText(element, "name");
         if (name == null || name.isBlank()) continue;
         String text = element.getTextContent();
-        result.add(new ComponentText(name, text == null ? "" : text));
+        result.add(
+            new ComponentText(
+                name, text == null ? "" : text.toLowerCase(Locale.ROOT)));
       }
       if (truncated) break;
     }
@@ -205,17 +210,6 @@ final class HopProjectDefinitionIndex {
     if (nodes.getLength() == 0) return null;
     Node node = nodes.item(0);
     return node == null || node.getTextContent() == null ? null : node.getTextContent().trim();
-  }
-
-  static boolean containsIgnoreCase(String value, String query) {
-    if (value == null || query == null || query.isEmpty() || query.length() > value.length()) {
-      return false;
-    }
-    int max = value.length() - query.length();
-    for (int i = 0; i <= max; i++) {
-      if (value.regionMatches(true, i, query, 0, query.length())) return true;
-    }
-    return false;
   }
 
   private static String kind(String path) {
