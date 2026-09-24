@@ -42,6 +42,28 @@ class HopImpactAnalysisServiceTest {
   }
 
   @Test
+  void returnsAffectedEdgesEvenWhenUnrelatedProjectEdgesAppearFirst() throws Exception {
+    Files.writeString(
+        project.resolve("a0.hwf"), workflow("a0-child.hwf", "OTHER"));
+    Files.writeString(project.resolve("a0-child.hwf"), workflow("", "OTHER"));
+    Files.writeString(
+        project.resolve("a1.hwf"), workflow("a1-child.hwf", "OTHER"));
+    Files.writeString(project.resolve("a1-child.hwf"), workflow("", "OTHER"));
+    Files.writeString(
+        project.resolve("target.hpl"),
+        pipeline("select * from DWH.DIM_SITE", "", "DWH_PROD"));
+    Files.writeString(
+        project.resolve("z-parent.hwf"), workflow("target.hpl", "DWH_PROD"));
+
+    Map<String, Object> result =
+        new HopImpactAnalysisService(new ProjectFiles(project))
+            .analyze("DWH.DIM_SITE", null, null, 5, 2, 20);
+
+    assertTrue(String.valueOf(result.get("dependencies")).contains("z-parent.hwf"));
+    assertTrue(String.valueOf(result.get("dependencies")).contains("target.hpl"));
+  }
+
+  @Test
   void supportsMetadataAndDefinitionSelectorsAndRejectsUnsafeInputs() throws Exception {
     Files.writeString(
         project.resolve("load.hpl"),
