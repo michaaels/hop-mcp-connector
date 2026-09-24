@@ -8,8 +8,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -314,15 +312,9 @@ final class HopSchemaCompareService {
         Const.HOP_DATABASE_CONNECTION_TIMEOUT, Integer.toString(timeoutSeconds));
     boundedVariables.setVariable(
         Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
-    ExecutorService executor =
-        Executors.newSingleThreadExecutor(
-            runnable -> {
-              Thread thread = new Thread(runnable, "hop-mcp-schema-compare");
-              thread.setDaemon(true);
-              return thread;
-            });
     Future<SchemaReadResult> future =
-        executor.submit(() -> schemaLoader.load(connection, boundedVariables, schema, table));
+        HopDeepCheckExecutor.submit(
+            () -> schemaLoader.load(connection, boundedVariables, schema, table));
     try {
       return future.get(timeoutSeconds, TimeUnit.SECONDS);
     } catch (TimeoutException timeout) {
@@ -336,8 +328,6 @@ final class HopSchemaCompareService {
       Throwable cause = execution.getCause();
       if (cause instanceof Exception exception) throw exception;
       throw new IllegalStateException("Native schema inspection failed", cause);
-    } finally {
-      executor.shutdownNow();
     }
   }
 
