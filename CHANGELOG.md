@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.1 - 2026-09-24
+
+- Added a bounded incremental `HopProjectDefinitionIndex` shared by metadata dependency and impact analysis so unchanged pipeline/workflow definitions are reused and only modified definitions are reparsed.
+- Removed repeated XML parsing and redundant filesystem round trips from indexed ETL inspection paths; impact-analysis edges are now generated from the affected subgraph instead of consuming the edge budget on unrelated project relationships.
+- Optimized native execution-history paging to stop after the requested page is satisfied and defer state reads until path/date filters match.
+- Reworked execution diagnosis to reuse one native Execution Information Location session for detail, metrics, and previous-execution evidence.
+- Added global profiling budgets of 500,000 field evaluations and 20,000 tracked distinct values per request in addition to the existing row/field bounds.
+- Reused a shared bounded daemon worker for explicitly authorized connection and schema deep checks instead of allocating one executor per request.
+- Expanded deterministic regression coverage to 87 tests, including incremental index reuse, affected-graph edge selection, bounded execution-history backend reads, and single-session diagnosis.
+- Benchmarked `v2.2.0` against `2.2.1` on the same GitHub Actions runner with Java 21.0.12.1, 4 available cores, and ~4 GiB max heap. For a synthetic 5,000-definition project, repeated warm impact analysis improved from 944 ms to 92 ms (~10.3x), and re-analysis after one unrelated file change improved from 942 ms to 98 ms (~9.6x). Cold indexing increased from 959 ms to 1,346 ms because the reusable index is built up front.
+- Preserved MCP 2025-11-25 conformance regression gating, clean Apache Hop 2.19 smoke coverage, Apache Hop 2.20 snapshot compatibility, STDIO production transport, security bounds, redaction, Marketplace packaging, SBOMs, checksums, and release attestations.
+
 ## 2.2.0 - 2026-09-24
 
 - Added native Apache Hop metadata discovery and inspection through `hop_metadata_types`, `hop_metadata_list`, `hop_metadata_get`, and bounded metadata dependency analysis.

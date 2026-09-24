@@ -54,13 +54,13 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 | 2.0.0 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.1.0 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.0 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
-| 2.2.1-SNAPSHOT (`main`) | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| 2.2.1 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 
 The MCP Java SDK 2.0.1 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Installation
 
-Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. The published 2.2.0 release artifact is `hop-mcp-connector-2.2.0.zip`; current `main` builds `target/hop-mcp-connector-2.2.1-SNAPSHOT.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
+Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. The 2.2.1 release artifact is `hop-mcp-connector-2.2.1.zip`; SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
 
 Hop runtime libraries (`hop-core`, `hop-engine`, and `hop-ui`) are provided by Hop and are not included in the ZIP. The ZIP includes the project license and notice.
 
@@ -126,6 +126,12 @@ The metadata tools use Apache Hop's native metadata provider, serializers, and m
 
 Example requests include `{"type":"rdbms","name":"DWH_PROD"}` for a connection, `{"connection":"DWH_PROD","schema":"public","table":"customers","expected":[{"name":"id","type":"Integer","length":10,"nullable":false}]}` for schema comparison, `{"path_a":"pipelines/load_sales_old.hpl","path_b":"pipelines/load_sales.hpl"}` for semantic definition diff, `{"table":"DWH.DIM_SITE","max_depth":10,"max_edges":100,"max_results":50}` for impact analysis, `{"path_a":"pipelines/load_sales_dev.hpl","path_b":"pipelines/load_sales_prod.hpl","run_configuration_a":"Local-DEV","run_configuration_b":"Local-PROD"}` for environment comparison, `{"location":"EXECUTION_DB","execution_id":"...","channel_id":"...","max_previous":10}` for evidence-based diagnosis, `{"type":"pipeline-run-configuration","query":"prod"}` for run configurations, and `{"path":"pipelines/load_sales.hpl","run_configuration":"Local-PROD","parameters":{"FECHA_INICIO":"2026-09-01"}}` for effective resolution. Native execution reads require `location` and `execution_id`; connection testing and schema comparison remain deep-check gated. Configuration resolution, semantic diff, impact analysis and environment comparison are read-only. Diagnosis and stored execution-data profiling require `--allow-execution` because they can expose operational execution evidence or sampled row values. Field lineage remains intentionally unavailable until Hop exposes a reliable native field-mapping contract.
 
+### Performance characteristics
+
+`2.2.1` adds an incremental in-memory project-definition index shared by metadata dependency and impact analysis. Unchanged `.hpl`/`.hwf` definitions are reused based on bounded filesystem metadata, while changed definitions are reparsed individually. Execution history also stops once the requested page is satisfied, diagnosis reuses a single Execution Information Location session, stored profiling has global work budgets, and authorized deep checks share a bounded worker.
+
+A same-runner synthetic benchmark on GitHub Actions (Java 21.0.12.1, 4 available cores, approximately 4 GiB max heap) compared `v2.2.0` with `2.2.1` across 1,000, 2,500, and 5,000 definitions. At 5,000 definitions, repeated warm impact analysis improved from 944 ms to 92 ms (about 10.3x), and re-analysis after changing one unrelated definition improved from 942 ms to 98 ms (about 9.6x). The initial cold 5,000-definition index build increased from 959 ms to 1,346 ms because `2.2.1` builds the reusable index. These figures are synthetic regression evidence, not a universal latency guarantee.
+
 ## Live UI
 
 The optional Tools menu adapter synchronizes native Desktop or Hop Web/RAP sessions with same-project semantic changes. It is session-scoped, protects dirty tabs, uses bounded project-local events in `.hop-mcp/`, and opens no network listener.
@@ -157,7 +163,7 @@ The CI workflow also checks the Marketplace ZIP layout, license and notice files
 
 No official MCP Registry `server.json` is included: the registry's current package types do not include Apache Hop Marketplace ZIPs. MCPB is a separate package format and is not used to label this Marketplace artifact.
 
-Inspect the current development package with `unzip -l target/hop-mcp-connector-2.2.1-SNAPSHOT.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+Inspect the release package with `unzip -l target/hop-mcp-connector-2.2.1.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
 
 ## Security reporting
 

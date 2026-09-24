@@ -1,34 +1,43 @@
-# MCP Connector for Apache Hop 2.2.0
+# MCP Connector for Apache Hop 2.2.1
 
-Released on 2026-09-24. This release expands the connector from a hardened Apache Hop MCP integration into a broader production-ETL operations surface while retaining Java 21, the Apache Hop 2.19.0 compile baseline, the Hop 2.20.0-SNAPSHOT compatibility profile, MCP Java SDK 2.0.1, and protocol revision 2025-11-25 over STDIO.
+Released on 2026-09-24. This maintenance release focuses on scalability and repeated-query efficiency for production ETL projects while preserving the public MCP tool contract, Java 21 baseline, Apache Hop 2.19.0 compile baseline, Hop 2.20.0-SNAPSHOT compatibility profile, MCP Java SDK 2.0.1, protocol revision 2025-11-25, and production STDIO transport.
 
-## Production ETL capabilities
+## Performance and scalability
 
-- Added native metadata discovery and inspection: `hop_metadata_types`, `hop_metadata_list`, `hop_metadata_get`, and bounded metadata dependency analysis.
-- Added explicit deep-check tools for RDBMS connection testing and table schema comparison with bounded timeouts and structured schema-drift results.
-- Added native run-configuration resolution, semantic definition diff, environment comparison, and bounded project impact analysis.
-- Added native Execution Information Location reads for history, detail, child executions, component metrics, stored execution-data profiling, and evidence-based execution diagnosis.
-- Kept Apache Hop as the source of truth: the new operations reuse Hop metadata providers, serializers, run configurations, execution information, `PipelineMeta`, `WorkflowMeta`, and database APIs instead of introducing a parallel ETL runtime.
+- Added a bounded incremental `HopProjectDefinitionIndex` shared by metadata dependency and impact analysis. Unchanged `.hpl`/`.hwf` definitions are reused across MCP calls, while modified definitions are reparsed individually.
+- Cached normalized definition/component search text and reused parsed Hop XML documents to avoid repeated XML parsing in hot inspection paths.
+- Impact analysis now builds output edges only from the affected subgraph, removes the unused outbound graph, and avoids repeated filesystem existence/real-path checks for already indexed project references.
+- Execution history now applies path/date filters before loading execution state and stops once the requested page plus the has-more sentinel has been established.
+- Evidence-based diagnosis reuses one native Execution Information Location session for execution detail, component metrics, and previous-execution history instead of repeatedly initializing and closing the backend.
+- Stored execution-data profiling now enforces global work budgets of 500,000 field evaluations and 20,000 tracked distinct values per request, in addition to existing row, field, sample, and response limits.
+- Connection tests and schema comparison reuse a shared bounded daemon deep-check worker rather than creating one executor per request.
 
-## Security and correctness
+## Benchmark evidence
 
-- Stored execution-data profiling now requires `--allow-execution` because it can return operational row samples.
-- Profiling counts physical rows once regardless of the number of requested fields and reports availability, completeness, truncation, distinct bounds, and redacted samples accurately.
-- Impact analysis now follows dependent definitions, resolves project/Hop path variables, avoids prefix matches such as `DIM_SITE` matching `DIM_SITE_ARCHIVE`, and returns only dependency edges inside the affected subgraph.
-- Existing deny-by-default capability gates, project-root confinement, secure XML parsing, redaction, response budgets, deep-check authorization, transactional semantic mutation, SHA-256 preconditions, protected backups, and rollback remain in force.
+A same-runner synthetic benchmark compared `v2.2.0` with this release on GitHub Actions using Java 21.0.12.1, 4 available CPU cores, and approximately 4 GiB maximum heap. The workload generated projects with 1,000, 2,500, and 5,000 definitions and a 64-node affected dependency chain.
 
-## MCP conformance and CI
+| Definitions | Scenario | v2.2.0 | 2.2.1 | Relative improvement |
+|---:|---|---:|---:|---:|
+| 1,000 | repeated warm impact analysis | 352 ms | 26 ms | ~13.5x |
+| 1,000 | one unrelated definition changed | 242 ms | 20 ms | ~12.1x |
+| 2,500 | repeated warm impact analysis | 533 ms | 49 ms | ~10.9x |
+| 2,500 | one unrelated definition changed | 471 ms | 45 ms | ~10.5x |
+| 5,000 | repeated warm impact analysis | 944 ms | 92 ms | ~10.3x |
+| 5,000 | one unrelated definition changed | 942 ms | 98 ms | ~9.6x |
 
-- MCP Conformance 2025-11-25 remains a required CI gate.
-- The official `@modelcontextprotocol/conformance@0.2.0-alpha.11` runner executes the frozen `2025-11-25` requirement set against a localhost-only test adapter that reuses the production server definition, registry, schemas, and handlers.
-- Known scenarios belonging to unsupported MCP capabilities such as prompts, resources, completion, sampling, elicitation, and conformance fixture tools are tracked through the runner's official `--expected-failures` mechanism. New unexpected failures and stale baseline entries fail CI.
-- Production transport remains STDIO.
-- The verified release build runs 84 tests and requires the main build, clean Apache Hop 2.19 smoke, Apache Hop 2.20 compatibility, and MCP Conformance jobs to succeed.
+The cold 5,000-definition run changed from 959 ms in `v2.2.0` to 1,346 ms in `2.2.1`: the new release intentionally spends more work on the initial reusable index so subsequent calls and incremental changes are substantially cheaper. These measurements are synthetic regression evidence from workflow run `36013572630`, not a universal production-latency guarantee.
 
-## Build and dependency maintenance
+## Validation
 
-- Updated JUnit Jupiter to 6.1.3 and refreshed Tomcat and Maven build tooling while keeping `fmt-maven-plugin` at the repository's established 2.25 formatting baseline.
-- Release packaging continues to validate the Marketplace ZIP layout, Jandex index, embedded version, legal files, and exclusion of Apache Hop runtime jars.
-- The release publishes the Marketplace ZIP, CycloneDX JSON/XML SBOMs, SHA-256 checksums, provenance attestation, and SBOM attestation.
+- The verified mainline build runs 87 tests with zero failures/errors/skips.
+- Clean Apache Hop 2.19 installation smoke remains required.
+- Apache Hop 2.20.0-SNAPSHOT compatibility remains required.
+- MCP Conformance 2025-11-25 remains a required regression gate using the official runner and explicit expected-failures baseline.
+- Production remains STDIO; the localhost HTTP adapter remains test-only.
+- Existing deny-by-default capability gates, project-root confinement, secure XML parsing, secret redaction, response budgets, transactional semantic mutation, SHA-256 preconditions, protected backups, and rollback remain unchanged.
 
-The Maven POM, embedded version resources, release notes, Marketplace catalog entries, artifact filename, and `v2.2.0` tag are aligned at `2.2.0`.
+## Release artifacts
+
+The release publishes the Marketplace ZIP, CycloneDX JSON/XML SBOMs, SHA-256 checksums, provenance attestation, and SBOM attestation. The package validation continues to require Jandex metadata, legal files, embedded version alignment, and exclusion of Apache Hop runtime jars.
+
+The Maven POM, embedded version resource, release notes, Marketplace catalog entries, artifact filename, and `v2.2.1` tag are aligned at `2.2.1`.
