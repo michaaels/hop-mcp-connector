@@ -1,46 +1,47 @@
 package io.github.michaaels.hop.mcp;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import org.apache.hop.core.variables.IVariables;
 
-/** Bounded project-local impact graph built from Hop definitions and their references. */
+/** Bounded project-local impact graph built from an incremental definition index. */
 final class HopImpactAnalysisService {
   static final int MAX_DEPTH = 64;
   static final int MAX_EDGES = 500;
   static final int MAX_RESULTS = ProjectFiles.MAX_STRUCTURED_RESULTS;
   static final int MAX_TABLE_REFERENCES = 200;
   static final int MAX_METADATA_REFERENCES = 200;
-  static final int MAX_DEFINITION_REFERENCES = 200;
   static final int MAX_PATH_LENGTH = 4096;
   static final int MAX_SELECTOR_LENGTH = 1024;
+  static final int MAX_GRAPH_REFERENCES = 50_000;
 
   private final ProjectFiles files;
   private final IVariables variables;
+  private final HopProjectDefinitionIndex definitionIndex;
 
   HopImpactAnalysisService(ProjectFiles files) {
-    this(files, null);
+    this(files, null, new HopProjectDefinitionIndex(files));
   }
 
   HopImpactAnalysisService(ProjectFiles files, IVariables variables) {
-    this.files = Objects.requireNonNull(files, "files");
+    this(files, variables, new HopProjectDefinitionIndex(files));
+  }
+
+  HopImpactAnalysisService(
+      ProjectFiles files, IVariables variables, HopProjectDefinitionIndex definitionIndex) {
+    this.files = files;
     this.variables = variables;
+    this.definitionIndex = definitionIndex;
   }
 
   Map<String, Object> analyze(
@@ -52,36 +53,37 @@ final class HopImpactAnalysisService {
       Path requested = files.resolve(selector.definition());
       selector = Selector.definition(files.relative(requested));
     }
-    DefinitionLoad loaded = loadDefinitions();
-    Map<String, Definition> definitions = loaded.definitions();
+
+    HopProjectDefinitionIndex.Snapshot snapshot = definitionIndex.snapshot();
+    Map<String, HopProjectDefinitionIndex.Entry> definitions =
+        new LinkedHashMap<>(snapshot.definitions());
     if (selector.isDefinition() && !definitions.containsKey(selector.definition())) {
-      Definition requestedDefinition = readDefinition(files.resolve(selector.definition()));
-      definitions.put(requestedDefinition.path(), requestedDefinition);
+      HopProjectDefinitionIndex.Entry requested =
+          definitionIndex.readSingle(files.resolve(selector.definition()));
+      definitions.put(requested.path(), requested);
     }
-    Map<String, Set<String>> outbound = new LinkedHashMap<>();
+
     Map<String, Set<String>> inbound = new LinkedHashMap<>();
-    List<Map<String, Object>> dependencyEdges = new ArrayList<>();
-    boolean referenceTruncated = false;
-    for (Definition current : definitions.values()) {
-      referenceTruncated |= current.referencesTruncated() || current.tablesTruncated();
+    boolean referenceTruncated = snapshot.truncated();
+    boolean graphTruncated = false;
+    int graphReferences = 0;
+    graphBuild:
+    for (HopProjectDefinitionIndex.Entry current : definitions.values()) {
+      referenceTruncated |=
+          current.referencesTruncated()
+              || current.tablesTruncated()
+              || current.componentsTruncated();
       for (String reference : current.references()) {
+        if (graphReferences >= MAX_GRAPH_REFERENCES) {
+          graphTruncated = true;
+          break graphBuild;
+        }
         Path resolved = resolveReference(current.path(), reference);
         if (resolved == null) continue;
         String target = files.relative(resolved);
-        outbound.computeIfAbsent(current.path(), ignored -> new LinkedHashSet<>()).add(target);
+        if (!definitions.containsKey(target)) continue;
         inbound.computeIfAbsent(target, ignored -> new LinkedHashSet<>()).add(current.path());
-        if (dependencyEdges.size() < maxEdges) {
-          Definition targetDefinition = definitions.get(target);
-          Map<String, Object> edge = new LinkedHashMap<>();
-          edge.put("from", current.path());
-          edge.put("to", target);
-          edge.put("type", "definition_reference");
-          edge.put("from_kind", current.kind());
-          edge.put("to_kind", targetDefinition == null ? kind(target) : targetDefinition.kind());
-          dependencyEdges.add(edge);
-        } else {
-          referenceTruncated = true;
-        }
+        graphReferences++;
       }
     }
 
@@ -93,27 +95,29 @@ final class HopImpactAnalysisService {
     List<Map<String, Object>> metadataReferences =
         metadataReferences(selector, traversal.nodes(), definitions);
     List<Map<String, Object>> lineage = lineage(traversal.nodes(), definitions, maxEdges);
-    List<Map<String, Object>> pipelineWorkflowReferences =
-        pipelineWorkflowReferences(traversal.nodes(), dependencyEdges);
+    EdgeOutput dependencies = dependencyEdges(traversal.nodes(), definitions, maxEdges);
+
     boolean truncated =
         referenceTruncated
-            || loaded.truncated()
+            || graphTruncated
             || traversal.truncated()
+            || dependencies.truncated()
             || tableReferences.size() >= MAX_TABLE_REFERENCES
             || metadataReferences.size() >= MAX_METADATA_REFERENCES
             || lineage.size() >= maxEdges;
+
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("query", selector.output());
     result.put("nodes", nodes);
-    result.put("dependencies", pipelineWorkflowReferences);
+    result.put("dependencies", dependencies.edges());
     result.put("metadata_references", metadataReferences);
     result.put("table_references", tableReferences);
-    result.put("pipeline_workflow_references", pipelineWorkflowReferences);
+    result.put("pipeline_workflow_references", dependencies.edges());
     result.put("lineage", lineage);
     result.put("node_count", traversal.nodes().size());
     result.put("returned_nodes", nodes.size());
-    result.put("edge_count", pipelineWorkflowReferences.size());
-    result.put("returned_edges", pipelineWorkflowReferences.size());
+    result.put("edge_count", dependencies.edges().size());
+    result.put("returned_edges", dependencies.edges().size());
     result.put("max_depth_applied", maxDepth);
     result.put("max_edges_applied", maxEdges);
     result.put("max_results_applied", maxResults);
@@ -124,55 +128,15 @@ final class HopImpactAnalysisService {
     return result;
   }
 
-  private DefinitionLoad loadDefinitions() throws Exception {
-    Map<String, Definition> result = new LinkedHashMap<>();
-    boolean truncated = false;
-    long scannedBytes = 0;
-    var scan = files.definitionScan(ProjectFiles.MAX_SCAN_FILES);
-    List<Path> paths = new ArrayList<>(scan.files());
-    paths.sort(Comparator.comparing(files::relative));
-    for (Path path : paths) {
-      long size = Files.size(path);
-      if (size > ProjectFiles.MAX_READ_BYTES
-          || size > ProjectFiles.MAX_TOTAL_SCAN_BYTES - scannedBytes) {
-        truncated = true;
-        continue;
-      }
-      Definition definition = readDefinition(path);
-      scannedBytes += definition.bytes();
-      result.put(definition.path(), definition);
-    }
-    truncated |= scan.scanLimitReached() || scan.resultsTruncated();
-    return new DefinitionLoad(result, truncated);
-  }
-
-  private Definition readDefinition(Path path) throws Exception {
-    byte[] content = files.readBytes(path);
-    String xml = decode(content);
-    Map<String, Object> inspection = HopXml.inspect(files.relative(path), xml);
-    Set<String> tables = HopXml.findTables(xml, null, MAX_TABLE_REFERENCES + 1);
-    Set<String> references = HopXml.references(xml, MAX_DEFINITION_REFERENCES + 1);
-    return new Definition(
-        files.relative(path),
-        kind(path.getFileName().toString()),
-        xml,
-        inspection,
-        tables,
-        references,
-        content.length,
-        tables.size() > MAX_TABLE_REFERENCES,
-        references.size() > MAX_DEFINITION_REFERENCES);
-  }
-
   private static Set<String> matchingDefinitions(
-      Map<String, Definition> definitions, Selector selector) {
+      Map<String, HopProjectDefinitionIndex.Entry> definitions, Selector selector) {
     Set<String> result = new LinkedHashSet<>();
-    for (Definition definition : definitions.values()) {
+    for (HopProjectDefinitionIndex.Entry definition : definitions.values()) {
       if (selector.isDefinition() && selector.definition().equals(definition.path())) {
         result.add(definition.path());
       } else if (selector.isTable() && matchesTable(definition.tables(), selector.table())) {
         result.add(definition.path());
-      } else if (selector.isMetadata() && matchesMetadata(definition.xml(), selector.metadata())) {
+      } else if (selector.isMetadata() && definition.containsText(selector.metadata())) {
         result.add(definition.path());
       }
     }
@@ -182,7 +146,7 @@ final class HopImpactAnalysisService {
   private static Traversal traverse(
       Set<String> initial,
       Map<String, Set<String>> graph,
-      Map<String, Definition> definitions,
+      Map<String, HopProjectDefinitionIndex.Entry> definitions,
       int maxDepth,
       int maxEdges,
       int maxResults) {
@@ -194,6 +158,7 @@ final class HopImpactAnalysisService {
         queue.add(new QueueItem(path, 0));
       }
     }
+
     int traversedEdges = 0;
     boolean truncated = false;
     while (!queue.isEmpty()) {
@@ -218,10 +183,11 @@ final class HopImpactAnalysisService {
   }
 
   private static List<Map<String, Object>> nodeOutput(
-      Map<String, Integer> nodes, Map<String, Definition> definitions) {
+      Map<String, Integer> nodes,
+      Map<String, HopProjectDefinitionIndex.Entry> definitions) {
     List<Map<String, Object>> result = new ArrayList<>();
     for (Map.Entry<String, Integer> node : nodes.entrySet()) {
-      Definition definition = definitions.get(node.getKey());
+      HopProjectDefinitionIndex.Entry definition = definitions.get(node.getKey());
       if (definition == null) continue;
       result.add(
           Map.of(
@@ -233,11 +199,13 @@ final class HopImpactAnalysisService {
   }
 
   private static List<Map<String, Object>> tableReferences(
-      Selector selector, Map<String, Integer> nodes, Map<String, Definition> definitions) {
+      Selector selector,
+      Map<String, Integer> nodes,
+      Map<String, HopProjectDefinitionIndex.Entry> definitions) {
     if (!selector.isTable()) return List.of();
     List<Map<String, Object>> result = new ArrayList<>();
     for (String path : nodes.keySet()) {
-      Definition definition = definitions.get(path);
+      HopProjectDefinitionIndex.Entry definition = definitions.get(path);
       if (definition == null) continue;
       for (String table : definition.tables()) {
         if (matchesTable(Set.of(table), selector.table())) {
@@ -250,12 +218,14 @@ final class HopImpactAnalysisService {
   }
 
   private static List<Map<String, Object>> metadataReferences(
-      Selector selector, Map<String, Integer> nodes, Map<String, Definition> definitions) {
+      Selector selector,
+      Map<String, Integer> nodes,
+      Map<String, HopProjectDefinitionIndex.Entry> definitions) {
     if (!selector.isMetadata()) return List.of();
     List<Map<String, Object>> result = new ArrayList<>();
     for (String path : nodes.keySet()) {
-      Definition definition = definitions.get(path);
-      if (definition != null && matchesMetadata(definition.xml(), selector.metadata())) {
+      HopProjectDefinitionIndex.Entry definition = definitions.get(path);
+      if (definition != null && definition.containsText(selector.metadata())) {
         result.add(Map.of("path", path, "metadata", safe(selector.metadata())));
         if (result.size() >= MAX_METADATA_REFERENCES) return result;
       }
@@ -264,10 +234,12 @@ final class HopImpactAnalysisService {
   }
 
   private static List<Map<String, Object>> lineage(
-      Map<String, Integer> nodes, Map<String, Definition> definitions, int maxEdges) {
+      Map<String, Integer> nodes,
+      Map<String, HopProjectDefinitionIndex.Entry> definitions,
+      int maxEdges) {
     List<Map<String, Object>> result = new ArrayList<>();
     for (String path : nodes.keySet()) {
-      Definition definition = definitions.get(path);
+      HopProjectDefinitionIndex.Entry definition = definitions.get(path);
       if (definition == null) continue;
       Object value = definition.inspection().get("hops");
       if (!(value instanceof List<?> hops)) continue;
@@ -285,26 +257,45 @@ final class HopImpactAnalysisService {
     return result;
   }
 
-  private static List<Map<String, Object>> pipelineWorkflowReferences(
-      Map<String, Integer> nodes, List<Map<String, Object>> dependencies) {
+  private EdgeOutput dependencyEdges(
+      Map<String, Integer> nodes,
+      Map<String, HopProjectDefinitionIndex.Entry> definitions,
+      int maxEdges) {
     Set<String> included = nodes.keySet();
     List<Map<String, Object>> result = new ArrayList<>();
-    for (Map<String, Object> dependency : dependencies) {
-      if (included.contains(dependency.get("from")) && included.contains(dependency.get("to"))) {
-        result.add(dependency);
+    boolean truncated = false;
+    for (String source : included) {
+      HopProjectDefinitionIndex.Entry current = definitions.get(source);
+      if (current == null) continue;
+      for (String reference : current.references()) {
+        Path resolved = resolveReference(source, reference);
+        if (resolved == null) continue;
+        String target = files.relative(resolved);
+        if (!included.contains(target)) continue;
+        if (result.size() >= maxEdges) {
+          truncated = true;
+          return new EdgeOutput(result, true);
+        }
+        HopProjectDefinitionIndex.Entry targetDefinition = definitions.get(target);
+        Map<String, Object> edge = new LinkedHashMap<>();
+        edge.put("from", source);
+        edge.put("to", target);
+        edge.put("type", "definition_reference");
+        edge.put("from_kind", current.kind());
+        edge.put(
+            "to_kind",
+            targetDefinition == null ? kind(target) : targetDefinition.kind());
+        result.add(edge);
       }
     }
-    return result;
-  }
-
-  private static <T> List<T> bounded(List<T> values, int max) {
-    return values.size() <= max ? values : new ArrayList<>(values.subList(0, max));
+    return new EdgeOutput(result, truncated);
   }
 
   private Path resolveReference(String source, String reference) {
     try {
-      if (reference == null || reference.isBlank() || reference.length() > MAX_PATH_LENGTH)
+      if (reference == null || reference.isBlank() || reference.length() > MAX_PATH_LENGTH) {
         return null;
+      }
       String resolvedReference = reference.replace("${PROJECT_HOME}", files.root().toString());
       if (variables != null) resolvedReference = variables.resolve(resolvedReference);
       if (resolvedReference == null || resolvedReference.isBlank()) return null;
@@ -312,7 +303,8 @@ final class HopImpactAnalysisService {
       Path sourceFolder = sourcePath.getParent();
       if (sourceFolder == null) return null;
       resolvedReference =
-          resolvedReference.replace("${Internal.Entry.Current.Folder}", sourceFolder.toString());
+          resolvedReference.replace(
+              "${Internal.Entry.Current.Folder}", sourceFolder.toString());
       Path raw = Path.of(resolvedReference);
       Path candidate = raw.isAbsolute() ? raw : sourceFolder.resolve(raw);
       candidate = candidate.normalize();
@@ -330,13 +322,13 @@ final class HopImpactAnalysisService {
   private static Selector selector(String table, String metadata, String definition)
       throws Exception {
     int count = count(table) + count(metadata) + count(definition);
-    if (count != 1)
+    if (count != 1) {
       throw new IllegalArgumentException(
           "Exactly one of table, metadata or definition is required");
+    }
     if (count(table) == 1) return Selector.table(requireSelector(table, "table"));
     if (count(metadata) == 1) return Selector.metadata(requireSelector(metadata, "metadata"));
-    String path = requireSelector(definition, "definition");
-    return Selector.definition(path);
+    return Selector.definition(requireSelector(definition, "definition"));
   }
 
   private static int count(String value) {
@@ -370,19 +362,6 @@ final class HopImpactAnalysisService {
               String value = table.toLowerCase(Locale.ROOT);
               return value.equals(normalized) || value.endsWith("." + normalized);
             });
-  }
-
-  private static boolean matchesMetadata(String xml, String query) {
-    return xml.toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT));
-  }
-
-  private static String decode(byte[] content) throws CharacterCodingException {
-    return StandardCharsets.UTF_8
-        .newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(ByteBuffer.wrap(content))
-        .toString();
   }
 
   private static String kind(String name) {
@@ -430,20 +409,9 @@ final class HopImpactAnalysisService {
     }
   }
 
-  private record Definition(
-      String path,
-      String kind,
-      String xml,
-      Map<String, Object> inspection,
-      Set<String> tables,
-      Set<String> references,
-      long bytes,
-      boolean tablesTruncated,
-      boolean referencesTruncated) {}
-
-  private record DefinitionLoad(Map<String, Definition> definitions, boolean truncated) {}
-
   private record QueueItem(String path, int depth) {}
 
   private record Traversal(Map<String, Integer> nodes, boolean truncated) {}
+
+  private record EdgeOutput(List<Map<String, Object>> edges, boolean truncated) {}
 }
