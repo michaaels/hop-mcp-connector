@@ -224,29 +224,7 @@ final class HopExecutionRepository {
     validateExecutionId(executionId);
     return (Map<String, Object>)
         locationAccess.with(
-            locationName,
-            location -> {
-              Execution execution = location.getExecution(executionId);
-              if (execution == null) {
-                throw McpException.validation(
-                    "EXECUTION_NOT_FOUND", "The native execution was not found.");
-              }
-              ExecutionState state = location.getExecutionState(executionId, false);
-              Map<String, Object> result = new LinkedHashMap<>();
-              result.put("location", locationName);
-              result.put("execution", summary(execution, state));
-              result.put("state", state == null ? stateRow(executionId) : stateRow(state));
-              result.put(
-                  "children_count",
-                  state == null || state.getChildIds() == null
-                      ? 0
-                      : Math.min(MAX_CHILD_IDS, state.getChildIds().size()));
-              result.put("metrics", state == null ? List.of() : metricRows(state.getMetrics()));
-              result.put("details", state == null ? Map.of() : boundedDetails(state.getDetails()));
-              result.put("errors", state == null ? List.of() : errorDetails(state));
-              result.put("logging_available", false);
-              return result;
-            });
+            locationName, location -> detailAtLocation(location, locationName, executionId));
   }
 
   Map<String, Object> children(String locationName, String executionId, int maxDepth, int maxNodes)
@@ -315,29 +293,37 @@ final class HopExecutionRepository {
     validateExecutionId(executionId);
     return (Map<String, Object>)
         locationAccess.with(
+            locationName, location -> metricsAtLocation(location, locationName, executionId));
+  }
+
+  Map<String, Object> diagnosticSnapshot(
+      String locationName, String executionId, int previousLimit) throws Exception {
+    validateLocation(locationName);
+    validateExecutionId(executionId);
+    if (previousLimit < 1 || previousLimit > MAX_HISTORY_RESULTS) {
+      throw new IllegalArgumentException(
+          "previous_limit must be between 1 and " + MAX_HISTORY_RESULTS);
+    }
+    return (Map<String, Object>)
+        locationAccess.with(
             locationName,
             location -> {
-              Execution execution = location.getExecution(executionId);
-              if (execution == null) {
-                throw McpException.validation(
-                    "EXECUTION_NOT_FOUND", "The native execution was not found.");
-              }
-              ExecutionState state = location.getExecutionState(executionId, false);
-              List<Map<String, Object>> rows =
-                  state == null ? List.of() : metricRows(state.getMetrics());
+              Map<String, Object> detail =
+                  detailAtLocation(location, locationName, executionId);
+              Map<String, Object> execution =
+                  detail.get("execution") instanceof Map<?, ?> raw
+                      ? castObjectMap(raw)
+                      : Map.of();
+              String path = String.valueOf(execution.getOrDefault("path", ""));
+              Map<String, Object> metrics =
+                  metricsAtLocation(location, locationName, executionId);
+              Map<String, Object> history =
+                  historyAtLocation(
+                      location, locationName, path, "", null, null, 0, previousLimit + 1);
               Map<String, Object> result = new LinkedHashMap<>();
-              result.put("location", locationName);
-              result.put("execution_id", executionId);
-              result.put(
-                  "available",
-                  state != null && state.getMetrics() != null && !state.getMetrics().isEmpty());
-              result.put("component_count", rows.size());
-              result.put(
-                  "truncated",
-                  state != null
-                      && state.getMetrics() != null
-                      && state.getMetrics().size() > rows.size());
-              result.put("components", rows);
+              result.put("detail", detail);
+              result.put("metrics", metrics);
+              result.put("history", history);
               return result;
             });
   }
@@ -456,6 +442,60 @@ final class HopExecutionRepository {
               result.put("fields", fieldOutput);
               return result;
             });
+  }
+
+  private Map<String, Object> detailAtLocation(
+      IExecutionInfoLocation location, String locationName, String executionId) throws Exception {
+    Execution execution = location.getExecution(executionId);
+    if (execution == null) {
+      throw McpException.validation(
+          "EXECUTION_NOT_FOUND", "The native execution was not found.");
+    }
+    ExecutionState state = location.getExecutionState(executionId, false);
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("location", locationName);
+    result.put("execution", summary(execution, state));
+    result.put("state", state == null ? stateRow(executionId) : stateRow(state));
+    result.put(
+        "children_count",
+        state == null || state.getChildIds() == null
+            ? 0
+            : Math.min(MAX_CHILD_IDS, state.getChildIds().size()));
+    result.put("metrics", state == null ? List.of() : metricRows(state.getMetrics()));
+    result.put("details", state == null ? Map.of() : boundedDetails(state.getDetails()));
+    result.put("errors", state == null ? List.of() : errorDetails(state));
+    result.put("logging_available", false);
+    return result;
+  }
+
+  private Map<String, Object> metricsAtLocation(
+      IExecutionInfoLocation location, String locationName, String executionId) throws Exception {
+    Execution execution = location.getExecution(executionId);
+    if (execution == null) {
+      throw McpException.validation(
+          "EXECUTION_NOT_FOUND", "The native execution was not found.");
+    }
+    ExecutionState state = location.getExecutionState(executionId, false);
+    List<Map<String, Object>> rows = state == null ? List.of() : metricRows(state.getMetrics());
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("location", locationName);
+    result.put("execution_id", executionId);
+    result.put(
+        "available", state != null && state.getMetrics() != null && !state.getMetrics().isEmpty());
+    result.put("component_count", rows.size());
+    result.put(
+        "truncated",
+        state != null && state.getMetrics() != null && state.getMetrics().size() > rows.size());
+    result.put("components", rows);
+    return result;
+  }
+
+  private static Map<String, Object> castObjectMap(Map<?, ?> input) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    for (Map.Entry<?, ?> entry : input.entrySet()) {
+      if (entry.getKey() != null) result.put(String.valueOf(entry.getKey()), entry.getValue());
+    }
+    return result;
   }
 
   private Map<String, Object> historyAtLocation(
