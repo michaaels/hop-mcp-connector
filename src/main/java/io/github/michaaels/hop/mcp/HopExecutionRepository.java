@@ -46,6 +46,8 @@ final class HopExecutionRepository {
   static final int MAX_PROFILE_ROWS = 10_000;
   static final int MAX_PROFILE_SAMPLES = 20;
   static final int MAX_PROFILE_DISTINCT = 5_000;
+  static final int MAX_PROFILE_TOTAL_DISTINCT = 20_000;
+  static final long MAX_PROFILE_CELL_EVALUATIONS = 500_000L;
   static final int MAX_PROFILE_DATA_SETS = 200;
   static final int MAX_LOCATION_LENGTH = 512;
   static final int MAX_FILTER_LENGTH = 512;
@@ -62,6 +64,27 @@ final class HopExecutionRepository {
 
   private record Child(Execution execution, int depth) {}
 
+  private static final class ProfileBudget {
+    private int distinctValues;
+    private long cells;
+    private boolean cellLimitReached;
+
+    private boolean reserveDistinct() {
+      if (distinctValues >= MAX_PROFILE_TOTAL_DISTINCT) return false;
+      distinctValues++;
+      return true;
+    }
+
+    private boolean reserveCell() {
+      if (cells >= MAX_PROFILE_CELL_EVALUATIONS) {
+        cellLimitReached = true;
+        return false;
+      }
+      cells++;
+      return true;
+    }
+  }
+
   private static final class FieldStats {
     private final Set<String> distinct = new LinkedHashSet<>();
     private final List<Object> samples = new ArrayList<>();
@@ -76,14 +99,20 @@ final class HopExecutionRepository {
 
     private FieldStats() {}
 
-    private void accept(Object value) {
+    private void accept(Object value, ProfileBudget budget) {
       observedRows++;
       if (value == null) {
         nulls++;
         return;
       }
-      if (distinct.size() < MAX_PROFILE_DISTINCT) distinct.add(String.valueOf(value));
-      else distinctTruncated = true;
+      String distinctValue = String.valueOf(value);
+      if (!distinct.contains(distinctValue)) {
+        if (distinct.size() < MAX_PROFILE_DISTINCT && budget.reserveDistinct()) {
+          distinct.add(distinctValue);
+        } else {
+          distinctTruncated = true;
+        }
+      }
       if (samples.size() < MAX_PROFILE_SAMPLES) samples.add(value);
       if (value instanceof Number number) {
         try {
