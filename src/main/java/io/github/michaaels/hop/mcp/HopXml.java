@@ -55,7 +55,10 @@ final class HopXml {
   }
 
   static Map<String, Object> inspect(String path, String xml) throws Exception {
-    Document d = parse(xml);
+    return inspect(path, parse(xml));
+  }
+
+  static Map<String, Object> inspect(String path, Document d) {
     Element root = d.getDocumentElement();
     String type =
         root.getTagName().toLowerCase(Locale.ROOT).contains("workflow") ? "workflow" : "pipeline";
