@@ -6,7 +6,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -43,7 +45,7 @@ final class HopProjectDefinitionIndex {
       List<ComponentText> components,
       long bytes,
       long size,
-      long lastModifiedMillis,
+      FileTime lastModified,
       boolean tablesTruncated,
       boolean referencesTruncated,
       boolean componentsTruncated) {
@@ -92,10 +94,10 @@ final class HopProjectDefinitionIndex {
 
     for (Path path : paths) {
       long size;
-      long lastModified;
+      FileTime lastModified;
       try {
         size = Files.size(path);
-        lastModified = Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis();
+        lastModified = Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS);
       } catch (Exception ignored) {
         truncated = true;
         continue;
@@ -109,7 +111,7 @@ final class HopProjectDefinitionIndex {
       String relative = files.relative(path);
       Entry cached = cache.get(relative);
       Entry entry;
-      if (cached != null && cached.size() == size && cached.lastModifiedMillis() == lastModified) {
+      if (cached != null && cached.size() == size && cached.lastModified().equals(lastModified)) {
         entry = cached;
         cacheHits++;
       } else {
@@ -127,7 +129,11 @@ final class HopProjectDefinitionIndex {
 
     cache = next;
     return new Snapshot(
-        Map.copyOf(next), truncated, indexedBytes, cacheHits, cacheMisses);
+        Collections.unmodifiableMap(new LinkedHashMap<>(next)),
+        truncated,
+        indexedBytes,
+        cacheHits,
+        cacheMisses);
   }
 
   Entry readSingle(Path path) throws Exception {
@@ -139,10 +145,10 @@ final class HopProjectDefinitionIndex {
         path,
         files.relative(path),
         size,
-        Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis());
+        Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS));
   }
 
-  private Entry read(Path path, String relative, long size, long lastModified) throws Exception {
+  private Entry read(Path path, String relative, long size, FileTime lastModified) throws Exception {
     byte[] content = files.readBytes(path);
     String xml =
         StandardCharsets.UTF_8
@@ -161,8 +167,8 @@ final class HopProjectDefinitionIndex {
         kind(relative),
         xml,
         inspection,
-        Set.copyOf(tables),
-        Set.copyOf(references),
+        Collections.unmodifiableSet(new LinkedHashSet<>(tables)),
+        Collections.unmodifiableSet(new LinkedHashSet<>(references)),
         List.copyOf(componentScan.components()),
         content.length,
         size,
