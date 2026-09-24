@@ -99,7 +99,7 @@ final class HopMcpService implements AutoCloseable {
     this.connections = new HopConnectionService(metadataProvider, variables, allowDeepCheck);
     this.schemaCompare = new HopSchemaCompareService(metadataProvider, variables, allowDeepCheck);
     this.definitionDiff = new HopDefinitionDiffService(files, variables, metadataProvider);
-    this.impactAnalysis = new HopImpactAnalysisService(files);
+    this.impactAnalysis = new HopImpactAnalysisService(files, variables);
     this.runConfigurations = new HopRunConfigurationService(metadataProvider, variables);
     this.environmentDiff = new HopEnvironmentDiffService(files, variables, runConfigurations);
     this.executionRepository = new HopExecutionRepository(files, variables, metadataProvider);
@@ -145,6 +145,7 @@ final class HopMcpService implements AutoCloseable {
               "hop_execution_children",
               "hop_execution_metrics",
               "hop_diagnose_execution",
+              "hop_data_profile",
               "hop_stop_execution",
               "hop_logs" ->
           allowExecution;
@@ -571,6 +572,7 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> dataProfile(
       String location, String executionId, String transform, List<String> fields) throws Exception {
+    requireExecution();
     return executionRepository.profile(location, executionId, transform, fields);
   }
 
