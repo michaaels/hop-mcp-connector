@@ -4,8 +4,6 @@ import java.sql.DriverManager;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -91,15 +89,8 @@ final class HopConnectionService {
     boundedVariables.setVariable(
         Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
 
-    ExecutorService executor =
-        Executors.newSingleThreadExecutor(
-            runnable -> {
-              Thread thread = new Thread(runnable, "hop-mcp-connection-test");
-              thread.setDaemon(true);
-              return thread;
-            });
     Future<DatabaseTestResults> future =
-        executor.submit(
+        HopDeepCheckExecutor.submit(
             () -> {
               int previousLoginTimeout = DriverManager.getLoginTimeout();
               try {
@@ -121,6 +112,10 @@ final class HopConnectionService {
           false,
           timeoutSeconds,
           "The native connection test exceeded the configured timeout.");
+    } catch (InterruptedException interrupted) {
+      future.cancel(true);
+      Thread.currentThread().interrupt();
+      throw interrupted;
     } catch (ExecutionException execution) {
       Throwable cause = execution.getCause();
       return result(
@@ -129,8 +124,6 @@ final class HopConnectionService {
           false,
           timeoutSeconds,
           cause == null ? "The native connection test failed." : cause.getMessage());
-    } finally {
-      executor.shutdownNow();
     }
   }
 
