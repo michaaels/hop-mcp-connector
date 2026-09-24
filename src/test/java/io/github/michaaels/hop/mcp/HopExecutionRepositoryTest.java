@@ -91,7 +91,9 @@ class HopExecutionRepositoryTest {
                 (name, action) -> action.apply(fakeLocation(executions, states, Map.of("root", data))))
             .profile("local", "root", "Table Input", List.of("CUSTOMER_ID", "TRAFFIC_MB"));
     Map<?, ?> profileFields = (Map<?, ?>) profile.get("fields");
+    assertEquals(2L, profile.get("rows_scanned"));
     assertEquals(true, ((Map<?, ?>) profileFields.get("CUSTOMER_ID")).get("available"));
+    assertEquals(true, ((Map<?, ?>) profileFields.get("CUSTOMER_ID")).get("complete"));
     assertEquals(1L, ((Map<?, ?>) profileFields.get("CUSTOMER_ID")).get("nulls"));
     assertEquals(
         15.0,
