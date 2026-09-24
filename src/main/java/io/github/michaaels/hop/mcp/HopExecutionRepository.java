@@ -101,14 +101,14 @@ final class HopExecutionRepository {
       if (textMax == null || text.compareTo(textMax) > 0) textMax = text;
     }
 
-    private Map<String, Object> toMap() {
+    private Map<String, Object> toMap(boolean scanComplete) {
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("available", observedRows > 0);
       result.put("observed_rows", observedRows);
       result.put("nulls", nulls);
       result.put("distinct", distinct.size());
       result.put("distinct_truncated", distinctTruncated);
-      result.put("complete", false);
+      result.put("complete", scanComplete && !distinctTruncated);
       result.put("samples", samples);
       if (numericMin != null) {
         result.put("min", numberValue(numericMin));
@@ -369,18 +369,28 @@ final class HopExecutionRepository {
                   if (!matchesTransform(meta, transform) || buffer == null || buffer.getRowMeta() == null) continue;
                   IRowMeta rowMeta = buffer.getRowMeta();
                   List<Object[]> rows = buffer.getBuffer() == null ? List.of() : buffer.getBuffer();
+                  Map<String, Integer> fieldIndexes = new LinkedHashMap<>();
                   for (String field : stats.keySet()) {
                     int index = rowMeta.indexOfValue(field);
-                    if (index < 0 && meta != null && field.equalsIgnoreCase(String.valueOf(meta.getFieldName())) && rowMeta.size() == 1) index = 0;
-                    if (index < 0) continue;
-                    for (Object[] row : rows) {
-                      if (rowsScanned >= MAX_PROFILE_ROWS) {
-                        rowsTruncated = true;
-                        break;
-                      }
-                      if (row == null || index >= row.length) continue;
-                      stats.get(field).accept(row[index]);
-                      rowsScanned++;
+                    if (index < 0
+                        && meta != null
+                        && field.equalsIgnoreCase(String.valueOf(meta.getFieldName()))
+                        && rowMeta.size() == 1) {
+                      index = 0;
+                    }
+                    if (index >= 0) fieldIndexes.put(field, index);
+                  }
+                  if (fieldIndexes.isEmpty()) continue;
+                  for (Object[] row : rows) {
+                    if (rowsScanned >= MAX_PROFILE_ROWS) {
+                      rowsTruncated = true;
+                      break;
+                    }
+                    rowsScanned++;
+                    if (row == null) continue;
+                    for (Map.Entry<String, Integer> fieldIndex : fieldIndexes.entrySet()) {
+                      int index = fieldIndex.getValue();
+                      if (index < row.length) stats.get(fieldIndex.getKey()).accept(row[index]);
                     }
                   }
                   if (rowsScanned >= MAX_PROFILE_ROWS) {
@@ -390,8 +400,10 @@ final class HopExecutionRepository {
                 }
               }
               Map<String, Object> fieldOutput = new LinkedHashMap<>();
+              boolean profileAvailable = false;
               for (Map.Entry<String, FieldStats> field : stats.entrySet()) {
-                Map<String, Object> value = field.getValue().toMap();
+                Map<String, Object> value = field.getValue().toMap(!rowsTruncated);
+                profileAvailable |= Boolean.TRUE.equals(value.get("available"));
                 if (SensitiveData.isSensitiveKey(field.getKey())) {
                   value.remove("min");
                   value.remove("max");
@@ -406,7 +418,7 @@ final class HopExecutionRepository {
               result.put("location", locationName);
               result.put("execution_id", executionId);
               result.put("transform", safeText(transform, MAX_FILTER_LENGTH));
-              result.put("available", data != null && !fieldOutput.isEmpty());
+              result.put("available", data != null && profileAvailable);
               result.put("source", "stored_execution_data");
               result.put("data_sets_scanned", dataSetsScanned);
               result.put("rows_scanned", rowsScanned);
