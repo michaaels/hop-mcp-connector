@@ -1,7 +1,5 @@
 package io.github.michaaels.hop.mcp;
 
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -302,14 +300,8 @@ final class HopImpactAnalysisService {
       resolvedReference =
           resolvedReference.replace("${Internal.Entry.Current.Folder}", sourceFolder.toString());
       Path raw = Path.of(resolvedReference);
-      Path candidate = raw.isAbsolute() ? raw : sourceFolder.resolve(raw);
-      candidate = candidate.normalize();
-      if (!candidate.startsWith(files.root())
-          || !Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
-        return null;
-      }
-      Path real = candidate.toRealPath();
-      return real.startsWith(files.root()) ? real : null;
+      Path candidate = (raw.isAbsolute() ? raw : sourceFolder.resolve(raw)).normalize();
+      return candidate.startsWith(files.root()) ? candidate : null;
     } catch (Exception ignored) {
       return null;
     }
