@@ -389,6 +389,7 @@ final class HopExecutionRepository {
       throw new IllegalArgumentException("fields cannot exceed " + MAX_PROFILE_FIELDS + " entries");
     }
     Map<String, FieldStats> stats = new LinkedHashMap<>();
+    ProfileBudget profileBudget = new ProfileBudget();
     for (String field : fields) {
       if (field == null || field.isBlank() || field.length() > 512) {
         throw new IllegalArgumentException("field names must be non-empty and bounded");
@@ -444,11 +445,18 @@ final class HopExecutionRepository {
                     rowsScanned++;
                     if (row == null) continue;
                     for (Map.Entry<String, Integer> fieldIndex : fieldIndexes.entrySet()) {
+                      if (!profileBudget.reserveCell()) {
+                        rowsTruncated = true;
+                        break;
+                      }
                       int index = fieldIndex.getValue();
-                      if (index < row.length) stats.get(fieldIndex.getKey()).accept(row[index]);
+                      if (index < row.length) {
+                        stats.get(fieldIndex.getKey()).accept(row[index], profileBudget);
+                      }
                     }
+                    if (profileBudget.cellLimitReached) break;
                   }
-                  if (rowsScanned >= MAX_PROFILE_ROWS) {
+                  if (rowsScanned >= MAX_PROFILE_ROWS || profileBudget.cellLimitReached) {
                     rowsTruncated = true;
                     break;
                   }
