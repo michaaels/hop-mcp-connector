@@ -34,7 +34,6 @@ final class HopMetadataService {
 
   private static final String TRUNCATED = "<truncated>";
 
-  private final ProjectFiles files;
   private final IHopMetadataProvider metadataProvider;
   private final HopProjectDefinitionIndex definitionIndex;
 
@@ -46,7 +45,6 @@ final class HopMetadataService {
       ProjectFiles files,
       IHopMetadataProvider metadataProvider,
       HopProjectDefinitionIndex definitionIndex) {
-    this.files = files;
     this.metadataProvider = metadataProvider;
     this.definitionIndex = definitionIndex;
   }
