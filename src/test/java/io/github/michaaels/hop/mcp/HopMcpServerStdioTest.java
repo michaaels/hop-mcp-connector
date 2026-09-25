@@ -116,6 +116,7 @@ class HopMcpServerStdioTest {
         String tools = readResponse(reader, responses);
         assertResponseId(tools, 2);
         assertTrue(tools.contains("hop_config"), tools);
+        assertTrue(tools.contains("hop_runtime_metrics"), tools);
         assertTrue(tools.contains("hop_validate"), tools);
         assertTrue(tools.contains("hop_component_types"), tools);
         assertTrue(tools.contains("hop_prepare_correction_plan"), tools);
@@ -164,9 +165,20 @@ class HopMcpServerStdioTest {
                 "web_api_configured",
                 "web_api_base",
                 "max_read_bytes",
-                "max_scan_files")) {
+                "max_scan_files",
+                "max_regular_files_examined")) {
           assertTrue(config.contains("\"" + property + "\""), config);
         }
+
+        requests.println(toolCall(73, "hop_runtime_metrics", "{}"));
+        String runtimeMetrics = readResponse(reader, responses);
+        assertSuccessfulToolResponse(runtimeMetrics, 73);
+        assertStructuredOutputConforms(runtimeMetrics, "hop_runtime_metrics", outputSchemas);
+        assertTrue(runtimeMetrics.contains("project_index"), runtimeMetrics);
+        assertTrue(runtimeMetrics.contains("deep_checks"), runtimeMetrics);
+        assertTrue(runtimeMetrics.contains("HEALTHY"), runtimeMetrics);
+        assertFalse(runtimeMetrics.contains("password"), runtimeMetrics);
+        assertFalse(runtimeMetrics.contains("token"), runtimeMetrics);
 
         requests.println(toolCall(60, "hop_metadata_types", "{\"limit\":10}"));
         String metadataTypes = readResponse(reader, responses);

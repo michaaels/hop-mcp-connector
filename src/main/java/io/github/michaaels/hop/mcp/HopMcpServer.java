@@ -74,6 +74,11 @@ final class HopMcpServer implements AutoCloseable {
         schema(Map.of(), List.of()),
         a -> service.config());
     add(
+        "hop_runtime_metrics",
+        "Show bounded aggregate project-index and deep-check worker metrics without project content or secrets.",
+        schema(Map.of(), List.of()),
+        a -> service.runtimeMetrics());
+    add(
         "hop_capabilities",
         "Describe the native semantic operation contract, safety guarantees, Hop compatibility and live-UI availability.",
         schema(Map.of(), List.of()),
@@ -976,6 +981,7 @@ final class HopMcpServer implements AutoCloseable {
     Map<String, Object> result =
         switch (name) {
           case "hop_config" -> configOutputSchema();
+          case "hop_runtime_metrics" -> runtimeMetricsOutputSchema();
           case "hop_capabilities" -> capabilitiesOutputSchema();
           case "hop_live_ui_status" -> liveUiStatusOutputSchema();
           case "hop_context" -> contextOutputSchema();
@@ -1043,7 +1049,9 @@ final class HopMcpServer implements AutoCloseable {
             "web_api_configured", bool("Whether a Hop Web base URL is configured"),
             "web_api_base", boundedString(2048, "Configured Hop Web base URL"),
             "max_read_bytes", readBytesSchema,
-            "max_scan_files", nonNegativeInteger("Maximum project scan size")),
+            "max_scan_files", nonNegativeInteger("Maximum returned files in one project scan"),
+            "max_regular_files_examined",
+                nonNegativeInteger("Maximum regular files examined during one project scan")),
         List.of(
             "version",
             "project_root",
@@ -1057,7 +1065,94 @@ final class HopMcpServer implements AutoCloseable {
             "web_api_configured",
             "web_api_base",
             "max_read_bytes",
-            "max_scan_files"));
+            "max_scan_files",
+            "max_regular_files_examined"));
+  }
+
+  private static Map<String, Object> runtimeMetricsOutputSchema() {
+    Map<String, Object> lastRefresh =
+        schema(
+            fields(
+                "total_ms", nonNegativeInteger("Duration of the last index refresh"),
+                "scan_ms", nonNegativeInteger("Filesystem scan duration of the last refresh"),
+                "regular_files_examined",
+                    boundedInteger(
+                        0,
+                        ProjectFiles.MAX_REGULAR_FILES_EXAMINED,
+                        "Regular files examined by the last refresh"),
+                "definitions_found",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_SCAN_FILES, "Hop definitions returned by the scan"),
+                "bytes_read",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_TOTAL_SCAN_BYTES, "Source bytes read by the refresh"),
+                "cache_hits",
+                    boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Unchanged definitions reused"),
+                "cache_misses",
+                    boundedInteger(
+                        0, ProjectFiles.MAX_SCAN_FILES, "Definitions that needed parsing"),
+                "truncated", bool("Whether the last refresh encountered a bound or read failure")),
+            List.of(
+                "total_ms",
+                "scan_ms",
+                "regular_files_examined",
+                "definitions_found",
+                "bytes_read",
+                "cache_hits",
+                "cache_misses",
+                "truncated"));
+    Map<String, Object> projectIndex =
+        schema(
+            fields(
+                "generation", nonNegativeInteger("Current project-index invalidation generation"),
+                "entries",
+                    boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Definitions in the index"),
+                "source_bytes_indexed",
+                    boundedInteger(
+                        0,
+                        ProjectFiles.MAX_TOTAL_SCAN_BYTES,
+                        "Source bytes represented by the index"),
+                "metadata_references", nonNegativeInteger("Typed metadata references in the index"),
+                "table_references", nonNegativeInteger("Table references in the index"),
+                "definition_references", nonNegativeInteger("Definition references in the index"),
+                "refreshes", nonNegativeInteger("Refresh attempts since server start"),
+                "last_refresh", lastRefresh),
+            List.of(
+                "generation",
+                "entries",
+                "source_bytes_indexed",
+                "metadata_references",
+                "table_references",
+                "definition_references",
+                "refreshes",
+                "last_refresh"));
+    Map<String, Object> deepChecks =
+        schema(
+            fields(
+                "active", boundedInteger(0, 1, "Active deep checks"),
+                "queued",
+                    boundedInteger(0, HopDeepCheckExecutor.MAX_QUEUED_CHECKS, "Queued deep checks"),
+                "completed", nonNegativeInteger("Deep checks whose work ended"),
+                "timeouts", nonNegativeInteger("Deep checks that reached their deadline"),
+                "cancelled", nonNegativeInteger("Deep checks whose futures were cancelled"),
+                "rejected", nonNegativeInteger("Deep checks rejected by the bounded queue"),
+                "submitted", nonNegativeInteger("Deep checks accepted by the worker"),
+                "health", enumStr("HEALTHY", "DEGRADED")),
+            List.of(
+                "active",
+                "queued",
+                "completed",
+                "timeouts",
+                "cancelled",
+                "rejected",
+                "submitted",
+                "health"));
+    return toolOutputSchema(
+        fields(
+            "project_index", projectIndex,
+            "deep_checks", deepChecks,
+            "redaction_applied", bool("Whether output was passed through secret redaction")),
+        List.of("project_index", "deep_checks", "redaction_applied"));
   }
 
   private static Map<String, Object> definitionsOutputSchema() {
@@ -1073,7 +1168,16 @@ final class HopMcpServer implements AutoCloseable {
             "limit",
                 boundedInteger(
                     1, ProjectFiles.MAX_STRUCTURED_RESULTS, "Maximum definitions requested"),
-            "scanned", boundedInteger(0, ProjectFiles.MAX_SCAN_FILES, "Regular files scanned"),
+            "scanned",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_REGULAR_FILES_EXAMINED,
+                    "Regular files examined during traversal"),
+            "regular_files_examined",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_REGULAR_FILES_EXAMINED,
+                    "Regular files examined during traversal"),
             "visited",
                 boundedInteger(
                     0, BoundedProjectWalker.MAX_VISITED_ENTRIES, "Directory entries visited"),
@@ -1673,8 +1777,9 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             fields(
                 "path", boundedString(4096, "Project-relative definition path"),
-                "component", boundedString(1024, "Referencing transform/action or unknown")),
-            List.of("path", "component"));
+                "component", boundedString(1024, "Referencing transform/action or unknown"),
+                "reference_source", enumStr("native", "metadata_property", "text_fallback")),
+            List.of("path", "component", "reference_source"));
     return toolOutputSchema(
         fields(
             "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
@@ -1979,8 +2084,13 @@ final class HopMcpServer implements AutoCloseable {
                 "metadata",
                     boundedString(
                         HopImpactAnalysisService.MAX_SELECTOR_LENGTH,
-                        "Redacted metadata reference")),
-            List.of("path", "metadata"));
+                        "Redacted metadata reference"),
+                "type",
+                    boundedString(
+                        HopImpactAnalysisService.MAX_SELECTOR_LENGTH, "Metadata type key"),
+                "component", boundedString(1024, "Referencing transform/action or unknown"),
+                "reference_source", enumStr("native", "metadata_property", "text_fallback")),
+            List.of("path", "metadata", "type", "component", "reference_source"));
     Map<String, Object> lineage =
         schema(
             fields(
@@ -2685,7 +2795,16 @@ final class HopMcpServer implements AutoCloseable {
             "glob", boundedString(2048, "Applied project-relative glob"),
             "offset", nonNegativeInteger("First returned match offset"),
             "limit", catalogLimit("Maximum requested files"),
-            "scanned", nonNegativeInteger("Files scanned"),
+            "scanned",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_REGULAR_FILES_EXAMINED,
+                    "Regular files examined during traversal"),
+            "regular_files_examined",
+                boundedInteger(
+                    0,
+                    ProjectFiles.MAX_REGULAR_FILES_EXAMINED,
+                    "Regular files examined during traversal"),
             "scanned_bytes",
                 boundedInteger(0, ProjectFiles.MAX_TOTAL_SCAN_BYTES, "Bytes read for file hashes"),
             "visited",
@@ -2703,6 +2822,7 @@ final class HopMcpServer implements AutoCloseable {
             "offset",
             "limit",
             "scanned",
+            "regular_files_examined",
             "scanned_bytes",
             "visited",
             "scan_limit_reached",

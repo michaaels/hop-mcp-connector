@@ -1,6 +1,5 @@
 package io.github.michaaels.hop.mcp;
 
-import java.sql.DriverManager;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -91,21 +90,14 @@ final class HopConnectionService {
 
     Future<DatabaseTestResults> future =
         HopDeepCheckExecutor.submit(
-            () -> {
-              int previousLoginTimeout = DriverManager.getLoginTimeout();
-              try {
-                return probe.test(connection, boundedVariables);
-              } finally {
-                DriverManager.setLoginTimeout(previousLoginTimeout);
-              }
-            });
+            () -> HopJdbcGlobalStateGuard.call(() -> probe.test(connection, boundedVariables)));
     try {
       DatabaseTestResults result = future.get(timeoutSeconds, TimeUnit.SECONDS);
       boolean success = result != null && result.isSuccess();
       String message = result == null ? "No diagnostic message was returned." : result.getMessage();
       return result(name, success ? "success" : "failure", success, timeoutSeconds, message);
     } catch (TimeoutException timeout) {
-      future.cancel(true);
+      HopDeepCheckExecutor.cancel(future, true);
       return result(
           name,
           "timeout",
@@ -113,7 +105,7 @@ final class HopConnectionService {
           timeoutSeconds,
           "The native connection test exceeded the configured timeout.");
     } catch (InterruptedException interrupted) {
-      future.cancel(true);
+      HopDeepCheckExecutor.cancel(future, false);
       Thread.currentThread().interrupt();
       throw interrupted;
     } catch (ExecutionException execution) {

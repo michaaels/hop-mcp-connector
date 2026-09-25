@@ -36,7 +36,7 @@ final class HopMetadataService {
   private final HopProjectDefinitionIndex definitionIndex;
 
   HopMetadataService(ProjectFiles files, IHopMetadataProvider metadataProvider) {
-    this(files, metadataProvider, new HopProjectDefinitionIndex(files));
+    this(files, metadataProvider, new HopProjectDefinitionIndex(files, metadataProvider, null));
   }
 
   HopMetadataService(
@@ -158,19 +158,25 @@ final class HopMetadataService {
     boolean resultTruncated = false;
     dependencyScan:
     for (HopProjectDefinitionIndex.Entry definition : snapshot.definitions().values()) {
-      if (!definition.containsText(name)) continue;
-      List<String> components = definition.componentsContaining(name, MAX_DEPENDENCY_RESULTS + 1);
-      if (components.isEmpty()) components = List.of("unknown");
-      for (String component : components) {
+      for (HopProjectDefinitionIndex.MetadataReference reference :
+          definition.metadataReferences()) {
+        if (!reference.type().equalsIgnoreCase(metadataKey(managedClass))
+            || !reference.name().equalsIgnoreCase(name)) continue;
         if (usedBy.size() >= MAX_DEPENDENCY_RESULTS) {
           resultTruncated = true;
           break dependencyScan;
         }
         usedBy.add(
             new LinkedHashMap<>(
-                Map.of("path", definition.path(), "component", safeString(component))));
+                Map.of(
+                    "path",
+                    definition.path(),
+                    "component",
+                    safeString(reference.component()),
+                    "reference_source",
+                    reference.source().name().toLowerCase(Locale.ROOT))));
       }
-      if (definition.componentsTruncated()) resultTruncated = true;
+      if (definition.metadataReferencesTruncated()) resultTruncated = true;
     }
 
     int end = Math.min(usedBy.size(), offset + limit);

@@ -314,14 +314,16 @@ final class HopSchemaCompareService {
         Const.HOP_DATABASE_SOCKET_TIMEOUT, Integer.toString(timeoutSeconds));
     Future<SchemaReadResult> future =
         HopDeepCheckExecutor.submit(
-            () -> schemaLoader.load(connection, boundedVariables, schema, table));
+            () ->
+                HopJdbcGlobalStateGuard.call(
+                    () -> schemaLoader.load(connection, boundedVariables, schema, table)));
     try {
       return future.get(timeoutSeconds, TimeUnit.SECONDS);
     } catch (TimeoutException timeout) {
-      future.cancel(true);
+      HopDeepCheckExecutor.cancel(future, true);
       throw timeout;
     } catch (InterruptedException interrupted) {
-      future.cancel(true);
+      HopDeepCheckExecutor.cancel(future, false);
       Thread.currentThread().interrupt();
       throw interrupted;
     } catch (ExecutionException execution) {

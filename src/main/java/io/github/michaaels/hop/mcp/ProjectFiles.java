@@ -34,7 +34,8 @@ final class ProjectFiles {
   static final int MAX_TEXT_RESPONSE_BYTES = 128 * 1024;
   static final int MAX_RESPONSE_STRING_LENGTH = 8 * 1024;
   static final int MAX_STRUCTURED_RESULTS = 200;
-  static final int MAX_SCAN_FILES = BoundedProjectWalker.MAX_FILES_SCANNED;
+  static final int MAX_SCAN_FILES = BoundedProjectWalker.MAX_RESULTS;
+  static final int MAX_REGULAR_FILES_EXAMINED = BoundedProjectWalker.MAX_REGULAR_FILES_EXAMINED;
   static final int MAX_RESULTS = MAX_STRUCTURED_RESULTS;
 
   private record BoundedRead(byte[] bytes, boolean sourceChanged) {}
@@ -82,17 +83,20 @@ final class ProjectFiles {
   }
 
   List<Path> definitions() throws IOException {
-    return definitionScan(MAX_SCAN_FILES).files();
+    return definitionScan(MAX_SCAN_FILES).files().stream()
+        .map(BoundedProjectWalker.ScannedFile::path)
+        .toList();
   }
 
   Map<String, Object> definitionsPage(int offset, int limit) throws IOException {
     validatePage(offset, limit, MAX_SCAN_FILES);
     BoundedProjectWalker.ScanResult scan = definitionScan(MAX_SCAN_FILES);
-    List<Path> paths = scan.files();
+    List<BoundedProjectWalker.ScannedFile> paths = scan.files();
     int from = Math.min(offset, paths.size());
     int to = Math.min(from + limit, paths.size());
     List<Map<String, Object>> definitions = new ArrayList<>();
-    for (Path path : paths.subList(from, to)) {
+    for (BoundedProjectWalker.ScannedFile scannedFile : paths.subList(from, to)) {
+      Path path = scannedFile.path();
       String relative = relative(path);
       definitions.add(
           Map.of(
@@ -106,7 +110,8 @@ final class ProjectFiles {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("offset", offset);
     result.put("limit", limit);
-    result.put("scanned", scan.scannedFiles());
+    result.put("scanned", scan.regularFilesExamined());
+    result.put("regular_files_examined", scan.regularFilesExamined());
     result.put("visited", scan.visitedEntries());
     result.put("scan_limit_reached", scan.scanLimitReached());
     result.put("results_truncated", truncated);
@@ -127,24 +132,23 @@ final class ProjectFiles {
             root.resolve(HopLiveUiEventBroker.CONTROL_DIRECTORY),
             path -> filter.matcher(relative(path)).matches(),
             MAX_SCAN_FILES);
-    List<Path> matches = scan.files();
+    List<BoundedProjectWalker.ScannedFile> matches = scan.files();
     int from = Math.min(offset, matches.size());
     int to = Math.min(from + limit, matches.size());
     List<Map<String, Object>> entries = new ArrayList<>();
     long hashedBytes = 0;
     boolean scanLimitReached = scan.scanLimitReached();
     boolean hashBudgetExhausted = false;
-    for (Path path : matches.subList(from, to)) {
+    for (BoundedProjectWalker.ScannedFile scannedFile : matches.subList(from, to)) {
+      Path path = scannedFile.path();
       Map<String, Object> entry = new LinkedHashMap<>();
       String relative = relative(path);
-      long size = Files.size(path);
+      long size = scannedFile.size();
       entry.put("path", relative);
       entry.put("kind", fileKind(relative));
       entry.put("extension", extension(relative));
       entry.put("bytes", size);
-      entry.put(
-          "last_modified_epoch_ms",
-          Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis());
+      entry.put("last_modified_epoch_ms", scannedFile.lastModified().toMillis());
       if (hashBudgetExhausted) {
         entry.put("sha256", "");
         entry.put("hash_skipped", true);
@@ -196,7 +200,8 @@ final class ProjectFiles {
     result.put("glob", glob == null || glob.isBlank() ? "**" : glob);
     result.put("offset", offset);
     result.put("limit", limit);
-    result.put("scanned", scan.scannedFiles());
+    result.put("scanned", scan.regularFilesExamined());
+    result.put("regular_files_examined", scan.regularFilesExamined());
     result.put("visited", scan.visitedEntries());
     result.put("scan_limit_reached", scanLimitReached);
     result.put("count", matches.size());
@@ -228,14 +233,9 @@ final class ProjectFiles {
     boolean scanLimitReached = scan.scanLimitReached();
     boolean resultLimitReached = false;
     searchFiles:
-    for (Path path : scan.files()) {
-      long size;
-      try {
-        size = Files.size(path);
-      } catch (IOException | RuntimeException ignored) {
-        scanLimitReached = true;
-        continue;
-      }
+    for (BoundedProjectWalker.ScannedFile scannedFile : scan.files()) {
+      Path path = scannedFile.path();
+      long size = scannedFile.size();
       long remainingBytes = MAX_TOTAL_SCAN_BYTES - scannedBytes;
       if (size > MAX_READ_BYTES || size > remainingBytes) {
         scanLimitReached = true;
@@ -398,7 +398,11 @@ final class ProjectFiles {
   }
 
   byte[] readBytes(Path path) throws IOException {
-    BoundedRead read = readBoundedBytes(path, MAX_FILE_BYTES);
+    return readBytes(path, MAX_FILE_BYTES);
+  }
+
+  byte[] readBytes(Path path, long maximumBytes) throws IOException {
+    BoundedRead read = readBoundedBytes(path, maximumBytes);
     if (read.sourceChanged()) throw new IOException("File changed while reading");
     return read.bytes();
   }

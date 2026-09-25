@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 import org.apache.hop.core.variables.IVariables;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
@@ -45,6 +46,7 @@ final class HopDefinitionMutator {
   private final IHopMetadataProvider metadataProvider;
   private final HopSemanticEventSink eventSink;
   private final HopComponentAuthoring componentAuthoring;
+  private final Consumer<Path> definitionInvalidator;
   private final Map<String, MutationRecord> transactions = new LinkedHashMap<>();
 
   HopDefinitionMutator(
@@ -57,11 +59,22 @@ final class HopDefinitionMutator {
       IVariables variables,
       IHopMetadataProvider metadataProvider,
       HopSemanticEventSink eventSink) {
+    this(files, variables, metadataProvider, eventSink, ignored -> {});
+  }
+
+  HopDefinitionMutator(
+      ProjectFiles files,
+      IVariables variables,
+      IHopMetadataProvider metadataProvider,
+      HopSemanticEventSink eventSink,
+      Consumer<Path> definitionInvalidator) {
     this.files = files;
     this.variables = variables;
     this.metadataProvider = metadataProvider;
     this.eventSink = eventSink == null ? HopSemanticEventSink.NONE : eventSink;
     this.componentAuthoring = new HopComponentAuthoring(metadataProvider);
+    this.definitionInvalidator =
+        definitionInvalidator == null ? ignored -> {} : definitionInvalidator;
   }
 
   synchronized Map<String, Object> mutate(
@@ -144,6 +157,7 @@ final class HopDefinitionMutator {
     try {
       boolean atomicReplaceUsed = atomicReplace(target, serialized);
       validateFile(kind, target);
+      definitionInvalidator.accept(target);
       result.put("atomic_replace_used", atomicReplaceUsed);
     } catch (Exception writeFailure) {
       try {
@@ -224,10 +238,12 @@ final class HopDefinitionMutator {
       atomicReplaceUsed = atomicReplace(record.target, original);
       try {
         validateFile(record.kind, record.target);
+        definitionInvalidator.accept(record.target);
       } catch (Exception rollbackFailure) {
         try {
           atomicReplace(record.target, current);
           validateFile(record.kind, record.target);
+          definitionInvalidator.accept(record.target);
         } catch (Exception recoveryFailure) {
           rollbackFailure.addSuppressed(recoveryFailure);
         }
@@ -235,6 +251,7 @@ final class HopDefinitionMutator {
       }
     } else {
       Files.delete(record.target);
+      definitionInvalidator.accept(record.target);
     }
 
     record.rolledBack = true;
@@ -385,16 +402,20 @@ final class HopDefinitionMutator {
   private void rollbackFailedWrite(
       Path target, Path backup, boolean existed, String transactionId, String expectedHash)
       throws IOException {
-    if (existed && backup != null && isSafeBackupFile(transactionId, backup)) {
-      byte[] original = files.readBytes(backup);
-      if (!expectedHash.equals(ProjectFiles.sha256(original))) {
-        throw new IOException("Mutation backup integrity check failed during recovery");
+    try {
+      if (existed && backup != null && isSafeBackupFile(transactionId, backup)) {
+        byte[] original = files.readBytes(backup);
+        if (!expectedHash.equals(ProjectFiles.sha256(original))) {
+          throw new IOException("Mutation backup integrity check failed during recovery");
+        }
+        atomicReplace(target, original);
+      } else if (!existed) {
+        Files.deleteIfExists(target);
+      } else {
+        throw new IOException("Mutation backup is unavailable during recovery");
       }
-      atomicReplace(target, original);
-    } else if (!existed) {
-      Files.deleteIfExists(target);
-    } else {
-      throw new IOException("Mutation backup is unavailable during recovery");
+    } finally {
+      definitionInvalidator.accept(target);
     }
   }
 

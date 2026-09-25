@@ -1,12 +1,20 @@
 package io.github.michaaels.hop.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.apache.hop.metadata.api.HopMetadata;
+import org.apache.hop.metadata.api.HopMetadataBase;
+import org.apache.hop.metadata.api.HopMetadataPropertyType;
+import org.apache.hop.metadata.api.IHopMetadata;
+import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -65,7 +73,7 @@ class HopImpactAnalysisServiceTest {
         project.resolve("load.hpl"),
         pipeline("select * from DWH.DIM_SITE", "child.hwf", "DWH_PROD"));
     Files.writeString(project.resolve("child.hwf"), workflow("", "DWH_PROD"));
-    HopImpactAnalysisService service = new HopImpactAnalysisService(new ProjectFiles(project));
+    HopImpactAnalysisService service = impactService(new ProjectFiles(project));
 
     Map<String, Object> metadata = service.analyze(null, "DWH_PROD", null, 5, 10, 10);
     assertEquals(2, metadata.get("node_count"));
@@ -77,6 +85,74 @@ class HopImpactAnalysisServiceTest {
 
     assertThrows(IllegalArgumentException.class, () -> service.analyze("A", "B", null, 5, 10, 10));
     assertThrows(Exception.class, () -> service.analyze(null, null, "../outside.hpl", 5, 10, 10));
+  }
+
+  @Test
+  void typedConnectionSelectorsMatchPipelineAndWorkflowAndIgnoreUnrelatedStrings()
+      throws Exception {
+    Files.writeString(
+        project.resolve("uses.hpl"),
+        "<pipeline><info><name>uses</name></info><transform><name>uses-rdbms</name>"
+            + "<type>UnknownPlugin</type><connection>DWH_PROD</connection>"
+            + "<sql>select 'DWH_PROD'</sql><description>DWH_PROD</description></transform>"
+            + "<note>DWH_PROD</note></pipeline>");
+    Files.writeString(
+        project.resolve("uses.hwf"),
+        "<workflow><info><name>uses</name></info><action><name>uses-rdbms</name>"
+            + "<type>UnknownAction</type><connection>DWH_PROD</connection>"
+            + "<description>DWH_PROD</description></action><note>DWH_PROD</note></workflow>");
+    Files.writeString(
+        project.resolve("text-only.hpl"),
+        "<pipeline><info><name>text-only</name></info><transform><name>DWH_PROD</name>"
+            + "<type>UnknownPlugin</type><sql>select 'DWH_PROD'</sql>"
+            + "<description>rdbms:DWH_PROD</description></transform><note>DWH_PROD</note></pipeline>");
+    Files.writeString(
+        project.resolve("text-only.hwf"),
+        "<workflow><info><name>text-only</name></info><action><name>DWH_PROD</name>"
+            + "<type>UnknownAction</type><description>DWH_PROD</description></action>"
+            + "<note>rdbms:DWH_PROD</note></workflow>");
+
+    Map<String, Object> result =
+        impactService(new ProjectFiles(project)).analyze("", "rdbms:DWH_PROD", null, 5, 20, 20);
+
+    assertEquals(2, result.get("node_count"));
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> references =
+        (List<Map<String, Object>>) (List<?>) result.get("metadata_references");
+    assertEquals(
+        Set.of("uses.hpl", "uses.hwf"),
+        references.stream()
+            .map(row -> row.get("path"))
+            .collect(java.util.stream.Collectors.toSet()));
+    assertTrue(references.stream().allMatch(row -> "rdbms".equals(row.get("type"))));
+    assertFalse(
+        references.stream()
+            .anyMatch(row -> String.valueOf(row.get("path")).startsWith("text-only")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> impactService(new ProjectFiles(project)).analyze(null, "rdbms:", null, 5, 20, 20));
+  }
+
+  private HopImpactAnalysisService impactService(ProjectFiles files) {
+    TestMetadataProvider provider = new TestMetadataProvider();
+    HopProjectDefinitionIndex index = new HopProjectDefinitionIndex(files, provider, null);
+    return new HopImpactAnalysisService(files, null, index);
+  }
+
+  @HopMetadata(
+      key = "rdbms",
+      name = "RDBMS Connection",
+      hopMetadataPropertyType = HopMetadataPropertyType.RDBMS_CONNECTION)
+  public static final class RdbmsMetadata extends HopMetadataBase implements IHopMetadata {
+    public RdbmsMetadata() {}
+  }
+
+  private static final class TestMetadataProvider extends MemoryMetadataProvider {
+    @Override
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public <T extends IHopMetadata> List<Class<T>> getMetadataClasses() {
+      return (List) List.of(RdbmsMetadata.class);
+    }
   }
 
   private static String pipeline(String sql, String reference, String metadata) {

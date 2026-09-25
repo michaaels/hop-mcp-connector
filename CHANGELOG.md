@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.2 - 2026-09-25
+
+- Hardened the shared project-definition index with filesystem attribute reuse, file-key-aware stamps, single-flight refresh, generation-aware mutation invalidation, immutable snapshots, and refresh metrics.
+- Separated the 50,000 regular-file examination bound from the 5,000 retained definition bound while preserving traversal, depth, byte, page, and response limits.
+- Added typed metadata references from native Hop dependencies and metadata-property annotations, with bounded exact-leaf XML fallback shared by metadata dependency and impact analysis.
+- Added a bounded read-only `hop_runtime_metrics` tool for index and deep-check worker counters, including a degraded state while timed-out worker code continues running.
+- Restored `DriverManager.loginTimeout` around connection and schema checks and documented its JVM-global concurrency limitation.
+- Added a weekly/manual same-runner benchmark comparing `v2.2.1` with the current commit and publishing JSON/CSV artifacts plus a Job Summary; latency is not a pass/fail threshold.
+
 ## 2.2.1 - 2026-09-24
 
 - Added a bounded incremental `HopProjectDefinitionIndex` shared by metadata dependency and impact analysis so unchanged pipeline/workflow definitions are reused and only modified definitions are reparsed.

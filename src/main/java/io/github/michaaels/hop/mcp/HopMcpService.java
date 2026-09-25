@@ -3,6 +3,7 @@ package io.github.michaaels.hop.mcp;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -23,6 +24,7 @@ final class HopMcpService implements AutoCloseable {
   private final boolean allowMutation;
   private final boolean allowWebApi;
   private final HopWebClient webClient;
+  private final HopProjectDefinitionIndex definitionIndex;
   private final HopMetadataService metadata;
   private final HopConnectionService connections;
   private final HopSchemaCompareService schemaCompare;
@@ -95,7 +97,7 @@ final class HopMcpService implements AutoCloseable {
     this.allowMutation = allowMutation;
     this.allowWebApi = allowWebApi;
     this.webClient = webClient;
-    HopProjectDefinitionIndex definitionIndex = new HopProjectDefinitionIndex(files);
+    this.definitionIndex = new HopProjectDefinitionIndex(files, metadataProvider, variables);
     this.metadata = new HopMetadataService(files, metadataProvider, definitionIndex);
     this.connections = new HopConnectionService(metadataProvider, variables, allowDeepCheck);
     this.schemaCompare = new HopSchemaCompareService(metadataProvider, variables, allowDeepCheck);
@@ -112,7 +114,12 @@ final class HopMcpService implements AutoCloseable {
     this.semanticEventSink =
         semanticEventSink == null ? HopSemanticEventSink.NONE : semanticEventSink;
     this.definitionMutator =
-        new HopDefinitionMutator(files, variables, metadataProvider, this.semanticEventSink);
+        new HopDefinitionMutator(
+            files,
+            variables,
+            metadataProvider,
+            this.semanticEventSink,
+            this.definitionIndex::invalidate);
     this.correctionPlans = new HopCorrectionPlanManager(definitionMutator);
   }
 
@@ -131,6 +138,7 @@ final class HopMcpService implements AutoCloseable {
     result.put("web_api_base", webClient == null ? "" : webClient.baseUrl());
     result.put("max_read_bytes", ProjectFiles.MAX_READ_BYTES);
     result.put("max_scan_files", ProjectFiles.MAX_SCAN_FILES);
+    result.put("max_regular_files_examined", ProjectFiles.MAX_REGULAR_FILES_EXAMINED);
     return result;
   }
 
@@ -183,6 +191,14 @@ final class HopMcpService implements AutoCloseable {
   Map<String, Object> metadataDependencies(String type, String name, int offset, int limit)
       throws Exception {
     return metadata.dependencies(type, name, offset, limit);
+  }
+
+  Map<String, Object> runtimeMetrics() {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("project_index", definitionIndex.metrics());
+    result.put("deep_checks", HopDeepCheckExecutor.metrics());
+    result.put("redaction_applied", true);
+    return Collections.unmodifiableMap(result);
   }
 
   Map<String, Object> testConnection(String name, int timeoutSeconds) throws Exception {
@@ -338,14 +354,9 @@ final class HopMcpService implements AutoCloseable {
             ProjectFiles.MAX_SCAN_FILES + ProjectFiles.MAX_STRUCTURED_RESULTS + 1,
             offset + limit + 1);
     searchDefinitions:
-    for (Path path : scan.files()) {
-      long size;
-      try {
-        size = java.nio.file.Files.size(path);
-      } catch (java.io.IOException | RuntimeException e) {
-        scanLimitReached = true;
-        continue;
-      }
+    for (BoundedProjectWalker.ScannedFile scannedFile : scan.files()) {
+      Path path = scannedFile.path();
+      long size = scannedFile.size();
       if (size > ProjectFiles.MAX_READ_BYTES
           || size > ProjectFiles.MAX_TOTAL_SCAN_BYTES - scannedBytes) {
         scanLimitReached = true;

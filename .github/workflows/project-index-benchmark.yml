@@ -1,0 +1,72 @@
+name: Project Definition Index Benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '19 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MAVEN_OPTS: -Xmx2g
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify index concurrency and bounded scan correctness
+        run: mvn -B '-Dtest=HopProjectDefinitionIndexTest,ProjectFilesBoundsTest' test
+      - name: Benchmark v2.2.1 on shared fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASELINE_DIR="$RUNNER_TEMP/hop-mcp-v2.2.1"
+          FIXTURES="$RUNNER_TEMP/hop-project-index-fixtures"
+          git worktree add --detach "$BASELINE_DIR" refs/tags/v2.2.1
+          mkdir -p "$BASELINE_DIR/src/test/java/io/github/michaaels/hop/mcp"
+          cp src/test/java/io/github/michaaels/hop/mcp/HopProjectDefinitionBenchmark.java \
+            "$BASELINE_DIR/src/test/java/io/github/michaaels/hop/mcp/HopProjectDefinitionBenchmark.java"
+          mvn -B -f "$BASELINE_DIR/pom.xml" clean test-compile
+          mvn -B -f "$BASELINE_DIR/pom.xml" \
+            -Dexec.classpathScope=test \
+            -Dexec.mainClass=io.github.michaaels.hop.mcp.HopProjectDefinitionBenchmark \
+            "-Dexec.args=$FIXTURES $RUNNER_TEMP/benchmark-baseline.json baseline" \
+            exec:java
+      - name: Benchmark current commit on the same fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURES="$RUNNER_TEMP/hop-project-index-fixtures"
+          mvn -B clean test-compile
+          mvn -B \
+            -Dexec.classpathScope=test \
+            -Dexec.mainClass=io.github.michaaels.hop.mcp.HopProjectDefinitionBenchmark \
+            "-Dexec.args=$FIXTURES $RUNNER_TEMP/benchmark-current.json current" \
+            exec:java
+      - name: Validate results and write comparison summary
+        run: |
+          python3 scripts/ci/compare-project-index-benchmarks.py \
+            --baseline "$RUNNER_TEMP/benchmark-baseline.json" \
+            --current "$RUNNER_TEMP/benchmark-current.json" \
+            --baseline-ref v2.2.1 \
+            --current-ref "$GITHUB_SHA" \
+            --json benchmark.json \
+            --csv benchmark.csv \
+            --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: project-index-benchmark-${{ github.run_id }}
+          path: |
+            benchmark.json
+            benchmark.csv
+          if-no-files-found: error

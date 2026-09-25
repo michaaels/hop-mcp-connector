@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +70,7 @@ class ProjectFilesBoundsTest {
 
     BoundedProjectWalker.ScanResult fileLimited =
         BoundedProjectWalker.scan(visitedRoot, null, path -> true, 1, 10, 1, 64);
-    assertEquals(1, fileLimited.scannedFiles());
+    assertEquals(1, fileLimited.regularFilesExamined());
     assertEquals(1, fileLimited.files().size());
     assertTrue(fileLimited.scanLimitReached());
 
@@ -94,9 +96,58 @@ class ProjectFilesBoundsTest {
     }
 
     BoundedProjectWalker.ScanResult scan = BoundedProjectWalker.scan(root, null, path -> true, 10);
-    assertEquals(0, scan.scannedFiles());
+    assertEquals(0, scan.regularFilesExamined());
     assertTrue(scan.files().isEmpty());
     assertFalse(scan.scanLimitReached());
+  }
+
+  @Test
+  void definitionResultLimitDoesNotCountNonHopFilesAsDefinitions() throws Exception {
+    Path root = Files.createDirectory(temp.resolve("mixed"));
+    write(root, "data/a.csv", "a");
+    write(root, "data/b.sql", "b");
+    write(root, "notes/c.txt", "c");
+    write(root, "flows/a.hpl", "pipeline");
+    write(root, "flows/b.hwf", "workflow");
+
+    BoundedProjectWalker.ScanResult scan = new ProjectFiles(root).definitionScan(2);
+
+    assertEquals(5, scan.regularFilesExamined());
+    assertEquals(List.of("flows/a.hpl", "flows/b.hwf"), relativePaths(root, scan.files()));
+    assertFalse(scan.resultsTruncated());
+    assertFalse(scan.scanLimitReached());
+  }
+
+  @Test
+  void walkerKeepsLexicographicallyStableResultsWhileScanningPastPageLimit() throws Exception {
+    Path root = Files.createDirectory(temp.resolve("stable-results"));
+    write(root, "z.txt", "z");
+    write(root, "a.txt", "a");
+    write(root, "y.txt", "y");
+    write(root, "b.txt", "b");
+
+    BoundedProjectWalker.ScanResult result =
+        BoundedProjectWalker.scan(root, null, ignored -> true, 2, 50, 50, 64);
+
+    assertEquals(List.of("a.txt", "b.txt"), relativePaths(root, result.files()));
+    assertEquals(4, result.regularFilesExamined());
+    assertTrue(result.resultsTruncated());
+  }
+
+  @Test
+  void walkerCarriesAttributesFromTheOriginalVisit() throws Exception {
+    Path root = Files.createDirectory(temp.resolve("attributes"));
+    Path file = write(root, "one.hpl", "pipeline");
+    FileTime modified = FileTime.fromMillis(1_700_000_000_000L);
+    Files.setLastModifiedTime(file, modified);
+
+    BoundedProjectWalker.ScannedFile scanned =
+        BoundedProjectWalker.scan(root, null, path -> true, 1).files().getFirst();
+
+    assertEquals(Files.size(file), scanned.size());
+    assertEquals(Files.getLastModifiedTime(file), scanned.lastModified());
+    assertEquals(
+        Files.readAttributes(file, BasicFileAttributes.class).fileKey(), scanned.fileKey());
   }
 
   @Test
@@ -178,10 +229,11 @@ class ProjectFilesBoundsTest {
     assertEquals("INTERNAL_PATH_DENIED", internalWrite.code());
   }
 
-  private static void write(Path root, String relative, String content) throws IOException {
+  private static Path write(Path root, String relative, String content) throws IOException {
     Path path = root.resolve(relative);
     Files.createDirectories(path.getParent());
     Files.writeString(path, content);
+    return path;
   }
 
   @SuppressWarnings("unchecked")
@@ -200,7 +252,11 @@ class ProjectFilesBoundsTest {
     return ((List<Map<String, Object>>) result.get(field)).getFirst().get(key);
   }
 
-  private static List<String> relativePaths(Path root, List<Path> paths) {
-    return paths.stream().map(path -> root.relativize(path).toString().replace('\\', '/')).toList();
+  private static List<String> relativePaths(
+      Path root, List<BoundedProjectWalker.ScannedFile> paths) {
+    return paths.stream()
+        .map(BoundedProjectWalker.ScannedFile::path)
+        .map(path -> root.relativize(path).toString().replace('\\', '/'))
+        .toList();
   }
 }

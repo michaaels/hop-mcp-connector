@@ -13,6 +13,7 @@ import org.apache.hop.core.exception.HopException;
 import org.apache.hop.metadata.api.HopMetadata;
 import org.apache.hop.metadata.api.HopMetadataBase;
 import org.apache.hop.metadata.api.HopMetadataProperty;
+import org.apache.hop.metadata.api.HopMetadataPropertyType;
 import org.apache.hop.metadata.api.IHopMetadata;
 import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 import org.junit.jupiter.api.Test;
@@ -67,9 +68,14 @@ class HopMetadataServiceTest {
     Map<?, ?> dependency = (Map<?, ?>) ((List<?>) dependencies.get("used_by")).get(0);
     assertEquals("flow.hpl", dependency.get("path"));
     assertEquals("Input", dependency.get("component"));
+    assertEquals("text_fallback", dependency.get("reference_source"));
   }
 
-  @HopMetadata(key = "secret-test", name = "Secret Test", description = "Test metadata")
+  @HopMetadata(
+      key = "secret-test",
+      name = "Secret Test",
+      description = "Test metadata",
+      hopMetadataPropertyType = HopMetadataPropertyType.RDBMS_CONNECTION)
   public static final class SecretMetadata extends HopMetadataBase implements IHopMetadata {
     @HopMetadataProperty private String host;
 

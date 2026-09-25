@@ -3,7 +3,7 @@ kind: hop-marketplace-catalog
 plugins:
   - groupId: io.github.michaaels
     artifactId: hop-mcp-connector
-    version: "2.2.1"
+    version: "2.2.2"
     name: MCP Connector for Apache Hop
     category: Community / AI
     description: Independent native Java MCP plugin for Apache Hop with bounded ETL inspection, metadata and execution observability, opt-in deep checks/execution, and transactional semantic authoring.

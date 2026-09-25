@@ -70,7 +70,7 @@ final class HopImpactAnalysisService {
       referenceTruncated |=
           current.referencesTruncated()
               || current.tablesTruncated()
-              || current.componentsTruncated();
+              || current.metadataReferencesTruncated();
       for (String reference : current.references()) {
         if (graphReferences >= MAX_GRAPH_REFERENCES) {
           graphTruncated = true;
@@ -134,7 +134,7 @@ final class HopImpactAnalysisService {
         result.add(definition.path());
       } else if (selector.isTable() && matchesTable(definition.tables(), selector.table())) {
         result.add(definition.path());
-      } else if (selector.isMetadata() && definition.containsText(selector.metadata())) {
+      } else if (selector.isMetadata() && hasMetadataReference(definition, selector)) {
         result.add(definition.path());
       }
     }
@@ -222,8 +222,22 @@ final class HopImpactAnalysisService {
     List<Map<String, Object>> result = new ArrayList<>();
     for (String path : nodes.keySet()) {
       HopProjectDefinitionIndex.Entry definition = definitions.get(path);
-      if (definition != null && definition.containsText(selector.metadata())) {
-        result.add(Map.of("path", path, "metadata", safe(selector.metadata())));
+      if (definition == null) continue;
+      for (HopProjectDefinitionIndex.MetadataReference reference :
+          definition.metadataReferences()) {
+        if (!matchesMetadataReference(reference, selector)) continue;
+        result.add(
+            Map.of(
+                "path",
+                path,
+                "metadata",
+                safe(reference.name()),
+                "type",
+                safe(reference.type()),
+                "component",
+                safe(reference.component()),
+                "reference_source",
+                reference.source().name().toLowerCase(Locale.ROOT)));
         if (result.size() >= MAX_METADATA_REFERENCES) return result;
       }
     }
@@ -307,6 +321,19 @@ final class HopImpactAnalysisService {
     }
   }
 
+  private static boolean hasMetadataReference(
+      HopProjectDefinitionIndex.Entry definition, Selector selector) {
+    return definition.metadataReferences().stream()
+        .anyMatch(reference -> matchesMetadataReference(reference, selector));
+  }
+
+  private static boolean matchesMetadataReference(
+      HopProjectDefinitionIndex.MetadataReference reference, Selector selector) {
+    return reference.name().equalsIgnoreCase(selector.metadataName())
+        && (selector.metadataType() == null
+            || reference.type().equalsIgnoreCase(selector.metadataType()));
+  }
+
   private static Selector selector(String table, String metadata, String definition)
       throws Exception {
     int count = count(table) + count(metadata) + count(definition);
@@ -315,7 +342,9 @@ final class HopImpactAnalysisService {
           "Exactly one of table, metadata or definition is required");
     }
     if (count(table) == 1) return Selector.table(requireSelector(table, "table"));
-    if (count(metadata) == 1) return Selector.metadata(requireSelector(metadata, "metadata"));
+    if (count(metadata) == 1) {
+      return Selector.metadata(requireSelector(metadata, "metadata"));
+    }
     return Selector.definition(requireSelector(definition, "definition"));
   }
 
@@ -363,17 +392,31 @@ final class HopImpactAnalysisService {
     return SensitiveData.redactText(value == null ? "" : value);
   }
 
-  private record Selector(String table, String metadata, String definition) {
+  private record Selector(
+      String table, String metadata, String metadataType, String metadataName, String definition) {
     private static Selector table(String value) {
-      return new Selector(value, null, null);
+      return new Selector(value, null, null, null, null);
     }
 
     private static Selector metadata(String value) {
-      return new Selector(null, value, null);
+      int separator = value.indexOf(':');
+      if (separator >= 0) {
+        String type = value.substring(0, separator).trim();
+        String name = value.substring(separator + 1).trim();
+        if (separator == 0
+            || separator == value.length() - 1
+            || value.lastIndexOf(':') != separator
+            || type.isEmpty()
+            || name.isEmpty()) {
+          throw new IllegalArgumentException("metadata must be NAME or TYPE:NAME");
+        }
+        return new Selector(null, value, type, name, null);
+      }
+      return new Selector(null, value, null, value, null);
     }
 
     private static Selector definition(String value) {
-      return new Selector(null, null, value);
+      return new Selector(null, null, null, null, value);
     }
 
     private boolean isTable() {
