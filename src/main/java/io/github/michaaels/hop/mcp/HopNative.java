@@ -191,6 +191,33 @@ final class HopNative {
       int timeoutSeconds,
       AtomicReference<String> logChannelId)
       throws Exception {
+    HopExecutionLifecycle lifecycle = new HopExecutionLifecycle(() -> {});
+    try {
+      return execute(
+          file,
+          variables,
+          metadataProvider,
+          runConfigurationName,
+          parameters,
+          timeoutSeconds,
+          logChannelId,
+          lifecycle);
+    } finally {
+      lifecycle.callerFinished();
+    }
+  }
+
+  static Map<String, Object> execute(
+      Path file,
+      IVariables variables,
+      IHopMetadataProvider metadataProvider,
+      String runConfigurationName,
+      Map<String, String> parameters,
+      int timeoutSeconds,
+      AtomicReference<String> logChannelId,
+      HopExecutionLifecycle lifecycle)
+      throws Exception {
+    lifecycle.checkCancellation();
     if (variables == null || metadataProvider == null) {
       throw new IllegalStateException(
           "Hop execution requires an initialized variables space and metadata provider");
@@ -213,7 +240,8 @@ final class HopNative {
           configuration,
           parameters,
           timeoutSeconds,
-          logChannelId);
+          logChannelId,
+          lifecycle);
     }
     if (name.endsWith(".hwf")) {
       ensureLocalWorkflowConfiguration(configuration, metadataProvider);
@@ -224,7 +252,8 @@ final class HopNative {
           configuration,
           parameters,
           timeoutSeconds,
-          logChannelId);
+          logChannelId,
+          lifecycle);
     }
     throw new IllegalArgumentException("Execution supports .hpl and .hwf only");
   }
@@ -236,25 +265,32 @@ final class HopNative {
       String configuration,
       Map<String, String> parameters,
       int timeoutSeconds,
-      AtomicReference<String> logChannelId)
+      AtomicReference<String> logChannelId,
+      HopExecutionLifecycle lifecycle)
       throws Exception {
     AtomicReference<IPipelineEngine<PipelineMeta>> engineRef = new AtomicReference<>();
     ExecutorService executor = executionExecutor();
     long started = System.currentTimeMillis();
     Future<Map<String, Object>> future =
-        executor.submit(
+        submitExecution(
+            executor,
+            lifecycle,
             () -> {
               IPipelineEngine<PipelineMeta> engine = null;
               try {
+                lifecycle.checkCancellation();
                 PipelineMeta meta = new PipelineMeta(file.toString(), metadataProvider, variables);
+                lifecycle.checkCancellation();
                 engine =
                     PipelineEngineFactory.createPipelineEngine(
                         variables, configuration, metadataProvider, meta);
                 engineRef.set(engine);
+                lifecycle.checkCancellation();
                 if (logChannelId != null) logChannelId.set(engine.getLogChannelId());
                 applyParameters(engine, parameters);
                 engine.activateParameters(engine);
                 engine.prepareExecution();
+                lifecycle.checkCancellation();
                 engine.startThreads();
                 engine.waitUntilFinished();
                 return pipelineResult(file, configuration, engine, started, false);
@@ -265,15 +301,23 @@ final class HopNative {
     try {
       return future.get(timeoutSeconds, TimeUnit.SECONDS);
     } catch (InterruptedException e) {
+      lifecycle.cancel();
       IPipelineEngine<PipelineMeta> engine = engineRef.get();
-      if (engine != null) engine.stopAll();
-      future.cancel(true);
-      Thread.currentThread().interrupt();
+      try {
+        if (engine != null) engine.stopAll();
+      } finally {
+        future.cancel(true);
+        Thread.currentThread().interrupt();
+      }
       throw e;
     } catch (TimeoutException e) {
+      lifecycle.cancel();
       IPipelineEngine<PipelineMeta> engine = engineRef.get();
-      if (engine != null) engine.stopAll();
-      future.cancel(true);
+      try {
+        if (engine != null) engine.stopAll();
+      } finally {
+        future.cancel(true);
+      }
       return timeoutResult(
           file, configuration, engine == null ? null : engine.getLogChannelId(), started);
     } finally {
@@ -288,16 +332,21 @@ final class HopNative {
       String configuration,
       Map<String, String> parameters,
       int timeoutSeconds,
-      AtomicReference<String> logChannelId)
+      AtomicReference<String> logChannelId,
+      HopExecutionLifecycle lifecycle)
       throws Exception {
     AtomicReference<IWorkflowEngine<WorkflowMeta>> engineRef = new AtomicReference<>();
     ExecutorService executor = executionExecutor();
     long started = System.currentTimeMillis();
     Future<Map<String, Object>> future =
-        executor.submit(
+        submitExecution(
+            executor,
+            lifecycle,
             () -> {
               IWorkflowEngine<WorkflowMeta> engine = null;
+              lifecycle.checkCancellation();
               WorkflowMeta meta = new WorkflowMeta(variables, file.toString(), metadataProvider);
+              lifecycle.checkCancellation();
               engine =
                   WorkflowEngineFactory.createWorkflowEngine(
                       variables,
@@ -306,26 +355,36 @@ final class HopNative {
                       meta,
                       new LoggingObject("ApacheHopMCP"));
               engineRef.set(engine);
+              lifecycle.checkCancellation();
               if (logChannelId != null) {
                 logChannelId.set(engine.getLogChannel().getLogChannelId());
               }
               applyParameters(engine, parameters);
               engine.activateParameters(engine);
+              lifecycle.checkCancellation();
               Result result = engine.startExecution();
               return workflowResult(file, configuration, engine, result, started, false);
             });
     try {
       return future.get(timeoutSeconds, TimeUnit.SECONDS);
     } catch (InterruptedException e) {
+      lifecycle.cancel();
       IWorkflowEngine<WorkflowMeta> engine = engineRef.get();
-      if (engine != null) engine.stopExecution();
-      future.cancel(true);
-      Thread.currentThread().interrupt();
+      try {
+        if (engine != null) engine.stopExecution();
+      } finally {
+        future.cancel(true);
+        Thread.currentThread().interrupt();
+      }
       throw e;
     } catch (TimeoutException e) {
+      lifecycle.cancel();
       IWorkflowEngine<WorkflowMeta> engine = engineRef.get();
-      if (engine != null) engine.stopExecution();
-      future.cancel(true);
+      try {
+        if (engine != null) engine.stopExecution();
+      } finally {
+        future.cancel(true);
+      }
       return timeoutResult(
           file,
           configuration,
@@ -343,6 +402,38 @@ final class HopNative {
           thread.setDaemon(true);
           return thread;
         });
+  }
+
+  static <T> Future<T> submitExecution(
+      ExecutorService executor,
+      HopExecutionLifecycle lifecycle,
+      java.util.concurrent.Callable<T> action)
+      throws InterruptedException {
+    lifecycle.registerWorker();
+    var task =
+        new java.util.concurrent.FutureTask<T>(
+            () -> {
+              if (!lifecycle.workerStarted()) throw new InterruptedException("Execution cancelled");
+              try {
+                lifecycle.checkCancellation();
+                return action.call();
+              } finally {
+                lifecycle.workerFinished();
+              }
+            }) {
+          @Override
+          protected void done() {
+            if (isCancelled()) lifecycle.cancelBeforeWorkerStarts();
+          }
+        };
+    try {
+      executor.execute(task);
+      return task;
+    } catch (RuntimeException failure) {
+      lifecycle.cancelBeforeWorkerStarts();
+      executor.shutdownNow();
+      throw failure;
+    }
   }
 
   private static void ensureLocalPipelineConfiguration(

@@ -854,7 +854,7 @@ final class HopMcpServer implements AutoCloseable {
         a -> service.rollbackMutation(s(a, "transaction_id"), s(a, "expected_sha256")));
     add(
         "hop_web_request",
-        "Call a configured Hop Web REST endpoint with GET or HEAD. Disabled unless started with --allow-web-api; paths remain inside the configured base URL and sensitive response data is redacted.",
+        "Read a configured Hop status, pipelineStatus or workflowStatus endpoint with GET or HEAD. Disabled unless started with --allow-web-api; other endpoints are denied, paths remain inside the configured base URL and sensitive response data is redacted.",
         schema(
             Map.of(
                 "method",
@@ -977,7 +977,7 @@ final class HopMcpServer implements AutoCloseable {
         .build();
   }
 
-  private static Map<String, Object> outputSchemaFor(String name) {
+  static Map<String, Object> outputSchemaFor(String name) {
     Map<String, Object> result =
         switch (name) {
           case "hop_config" -> configOutputSchema();
@@ -2933,26 +2933,38 @@ final class HopMcpServer implements AutoCloseable {
   private static Map<String, Object> executionStatusOutputSchema() {
     return toolOutputSchema(
         fields(
-            "operation_id", boundedString(64, "Execution operation ID"),
-            "path", boundedString(4096, "Project-relative definition path"),
-            "run_configuration", boundedString(256, "Hop run configuration"),
-            "state", enumStr("running", "completed", "timed_out", "failed", "stopped", "stopping"),
+            "operation_id",
+            boundedString(64, "Execution operation ID"),
+            "path",
+            boundedString(4096, "Project-relative definition path"),
+            "run_configuration",
+            boundedString(256, "Hop run configuration"),
+            "state",
+            enumStr("running", "completed", "timed_out", "failed", "stopped", "stopping"),
             "started_at",
-                boundedInteger(0, Long.MAX_VALUE, "Execution start time in epoch milliseconds"),
-            "active_executions", nonNegativeInteger("Currently active executions"),
+            boundedInteger(0, Long.MAX_VALUE, "Execution start time in epoch milliseconds"),
+            "active_executions",
+            nonNegativeInteger("Currently active executions"),
+            "native_worker_active",
+            bool("Whether the connector's native worker is still active"),
             "finished_at",
-                boundedInteger(0, Long.MAX_VALUE, "Execution finish time in epoch milliseconds"),
-            "log_channel_id", boundedString(128, "Hop log channel identifier"),
-            "result", executionResultSchema(),
-            "error", executionErrorSchema(),
-            "stop_requested", bool("Whether cancellation was requested")),
+            boundedInteger(0, Long.MAX_VALUE, "Execution finish time in epoch milliseconds"),
+            "log_channel_id",
+            boundedString(128, "Hop log channel identifier"),
+            "result",
+            executionResultSchema(),
+            "error",
+            executionErrorSchema(),
+            "stop_requested",
+            bool("Whether cancellation was requested")),
         List.of(
             "operation_id",
             "path",
             "run_configuration",
             "state",
             "started_at",
-            "active_executions"));
+            "active_executions",
+            "native_worker_active"));
   }
 
   private static Map<String, Object> executionHistoryOutputSchema() {
@@ -3034,10 +3046,15 @@ final class HopMcpServer implements AutoCloseable {
         "depth",
         boundedInteger(
             1, HopExecutionRepository.MAX_CHILDREN_DEPTH, "Depth from the root execution"));
+    childProperties.put(
+        "via_execution_id", boundedString(256, "Native ID traversed to this child"));
+    childProperties.put("relationship", enumStr("parent", "launcher"));
     @SuppressWarnings("unchecked")
     List<String> required = (List<String>) child.get("required");
     required = new ArrayList<>(required);
     required.add("depth");
+    required.add("via_execution_id");
+    required.add("relationship");
     child.put("required", required);
     return toolOutputSchema(
         fields(
@@ -3050,6 +3067,10 @@ final class HopMcpServer implements AutoCloseable {
             "max_nodes",
                 boundedInteger(1, HopExecutionRepository.MAX_CHILDREN_NODES, "Applied node bound"),
             "visited", nonNegativeInteger("Visited execution IDs"),
+            "scanned",
+                boundedInteger(
+                    0, HopExecutionRepository.MAX_HISTORY_SCAN + 1, "Native execution IDs read"),
+            "scan_truncated", bool("Whether the native execution scan hit its bound"),
             "returned",
                 boundedInteger(
                     0, HopExecutionRepository.MAX_CHILDREN_NODES, "Returned child executions"),
@@ -3061,6 +3082,8 @@ final class HopMcpServer implements AutoCloseable {
             "max_depth",
             "max_nodes",
             "visited",
+            "scanned",
+            "scan_truncated",
             "returned",
             "truncated",
             "children"));
@@ -3159,6 +3182,11 @@ final class HopMcpServer implements AutoCloseable {
             "name", boundedString(512, "Native execution name"),
             "type", boundedString(32, "Native pipeline or workflow type"),
             "parent_id", boundedString(256, "Parent execution ID"),
+            "owner_execution_id",
+                boundedString(256, "Owner ID when explicitly recorded with a launcher"),
+            "launched_by_id", boundedString(256, "Native component launcher ID when available"),
+            "parent_relationship",
+                enumStr("none", "unresolved", "launcher_only", "owner_and_launcher"),
             "run_configuration", boundedString(256, "Native run configuration name"),
             "registration_epoch_ms", nonNegativeInteger("Registration time"),
             "start_epoch_ms", nonNegativeInteger("Execution start time"),
@@ -3173,6 +3201,9 @@ final class HopMcpServer implements AutoCloseable {
             "name",
             "type",
             "parent_id",
+            "owner_execution_id",
+            "launched_by_id",
+            "parent_relationship",
             "run_configuration",
             "registration_epoch_ms",
             "start_epoch_ms",

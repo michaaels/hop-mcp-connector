@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Keep asynchronous execution capacity reserved while a cancelled native worker remains active. Report `native_worker_active`, retain `stopping` until the caller and worker exit, and add cancellation checkpoints between native startup phases. Cover queued cancellation, interruption-resistant workers, timeout and submission rejection.
+- Restrict Hop Web reads to native status, pipelineStatus and workflowStatus endpoints before HTTP dispatch. Deny unknown endpoints, mutating GET/HEAD routes including getExecInfo, ambiguous path encodings and routing override headers.
+- Preserve native parent IDs while exposing explicit owner/launcher relationships when available in Hop 2.20, without linking the Hop 2.19 artifact to the optional API or guessing the meaning of old records.
+- Bound child discovery to one native ID scan, retain cycle/node/depth protection, report scan truncation and identify the traversed parent/launcher edge.
+- Extend compatibility verification with test-only Hop 2.20 Watch Files, OpenFormula and Pipeline Executor plugin jars, semantic round trips, XML hardening and JDBC cancellation fixtures. These dependencies are not bundled in the Marketplace ZIP.
+
 ## 2.2.6 - 2026-10-01
 
 - Kept command stdout reserved for MCP through process exit, so late native pipeline logs after timeout, EOF or startup failure remain on stderr. Added deterministic late-worker regression tests.
