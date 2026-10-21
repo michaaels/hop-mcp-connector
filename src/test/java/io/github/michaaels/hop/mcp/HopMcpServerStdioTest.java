@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.hop.core.HopEnvironment;
@@ -581,13 +582,22 @@ class HopMcpServerStdioTest {
             OUTPUT_VALIDATOR.validate(outputSchemas.get("hop_execute"), timeoutContent).valid());
         Map<String, Object> nestedTimeout =
             Map.of(
-                "operation_id", "00000000-0000-0000-0000-000000000000",
-                "path", "valid.hpl",
-                "run_configuration", "local",
-                "state", "timed_out",
-                "started_at", 0,
-                "active_executions", 0,
-                "result", timeoutContent);
+                "operation_id",
+                "00000000-0000-0000-0000-000000000000",
+                "path",
+                "valid.hpl",
+                "run_configuration",
+                "local",
+                "state",
+                "timed_out",
+                "started_at",
+                0,
+                "active_executions",
+                0,
+                "native_worker_active",
+                false,
+                "result",
+                timeoutContent);
         assertTrue(
             OUTPUT_VALIDATOR
                 .validate(outputSchemas.get("hop_execution_status"), nestedTimeout)
@@ -784,10 +794,12 @@ class HopMcpServerStdioTest {
   @Test
   void validatesWebRequestOutputSchemaOverStdio() throws Exception {
     HttpServer web = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    AtomicInteger httpRequests = new AtomicInteger();
     byte[] body = "credentials=web-secret".getBytes(StandardCharsets.UTF_8);
     web.createContext(
-        "/api/status",
+        "/",
         exchange -> {
+          httpRequests.incrementAndGet();
           exchange.sendResponseHeaders(200, body.length);
           exchange.getResponseBody().write(body);
           exchange.close();
@@ -796,7 +808,7 @@ class HopMcpServerStdioTest {
     try {
       HopWebClient webClient =
           new HopWebClient(
-              "http://127.0.0.1:" + web.getAddress().getPort() + "/api", null, null, null, 5);
+              "http://127.0.0.1:" + web.getAddress().getPort() + "/api/hop", null, null, null, 5);
       try (PipedInputStream serverInput = new PipedInputStream();
           PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
           PipedInputStream clientInput = new PipedInputStream();
@@ -832,6 +844,23 @@ class HopMcpServerStdioTest {
         assertSuccessfulToolResponse(webResponse, 3);
         assertStructuredOutputConforms(webResponse, "hop_web_request", outputSchemas);
         assertFalse(webResponse.contains("web-secret"), webResponse);
+        int responseId = 4;
+        for (String path : List.of("startPipeline", "getExecInfo?type=DELETE", "unknownEndpoint")) {
+          for (String method : List.of("GET", "HEAD")) {
+            requests.println(
+                toolCall(
+                    responseId,
+                    "hop_web_request",
+                    JsonUtil.toJson(Map.of("method", method, "path", path))));
+            String rejected = responses.readResponse();
+            assertResponseId(rejected, responseId++);
+            assertEquals(
+                Boolean.TRUE, ((Map<?, ?>) parseObject(rejected).get("result")).get("isError"));
+            assertTrue(rejected.contains("WEB_ENDPOINT_NOT_READ_ONLY"), rejected);
+            assertStructuredOutputConforms(rejected, "hop_web_request", outputSchemas);
+          }
+        }
+        assertEquals(1, httpRequests.get());
         clientOutput.close();
         server.awaitEof();
       }

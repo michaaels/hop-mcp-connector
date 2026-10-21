@@ -54,6 +54,38 @@ class HopXmlTest {
   }
 
   @Test
+  void hopDoctypeOptInDoesNotRelaxTheMcpParser() throws Exception {
+    String key = org.apache.hop.core.Const.XML_ALLOW_DOCTYPE_DECL;
+    String previous = System.getProperty(key);
+    try {
+      System.setProperty(key, "Y");
+      assertThrows(
+          Exception.class,
+          () ->
+              HopXml.parse(
+                  "<!DOCTYPE pipeline [<!ENTITY value 'expanded'>]><pipeline>&value;</pipeline>"));
+      Path secret = Files.writeString(temp.resolve("external.txt"), "external-secret");
+      assertThrows(
+          Exception.class,
+          () ->
+              HopXml.parse(
+                  "<!DOCTYPE pipeline [<!ENTITY value SYSTEM '"
+                      + secret.toUri()
+                      + "'>]><pipeline>&value;</pipeline>"));
+      var document =
+          HopXml.parse(
+              "<pipeline xmlns:xi='http://www.w3.org/2001/XInclude'><xi:include href='"
+                  + secret.toUri()
+                  + "' parse='text'/></pipeline>");
+      assertFalse(document.getDocumentElement().getTextContent().contains("external-secret"));
+      assertEquals(1, document.getElementsByTagName("xi:include").getLength());
+    } finally {
+      if (previous == null) System.clearProperty(key);
+      else System.setProperty(key, previous);
+    }
+  }
+
+  @Test
   void projectRootRejectsEscape() throws Exception {
     Files.writeString(temp.resolve("a.txt"), "ok");
     ProjectFiles files = new ProjectFiles(temp);
