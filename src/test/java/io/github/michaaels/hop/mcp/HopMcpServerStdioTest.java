@@ -753,6 +753,12 @@ class HopMcpServerStdioTest {
         clientOutput.close();
         server.awaitEof();
       }
+    } catch (Exception | AssertionError failure) {
+      String captured = HopXml.redact(unexpectedStdout.toString(StandardCharsets.UTF_8));
+      failure.addSuppressed(
+          new IOException(
+              "Captured stdout: " + captured.substring(0, Math.min(16384, captured.length()))));
+      throw failure;
     } finally {
       System.setOut(originalStdout);
     }
@@ -808,6 +814,54 @@ class HopMcpServerStdioTest {
       assertFalse(tools.contains("hop_mutate_definition"), tools);
       assertFalse(tools.contains("hop_web_request"), tools);
       clientOutput.close();
+      server.awaitEof();
+    }
+  }
+
+  @Test
+  void pipelinedSuccessAndValidationErrorsKeepTheSessionUsable() throws Exception {
+    try (TestPipe toServer = TestPipe.open();
+        TestPipe toClient = TestPipe.open();
+        ResponsePump responses = new ResponsePump(toClient.input(), toClient.output());
+        PrintWriter requests = new PrintWriter(toServer.output(), true, StandardCharsets.UTF_8);
+        HopMcpServer server =
+            new HopMcpServer(
+                new HopMcpService(
+                    new ProjectFiles(project),
+                    new Variables(),
+                    new MemoryMetadataProvider(),
+                    false,
+                    false,
+                    false,
+                    false,
+                    null),
+                toServer.input(),
+                toClient.output())) {
+      requests.println(
+          "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"pipelined-test\",\"version\":\"1\"}}}");
+      assertResponseId(responses.readResponse(), 1);
+      requests.println(
+          "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
+      for (int id = 100; id < 132; id++) {
+        requests.println(
+            id % 2 == 0
+                ? toolCall(id, "hop_config", "{}")
+                : toolCall(id, "hop_validate", "{\"path\":42}"));
+      }
+      java.util.Set<Integer> received = new java.util.HashSet<>();
+      for (int index = 0; index < 32; index++) {
+        String response = responses.readResponse();
+        int id = ((Number) parseObject(response).get("id")).intValue();
+        assertTrue(id >= 100 && id < 132, response);
+        assertTrue(received.add(id), "Duplicate response ID: " + id);
+        if (id % 2 == 0) assertSuccessfulToolResponse(response, id);
+        else
+          assertEquals(
+              Boolean.TRUE, objectValue(parseObject(response).get("result")).get("isError"));
+      }
+      requests.println(toolCall(1000, "hop_config", "{}"));
+      assertSuccessfulToolResponse(responses.readResponse(), 1000);
+      toServer.output().close();
       server.awaitEof();
     }
   }
@@ -1016,6 +1070,24 @@ class HopMcpServerStdioTest {
         assertNotNull(line, "MCP server closed STDIO before returning a response");
         return line;
       } catch (Exception | AssertionError failure) {
+        if (failure instanceof TimeoutException) {
+          StringBuilder threads = new StringBuilder("STDIO timeout thread stacks:");
+          Thread.getAllStackTraces().entrySet().stream()
+              .limit(64)
+              .forEach(
+                  entry -> {
+                    Thread thread = entry.getKey();
+                    threads
+                        .append('\n')
+                        .append(thread.getName())
+                        .append(' ')
+                        .append(thread.getState());
+                    java.util.Arrays.stream(entry.getValue())
+                        .limit(32)
+                        .forEach(frame -> threads.append("\n  ").append(frame));
+                  });
+          failure.addSuppressed(new IOException(threads.toString()));
+        }
         pending.cancel(true);
         try {
           output.close();

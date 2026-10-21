@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade the MCP Java SDK to 2.1.0, including its native STDIO concurrent-send fix for `Failed to enqueue message`. Add pipelined success/schema-error regression coverage and bounded timeout diagnostics; keep protocol baseline 2025-11-25.
+- Update test-only embedded Tomcat to 11.0.27 and refresh the pinned setup-java, setup-node and artifact Actions. Tomcat is not included in the Marketplace runtime.
 - Replace thread-sensitive Java piped streams in STDIO integration tests with NIO pipes. Add a regression for response-writer exit and handoff while retaining timeout and EOF cleanup checks.
 - Keep asynchronous execution capacity reserved while a cancelled native worker remains active. Report `native_worker_active`, retain `stopping` until the caller and worker exit, and add cancellation checkpoints between native startup phases. Cover queued cancellation, interruption-resistant workers, timeout and submission rejection.
 - Restrict Hop Web reads to native status, pipelineStatus and workflowStatus endpoints before HTTP dispatch. Deny unknown endpoints, mutating GET/HEAD routes including getExecInfo, ambiguous path encodings and routing override headers.

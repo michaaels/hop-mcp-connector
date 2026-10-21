@@ -14,7 +14,7 @@ Maintain a small, secure, native-Java MCP plugin for Apache Hop. The Marketplace
 
 - Java 21.
 - Apache Hop 2.19.0 Maven compile baseline; 2.20.0-SNAPSHOT compatibility profile.
-- MCP Java SDK 2.0.1; protocol baseline 2025-11-25.
+- MCP Java SDK 2.1.0; protocol baseline 2025-11-25.
 - Production transport is STDIO.
 - Maven coordinate: `io.github.michaaels:hop-mcp-connector`.
 - Product name: `MCP Connector for Apache Hop`.
