@@ -460,6 +460,9 @@ final class HopDiagnosisService {
   private static void addExecutionFacts(
       List<Map<String, Object>> facts, Map<String, Object> summary, Map<String, Object> detail) {
     addFact(facts, "execution.status", "execution", "status", safeText(summary.get("status"), 64));
+    for (String field : List.of("owner_execution_id", "launched_by_id", "parent_relationship")) {
+      addFact(facts, "execution." + field, "execution", field, safeText(summary.get(field), 256));
+    }
     addFact(
         facts,
         "execution.failed",

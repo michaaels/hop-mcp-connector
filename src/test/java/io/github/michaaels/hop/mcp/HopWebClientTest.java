@@ -10,6 +10,7 @@ import java.net.InetSocketAddress;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -25,29 +26,33 @@ class HopWebClientTest {
   private AtomicReference<String> requestPath;
   private AtomicReference<String> authorization;
   private AtomicInteger redirectTargetRequests;
+  private AtomicInteger requestsReceived;
 
   @BeforeEach
   void setUp() throws Exception {
     requestPath = new AtomicReference<>();
     authorization = new AtomicReference<>();
     redirectTargetRequests = new AtomicInteger();
+    requestsReceived = new AtomicInteger();
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext(
-        "/hop",
+        "/",
         exchange -> {
+          requestsReceived.incrementAndGet();
           requestPath.set(exchange.getRequestURI().toString());
           authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
           String path = exchange.getRequestURI().getPath();
-          if ("/hop/redirect".equals(path)) {
-            exchange.getResponseHeaders().add("Location", "/hop/final");
+          String query = exchange.getRequestURI().getRawQuery();
+          if ("fixture=redirect".equals(query)) {
+            exchange.getResponseHeaders().add("Location", "/hop/startPipeline");
             exchange.sendResponseHeaders(302, -1);
             exchange.close();
             return;
           }
-          if ("/hop/final".equals(path)) {
+          if ("/hop/startPipeline".equals(path)) {
             redirectTargetRequests.incrementAndGet();
           }
-          if ("/hop/large".equals(path)) {
+          if ("fixture=large".equals(query)) {
             exchange.getResponseHeaders().add("X-Large", "h".repeat(4096));
             byte[] largeResponse = new byte[HopWebClient.MAX_RESPONSE_READ_BYTES + 1024];
             Arrays.fill(largeResponse, (byte) 'a');
@@ -56,7 +61,7 @@ class HopWebClientTest {
             exchange.close();
             return;
           }
-          if ("/hop/unicode".equals(path)) {
+          if ("fixture=unicode".equals(query)) {
             byte[] response =
                 ("a".repeat(HopWebClient.MAX_WEB_BODY_RETURN_BYTES - 1) + "éz")
                     .getBytes(StandardCharsets.UTF_8);
@@ -89,7 +94,7 @@ class HopWebClientTest {
     CountDownLatch releaseBody = new CountDownLatch(1);
     CountDownLatch handlerFinished = new CountDownLatch(1);
     server.createContext(
-        "/hop/stalled",
+        "/hop/pipelineStatus",
         exchange -> {
           try {
             exchange.sendResponseHeaders(200, 2);
@@ -113,7 +118,7 @@ class HopWebClientTest {
               () ->
                   assertThrows(
                       HttpTimeoutException.class,
-                      () -> client.request("GET", "/stalled", Map.of())));
+                      () -> client.request("GET", "/pipelineStatus", Map.of())));
       try {
         assertTrue(bodyStarted.await(5, TimeUnit.SECONDS));
         request.get(3, TimeUnit.SECONDS);
@@ -130,7 +135,7 @@ class HopWebClientTest {
     CountDownLatch started = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
     server.createContext(
-        "/hop/interrupted",
+        "/hop/workflowStatus",
         exchange -> {
           try {
             exchange.sendResponseHeaders(200, 2);
@@ -153,7 +158,7 @@ class HopWebClientTest {
             .start(
                 () -> {
                   try {
-                    client.request("GET", "/interrupted", Map.of());
+                    client.request("GET", "/workflowStatus", Map.of());
                   } catch (Throwable exception) {
                     failure.set(exception);
                   }
@@ -276,10 +281,10 @@ class HopWebClientTest {
   void requestDoesNotFollowRedirects() throws Exception {
     HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
 
-    Map<String, Object> result = client.request("GET", "/redirect", Map.of());
+    Map<String, Object> result = client.request("GET", "/status?fixture=redirect", Map.of());
 
     assertEquals(302, result.get("status"));
-    assertEquals("/hop/redirect", requestPath.get());
+    assertEquals("/hop/status?fixture=redirect", requestPath.get());
     assertEquals(0, redirectTargetRequests.get());
   }
 
@@ -287,7 +292,7 @@ class HopWebClientTest {
   void requestBoundsReturnedBodyAndLargeResponseHeaders() throws Exception {
     HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
 
-    Map<String, Object> result = client.request("GET", "/large", Map.of());
+    Map<String, Object> result = client.request("GET", "/status?fixture=large", Map.of());
 
     assertEquals(HopWebClient.MAX_RESPONSE_READ_BYTES, result.get("body_bytes"));
     assertEquals(HopWebClient.MAX_WEB_BODY_RETURN_BYTES, result.get("returned_bytes"));
@@ -303,7 +308,7 @@ class HopWebClientTest {
   void requestTruncatesBodyAtUtf8CodePointBoundary() throws Exception {
     HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
 
-    Map<String, Object> result = client.request("GET", "/unicode", Map.of());
+    Map<String, Object> result = client.request("GET", "/status?fixture=unicode", Map.of());
 
     assertEquals(HopWebClient.MAX_WEB_BODY_RETURN_BYTES - 1, result.get("returned_bytes"));
     assertEquals("a".repeat(HopWebClient.MAX_WEB_BODY_RETURN_BYTES - 1), result.get("body"));
@@ -326,6 +331,83 @@ class HopWebClientTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> client.request("GET", "/status", Map.of("Authorization", "Bearer secret")));
+  }
+
+  @Test
+  void rejectsMutatingAndUnknownGetAndHeadEndpointsBeforeHttp() {
+    HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
+    for (String method : List.of("GET", "HEAD")) {
+      for (String path :
+          List.of(
+              "startPipeline?name=orders",
+              "execPipeline?file=orders.hpl",
+              "startWorkflow",
+              "execWorkflow",
+              "stopPipeline",
+              "stopWorkflow",
+              "removePipeline",
+              "removeWorkflow",
+              "getExecInfo?type=DELETE&location=local&id=run",
+              "getExecInfo?type=STATE",
+              "unknownPluginEndpoint",
+              "status/extra",
+              "Status",
+              "")) {
+        McpException failure =
+            assertThrows(
+                McpException.class,
+                () -> client.request(method, path.isEmpty() ? "/" : path, Map.of()),
+                path);
+        assertEquals("WEB_ENDPOINT_NOT_READ_ONLY", failure.code());
+      }
+    }
+    assertEquals(0, requestsReceived.get());
+  }
+
+  @Test
+  void rejectsAlternatePathInterpretationsAndRoutingHeadersBeforeHttp() {
+    HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
+    for (String path :
+        List.of(
+            "status;endpoint=startPipeline",
+            "status/../startPipeline",
+            "./status",
+            "%73tatus",
+            "status%3b/../startPipeline",
+            "status//../startPipeline",
+            "%2573tatus",
+            "hop//status",
+            "status%00",
+            "status%3Ftype=DELETE")) {
+      assertThrows(
+          IllegalArgumentException.class, () -> client.request("GET", path, Map.of()), path);
+    }
+    for (String header :
+        List.of("X-Original-URL", "X-Rewrite-URL", "X-Forwarded-Uri", "X-HTTP-Method-Override")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> client.request("GET", "status", Map.of(header, "/hop/startPipeline")),
+          header);
+    }
+    assertEquals(0, requestsReceived.get());
+  }
+
+  @Test
+  void authorizesTheCompleteNativePathIncludingTheConfiguredBase() throws Exception {
+    String origin = "http://127.0.0.1:" + server.getAddress().getPort();
+    HopWebClient unsafeBase = new HopWebClient(origin + "/hop/startPipeline", null, null, null, 5);
+    assertThrows(McpException.class, () -> unsafeBase.request("GET", "status", Map.of()));
+    HopWebClient unknownBase = new HopWebClient(origin + "/api", null, null, null, 5);
+    assertThrows(McpException.class, () -> unknownBase.request("GET", "status", Map.of()));
+    assertEquals(0, requestsReceived.get());
+
+    HopWebClient prefixed = new HopWebClient(origin + "/proxy/hop", null, null, null, 5);
+    for (String endpoint : List.of("status", "pipelineStatus", "workflowStatus")) {
+      assertEquals(200, prefixed.request("GET", endpoint, Map.of()).get("status"));
+      assertEquals("/proxy/hop/" + endpoint, requestPath.get());
+    }
+    HopWebClient originBase = new HopWebClient(origin, null, null, null, 5);
+    assertEquals(200, originBase.request("GET", "hop/status", Map.of()).get("status"));
   }
 
   private String baseUrl() {

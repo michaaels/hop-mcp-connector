@@ -1,9 +1,11 @@
 package io.github.michaaels.hop.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.modelcontextprotocol.json.schema.jackson3.JacksonJsonSchemaValidatorSupplier;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,11 +56,13 @@ class HopExecutionRepositoryTest {
     Map<String, Object> history =
         repository.history("local", "orders", "finished", 900L, 1600L, 0, 10);
     assertEquals(1, history.get("count"));
+    assertSchemaConforms("hop_execution_history", history);
     assertEquals(
         "pipelines/orders.hpl",
         ((Map<?, ?>) ((List<?>) history.get("executions")).get(0)).get("path"));
 
     Map<String, Object> detail = repository.detail("local", "root");
+    assertSchemaConforms("hop_execution_detail", detail);
     assertEquals(true, detail.get("logging_available") == Boolean.FALSE);
     assertEquals(1, ((List<?>) detail.get("metrics")).size());
     assertEquals(
@@ -67,6 +71,7 @@ class HopExecutionRepositoryTest {
             .get("Rows read"));
 
     Map<String, Object> children = repository.children("local", "root", 2, 10);
+    assertSchemaConforms("hop_execution_children", children);
     assertEquals(1, children.get("returned"));
     assertEquals(
         "child", ((Map<?, ?>) ((List<?>) children.get("children")).get(0)).get("execution_id"));
@@ -175,6 +180,165 @@ class HopExecutionRepositoryTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> repository.history("", null, null, null, null, 0, 10));
+  }
+
+  @Test
+  void preservesAmbiguousLegacyParentsEvenOnANewRuntime() throws Exception {
+    Path root = Files.createTempDirectory("hop-mcp-legacy-parent").toRealPath();
+    Execution legacy = execution("run", root.resolve("run.hpl").toString(), "old-launcher", 1000);
+    HopExecutionRepository repository =
+        new HopExecutionRepository(
+            new ProjectFiles(root),
+            null,
+            null,
+            (name, action) -> action.apply(fakeLocation(Map.of("run", legacy), Map.of())));
+    Map<?, ?> row = (Map<?, ?>) repository.detail("local", "run").get("execution");
+    assertEquals("old-launcher", row.get("parent_id"));
+    assertEquals("", row.get("owner_execution_id"));
+    assertEquals("", row.get("launched_by_id"));
+    assertEquals("unresolved", row.get("parent_relationship"));
+  }
+
+  @Test
+  void distinguishesOwnerAndLauncherAndTraversesCyclesOnce() throws Exception {
+    Path root = Files.createTempDirectory("hop-mcp-owner-launcher").toRealPath();
+    Execution owner = execution("owner", root.resolve("run.hwf").toString(), "grandchild", 1000);
+    Execution launcher = execution("launcher", root.resolve("run.hwf").toString(), "owner", 1100);
+    launcher.setExecutionType(ExecutionType.Action);
+    Execution child = modernExecution("child", "owner", "launcher");
+    Execution grandchild = modernExecution("grandchild", "child", "missing-launcher");
+    Map<String, Execution> executions = new LinkedHashMap<>();
+    for (Execution item : List.of(owner, launcher, child, grandchild))
+      executions.put(item.getId(), item);
+    HopExecutionRepository repository =
+        new HopExecutionRepository(
+            new ProjectFiles(root),
+            null,
+            null,
+            (name, action) -> action.apply(fakeLocation(executions, Map.of())));
+
+    Map<?, ?> detail = (Map<?, ?>) repository.detail("local", "child").get("execution");
+    assertEquals("owner", detail.get("parent_id"));
+    assertEquals("owner", detail.get("owner_execution_id"));
+    assertEquals("launcher", detail.get("launched_by_id"));
+    assertEquals("owner_and_launcher", detail.get("parent_relationship"));
+
+    Map<String, Object> tree = repository.children("local", "owner", 2, 10);
+    assertSchemaConforms("hop_execution_children", tree);
+    assertEquals(3, tree.get("returned"));
+    assertEquals(false, tree.get("truncated"));
+    List<?> rows = (List<?>) tree.get("children");
+    Map<?, ?> childRow =
+        rows.stream()
+            .map(Map.class::cast)
+            .filter(row -> "child".equals(row.get("execution_id")))
+            .findFirst()
+            .orElseThrow();
+    assertEquals(1, childRow.get("depth"));
+    assertEquals("owner", childRow.get("via_execution_id"));
+    assertEquals("parent", childRow.get("relationship"));
+
+    Map<String, Object> launched = repository.children("local", "launcher", 1, 10);
+    Map<?, ?> launchedRow = (Map<?, ?>) ((List<?>) launched.get("children")).getFirst();
+    assertEquals("child", launchedRow.get("execution_id"));
+    assertEquals("launcher", launchedRow.get("via_execution_id"));
+    assertEquals("launcher", launchedRow.get("relationship"));
+    assertEquals(true, launched.get("truncated"));
+    assertEquals(true, repository.children("local", "owner", 1, 10).get("truncated"));
+    assertEquals(true, repository.children("local", "owner", 5, 1).get("truncated"));
+  }
+
+  @Test
+  void boundsChildDiscoveryAndReadsStateOnlyForReturnedRows() throws Exception {
+    Path root = Files.createTempDirectory("hop-mcp-child-scan").toRealPath();
+    AtomicInteger reads = new AtomicInteger();
+    AtomicInteger stateReads = new AtomicInteger();
+    List<String> ids =
+        java.util.stream.IntStream.rangeClosed(0, HopExecutionRepository.MAX_HISTORY_SCAN)
+            .mapToObj(i -> "child-" + i)
+            .toList();
+    IExecutionInfoLocation location =
+        (IExecutionInfoLocation)
+            Proxy.newProxyInstance(
+                IExecutionInfoLocation.class.getClassLoader(),
+                new Class<?>[] {IExecutionInfoLocation.class},
+                (proxy, method, args) -> {
+                  switch (method.getName()) {
+                    case "getExecutionIds":
+                      assertEquals(true, args[0]);
+                      assertEquals(HopExecutionRepository.MAX_HISTORY_SCAN + 1, args[1]);
+                      return ids;
+                    case "getExecution":
+                      reads.incrementAndGet();
+                      String id = (String) args[0];
+                      return execution(
+                          id,
+                          root.resolve("run.hpl").toString(),
+                          id.equals("root") ? null : "root",
+                          1000);
+                    case "getExecutionState":
+                      stateReads.incrementAndGet();
+                      return null;
+                    default:
+                      throw new AssertionError(
+                          "Unbounded or unexpected location call: " + method.getName());
+                  }
+                });
+    HopExecutionRepository repository =
+        new HopExecutionRepository(
+            new ProjectFiles(root), null, null, (name, action) -> action.apply(location));
+    Map<String, Object> result = repository.children("local", "root", 3, 1);
+    assertEquals(1, result.get("returned"));
+    assertEquals(true, result.get("truncated"));
+    assertEquals(true, result.get("scan_truncated"));
+    assertEquals(HopExecutionRepository.MAX_HISTORY_SCAN + 1, reads.get());
+    assertEquals(1, stateReads.get());
+  }
+
+  @Test
+  void aFailingLauncherApiDoesNotReturnAFalseLegacyRelationship() throws Exception {
+    Execution broken = new BrokenLauncherExecution();
+    broken.setId("broken");
+    broken.setParentId("parent");
+    McpException failure =
+        assertThrows(McpException.class, () -> HopExecutionRelationships.read(broken));
+    assertEquals("EXECUTION_RELATIONSHIP_UNAVAILABLE", failure.code());
+    assertFalse(failure.getMessage().contains("native-secret"));
+  }
+
+  private static Execution modernExecution(String id, String owner, String launcher) {
+    LauncherExecution execution = new LauncherExecution(launcher);
+    execution.setId(id);
+    execution.setParentId(owner);
+    execution.setExecutionType(ExecutionType.Pipeline);
+    return execution;
+  }
+
+  /** Supplies the additive getter when this test is compiled against Hop 2.19. */
+  public static class LauncherExecution extends Execution {
+    private final String launcher;
+
+    LauncherExecution(String launcher) {
+      this.launcher = launcher;
+    }
+
+    public String getLaunchedById() {
+      return launcher;
+    }
+  }
+
+  public static class BrokenLauncherExecution extends Execution {
+    public String getLaunchedById() {
+      throw new IllegalStateException("native-secret");
+    }
+  }
+
+  private static void assertSchemaConforms(String tool, Map<String, Object> result) {
+    var validation =
+        new JacksonJsonSchemaValidatorSupplier()
+            .get()
+            .validate(HopMcpServer.outputSchemaFor(tool), result);
+    assertTrue(validation.valid(), tool + ": " + validation.errorMessage());
   }
 
   private static Execution execution(String id, String filename, String parentId, long start) {

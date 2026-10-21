@@ -12,10 +12,11 @@
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <hop.version>2.19.0</hop.version>
-    <mcp.version>2.0.1</mcp.version>
+    <mcp.version>2.1.0</mcp.version>
     <jakarta.servlet.version>6.1.0</jakarta.servlet.version>
     <tomcat.version>11.0.26</tomcat.version>
     <junit.version>6.1.3</junit.version>
+    <hop.compatibility.components>false</hop.compatibility.components>
   </properties>
 
   <licenses>
@@ -46,7 +47,7 @@
     <plugin><groupId>io.smallrye</groupId><artifactId>jandex-maven-plugin</artifactId><version>3.6.0</version><executions><execution><id>make-index</id><goals><goal>jandex</goal></goals></execution></executions></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.16.0</version><configuration><release>21</release></configuration></plugin>
     <plugin><groupId>com.spotify.fmt</groupId><artifactId>fmt-maven-plugin</artifactId><version>2.29</version><executions><execution><id>check-java-format</id><phase>verify</phase><goals><goal>check</goal></goals></execution></executions></plugin>
-    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.6.0</version><configuration><useModulePath>false</useModulePath><systemPropertyVariables><project.version>${project.version}</project.version></systemPropertyVariables></configuration></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.6.0</version><configuration><useModulePath>false</useModulePath><systemPropertyVariables><project.version>${project.version}</project.version><hop.compatibility.components>${hop.compatibility.components}</hop.compatibility.components></systemPropertyVariables></configuration></plugin>
     <plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.6.4</version></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.5.1</version><executions><execution><id>native-acceptance-helpers</id><phase>package</phase><goals><goal>test-jar</goal></goals><configuration><includes><include>io/github/michaaels/hop/mcp/HopNativeReferenceAcceptance*.class</include><include>io/github/michaaels/hop/mcp/HopOperationalFixture*.class</include></includes></configuration></execution></executions></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-assembly-plugin</artifactId><version>3.8.0</version><configuration><descriptors><descriptor>src/assembly/marketplace.xml</descriptor></descriptors><appendAssemblyId>false</appendAssemblyId><finalName>${project.artifactId}-${project.version}</finalName></configuration><executions><execution><id>marketplace-zip</id><phase>package</phase><goals><goal>single</goal></goals></execution></executions></plugin>
@@ -57,7 +58,17 @@
   <profiles>
     <profile>
       <id>hop-2.20</id>
-      <properties><hop.version>2.20.0-SNAPSHOT</hop.version></properties>
+      <properties><hop.version>2.20.0-SNAPSHOT</hop.version><hop.compatibility.components>true</hop.compatibility.components></properties>
+      <dependencies>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-transform-watchfiles</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-transform-openformula</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-transform-pipelineexecutor</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-transform-tableinput</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-transform-databasejoin</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-transform-rowgenerator</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>org.apache.hop</groupId><artifactId>hop-databases-h2</artifactId><version>${hop.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><version>2.4.240</version><scope>test</scope></dependency>
+      </dependencies>
       <repositories>
         <repository>
           <id>apache-hop-snapshots-https</id>
