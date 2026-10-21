@@ -48,7 +48,7 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 
 - Java 21.
 - The Maven compile baseline is Apache Hop 2.19.0. The `hop-2.20` profile targets the 2.20.0-SNAPSHOT line.
-- MCP Java SDK 2.0.1; protocol baseline 2025-11-25 over STDIO.
+- MCP Java SDK 2.1.0; protocol baseline 2025-11-25 over STDIO.
 
 | Connector | Apache Hop | Java | MCP Java SDK | MCP revision |
 |---|---|---:|---:|---|
@@ -61,8 +61,9 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 | 2.2.4 (tag only; no release) | 2.19.0 target; Windows verification failed | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.5 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.6 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| Unreleased | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.1.0 | 2025-11-25 |
 
-The MCP Java SDK 2.0.1 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
+The MCP Java SDK 2.1.0 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Recent release history
 
@@ -197,6 +198,8 @@ For distribution-level measurements, the manual Windows [full-Hop benchmark](doc
 The optional Tools menu adapter synchronizes native Desktop or Hop Web/RAP sessions with same-project semantic changes. It is session-scoped, protects dirty tabs, uses bounded project-local events in `.hop-mcp/`, and opens no network listener.
 
 ## Development and validation
+
+STDIO uses the native SDK 2.1.0 transport, including its concurrent-send correction. The SDK continues to own JSON-RPC encoding, STDIO I/O and session handling. A regression test sends 32 requests without waiting for their responses, mixes successful calls with schema errors, and verifies that the session remains usable. Timeout diagnostics are bounded and captured stdout is redacted before inclusion in test failures.
 
 ```bash
 mvn -B clean verify
