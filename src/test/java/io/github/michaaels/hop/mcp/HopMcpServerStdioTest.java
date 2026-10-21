@@ -15,12 +15,14 @@ import io.modelcontextprotocol.json.schema.jackson3.JacksonJsonSchemaValidatorSu
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
+import java.nio.channels.Channels;
+import java.nio.channels.Pipe;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +33,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -67,8 +70,9 @@ class HopMcpServerStdioTest {
     assertTimeout(
         Duration.ofSeconds(4),
         () -> {
-          try (PipedInputStream input = new PipedInputStream();
-              PipedOutputStream output = new PipedOutputStream(input);
+          try (TestPipe pipe = TestPipe.open();
+              InputStream input = pipe.input();
+              OutputStream output = pipe.output();
               ResponsePump responses = new ResponsePump(input, output, 1)) {
             assertThrows(TimeoutException.class, responses::readResponse);
           }
@@ -80,13 +84,56 @@ class HopMcpServerStdioTest {
     assertTimeout(
         Duration.ofSeconds(4),
         () -> {
-          try (PipedInputStream input = new PipedInputStream();
-              PipedOutputStream output = new PipedOutputStream(input);
+          try (TestPipe pipe = TestPipe.open();
+              InputStream input = pipe.input();
+              OutputStream output = pipe.output();
               ResponsePump responses = new ResponsePump(input, output, 1)) {
             output.close();
             assertThrows(AssertionError.class, responses::readResponse);
           }
         });
+  }
+
+  @Test
+  void responsesSurviveWriterThreadExitAndHandoff() throws Exception {
+    ExecutorService waiting = Executors.newSingleThreadExecutor();
+    try (TestPipe pipe = TestPipe.open();
+        InputStream input = pipe.input();
+        OutputStream output = pipe.output();
+        ResponsePump responses = new ResponsePump(input, output)) {
+      Future<String> first = waiting.submit(responses::readResponse);
+      writeOnTemporaryThread(output, "first\n");
+      assertEquals("first", first.get(2, TimeUnit.SECONDS));
+
+      Future<String> next = waiting.submit(responses::readResponse);
+      assertThrows(TimeoutException.class, () -> next.get(200, TimeUnit.MILLISECONDS));
+      writeOnTemporaryThread(output, "second\n");
+      assertEquals("second", next.get(2, TimeUnit.SECONDS));
+      output.close();
+      assertThrows(AssertionError.class, responses::readResponse);
+    } finally {
+      waiting.shutdownNow();
+      assertTrue(waiting.awaitTermination(2, TimeUnit.SECONDS));
+    }
+  }
+
+  private static void writeOnTemporaryThread(OutputStream output, String value) throws Exception {
+    var write =
+        new FutureTask<Void>(
+            () -> {
+              output.write(value.getBytes(StandardCharsets.UTF_8));
+              output.flush();
+              return null;
+            });
+    Thread writer = new Thread(write, "temporary-stdio-writer");
+    writer.start();
+    try {
+      write.get(2, TimeUnit.SECONDS);
+      writer.join(TimeUnit.SECONDS.toMillis(2));
+      assertFalse(writer.isAlive(), "The response writer must exit before the next read");
+    } finally {
+      write.cancel(true);
+    }
   }
 
   @Test
@@ -113,10 +160,12 @@ class HopMcpServerStdioTest {
     try {
       assertTrue(started.await(5, TimeUnit.SECONDS));
       HopDeepCheckExecutor.cancel(stuck, true);
-      try (PipedInputStream serverInput = new PipedInputStream();
-          PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
-          PipedInputStream clientInput = new PipedInputStream();
-          PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+      try (TestPipe toServer = TestPipe.open();
+          TestPipe toClient = TestPipe.open();
+          InputStream serverInput = toServer.input();
+          OutputStream clientOutput = toServer.output();
+          InputStream clientInput = toClient.input();
+          OutputStream serverOutput = toClient.output();
           ResponsePump responses = new ResponsePump(clientInput, serverOutput);
           PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
           HopMcpServer server =
@@ -181,10 +230,12 @@ class HopMcpServerStdioTest {
     ByteArrayOutputStream unexpectedStdout = new ByteArrayOutputStream();
     System.setOut(new PrintStream(unexpectedStdout, true, StandardCharsets.UTF_8));
     try {
-      try (PipedInputStream serverInput = new PipedInputStream();
-          PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
-          PipedInputStream clientInput = new PipedInputStream();
-          PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+      try (TestPipe toServer = TestPipe.open();
+          TestPipe toClient = TestPipe.open();
+          InputStream serverInput = toServer.input();
+          OutputStream clientOutput = toServer.output();
+          InputStream clientInput = toClient.input();
+          OutputStream serverOutput = toClient.output();
           ResponsePump responses = new ResponsePump(clientInput, serverOutput);
           PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
           HopMcpServer server =
@@ -710,10 +761,12 @@ class HopMcpServerStdioTest {
 
   @Test
   void hidesUnauthorizedToolsFromDiscoveryByDefault() throws Exception {
-    try (PipedInputStream serverInput = new PipedInputStream();
-        PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
-        PipedInputStream clientInput = new PipedInputStream();
-        PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+    try (TestPipe toServer = TestPipe.open();
+        TestPipe toClient = TestPipe.open();
+        InputStream serverInput = toServer.input();
+        OutputStream clientOutput = toServer.output();
+        InputStream clientInput = toClient.input();
+        OutputStream serverOutput = toClient.output();
         ResponsePump responses = new ResponsePump(clientInput, serverOutput);
         PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
         HopMcpServer server =
@@ -761,10 +814,12 @@ class HopMcpServerStdioTest {
 
   @Test
   void registersAllToolsBeforeAcceptingProtocolRequests() throws Exception {
-    try (PipedInputStream serverInput = new PipedInputStream();
-        PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
-        PipedInputStream clientInput = new PipedInputStream();
-        PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+    try (TestPipe toServer = TestPipe.open();
+        TestPipe toClient = TestPipe.open();
+        InputStream serverInput = toServer.input();
+        OutputStream clientOutput = toServer.output();
+        InputStream clientInput = toClient.input();
+        OutputStream serverOutput = toClient.output();
         ResponsePump responses = new ResponsePump(clientInput, serverOutput);
         PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8)) {
       requests.println(
@@ -809,10 +864,12 @@ class HopMcpServerStdioTest {
       HopWebClient webClient =
           new HopWebClient(
               "http://127.0.0.1:" + web.getAddress().getPort() + "/api/hop", null, null, null, 5);
-      try (PipedInputStream serverInput = new PipedInputStream();
-          PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
-          PipedInputStream clientInput = new PipedInputStream();
-          PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+      try (TestPipe toServer = TestPipe.open();
+          TestPipe toClient = TestPipe.open();
+          InputStream serverInput = toServer.input();
+          OutputStream clientOutput = toServer.output();
+          InputStream clientInput = toClient.input();
+          OutputStream serverOutput = toClient.output();
           ResponsePump responses = new ResponsePump(clientInput, serverOutput);
           PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
           HopMcpServer server =
@@ -916,19 +973,36 @@ class HopMcpServerStdioTest {
     return (Map<String, Object>) value;
   }
 
+  /** NIO endpoints remain open when a temporary SDK response-writer thread exits. */
+  private record TestPipe(InputStream input, OutputStream output) implements AutoCloseable {
+    private static TestPipe open() throws IOException {
+      Pipe pipe = Pipe.open();
+      return new TestPipe(
+          Channels.newInputStream(pipe.source()), Channels.newOutputStream(pipe.sink()));
+    }
+
+    @Override
+    public void close() throws IOException {
+      try (input;
+          output) {
+        // Close both endpoints, preserving any suppressed cleanup exception.
+      }
+    }
+  }
+
   private static final class ResponsePump implements AutoCloseable {
-    private final PipedInputStream input;
-    private final PipedOutputStream output;
+    private final InputStream input;
+    private final OutputStream output;
     private final BufferedReader lines;
     private final ExecutorService reader = Executors.newSingleThreadExecutor();
     private final int timeoutSeconds;
     private Future<String> pending;
 
-    private ResponsePump(PipedInputStream input, PipedOutputStream output) {
+    private ResponsePump(InputStream input, OutputStream output) {
       this(input, output, RESPONSE_TIMEOUT_SECONDS);
     }
 
-    private ResponsePump(PipedInputStream input, PipedOutputStream output, int timeoutSeconds) {
+    private ResponsePump(InputStream input, OutputStream output, int timeoutSeconds) {
       this.input = input;
       this.output = output;
       this.timeoutSeconds = timeoutSeconds;

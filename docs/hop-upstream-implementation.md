@@ -63,3 +63,13 @@ Se revisaron nuevamente los cambios completos antes de preparar el PR, mantenien
 - `test-verification-gates.py`: 16 pruebas correctas. `git diff --check` no detectó errores de whitespace y se validaron los enlaces locales de la documentación.
 
 Estas comprobaciones locales no sustituyen los jobs de Linux, instalación limpia y conformidad externa del PR. Su resultado remoto se conserva en los checks de GitHub asociados al commit revisado. El linter y los límites de cancelación descritos arriba no cambian con esta revalidación.
+
+## Corrección de la CI posterior al merge (21 de octubre de 2026)
+
+La [CI de main del commit ef76396](https://github.com/michaaels/hop-mcp-connector/actions/runs/39525373237) falló en el job Linux `build`: `HopMcpServerStdioTest.completesHandshakeAndServesConsecutiveToolCallsOverStdio` recibió `java.io.IOException: Pipe broken` desde `PipedInputStream.read`, al esperar la respuesta de `hop_capabilities`. Los jobs Windows y Hop 2.20 del mismo run aprobaron. Los checks del PR anterior también habían aprobado; el fallo apareció en la ejecución posterior al merge.
+
+El canal de pruebas dependía de la vida del hilo que escribió por última vez. Java considera roto un `PipedInputStream` si ese escritor termina y el lector espera más datos. La regresión `responsesSurviveWriterThreadExitAndHandoff` reproduce esa condición: el escritor termina, el lector espera y un segundo escritor entrega otra respuesta. Con el canal anterior falló localmente con `Write end dead`; con el canal NIO pasó. Fuentes del contrato del JDK: [PipedInputStream](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/io/PipedInputStream.html) y [Pipe](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/Pipe.html).
+
+La corrección sustituye únicamente los canales de las pruebas STDIO por `java.nio.channels.Pipe` y adapta `ResponsePump` a `InputStream`/`OutputStream`. Se mantienen las comprobaciones de timeout, EOF y limpieza de lectores. La implementación de producción no cambia. Los logs de reproducción y validación están en `outputs/ci-stdio-fix-20261020/`; esa carpeta conserva también la reproducción iniciada antes del cambio de fecha.
+
+La batería específica STDIO pasó sus 8 pruebas. Ambos `clean verify` completos terminaron con BUILD SUCCESS: 156 pruebas por perfil, sin fallos ni errores; 10 omisiones en Hop 2.19 y 3 en Hop 2.20, con las mismas causas documentadas anteriormente. Ambos ZIP y las guardas de junctions de Windows aprobaron. También se comprobaron los SBOM, la exclusión de dependencias de prueba del ZIP y el contenido del JAR auxiliar. La integración exige además los checks remotos del PR y la comprobación de la CI posterior al merge en `main`.
