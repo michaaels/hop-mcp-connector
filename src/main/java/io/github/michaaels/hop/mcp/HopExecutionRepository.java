@@ -63,6 +63,8 @@ final class HopExecutionRepository {
 
   private record Child(Execution execution, int depth) {}
 
+  private record ExecutionLink(Execution execution, String relationship) {}
+
   private static final class ProfileBudget {
     private int distinctValues;
     private long cells;
@@ -246,32 +248,54 @@ final class HopExecutionRepository {
                 throw McpException.validation(
                     "EXECUTION_NOT_FOUND", "The native execution was not found.");
               }
+              // findExecutions/listExecutions may scan or load an entire native location per
+              // node. Build one bounded index instead; state is read only for returned children.
+              List<String> ids = location.getExecutionIds(true, MAX_HISTORY_SCAN + 1);
+              boolean scanTruncated = ids.size() > MAX_HISTORY_SCAN;
+              Map<String, Map<String, ExecutionLink>> links = new LinkedHashMap<>();
+              Set<String> scannedIds = new LinkedHashSet<>();
+              scannedIds.add(executionId);
+              indexExecution(links, root);
+              for (int i = 0; i < Math.min(ids.size(), MAX_HISTORY_SCAN); i++) {
+                String id = ids.get(i);
+                if (id == null || !scannedIds.add(id)) continue;
+                Execution candidate = location.getExecution(id);
+                if (candidate != null) indexExecution(links, candidate);
+              }
               Deque<Child> queue = new ArrayDeque<>();
               List<Map<String, Object>> rows = new ArrayList<>();
               java.util.Set<String> visited = new java.util.HashSet<>();
               visited.add(executionId);
               queue.add(new Child(root, 0));
-              boolean truncated = false;
+              boolean truncated = scanTruncated;
               while (!queue.isEmpty()) {
                 Child current = queue.removeFirst();
+                Map<String, ExecutionLink> children =
+                    links.getOrDefault(current.execution().getId(), Map.of());
                 if (current.depth() >= maxDepth) {
+                  if (children.keySet().stream().anyMatch(id -> !visited.contains(id)))
+                    truncated = true;
                   continue;
                 }
-                List<Execution> children = location.findExecutions(current.execution().getId());
-                for (Execution child : children) {
-                  if (child == null || child.getId() == null || !visited.add(child.getId()))
-                    continue;
+                boolean nodeLimitReached = false;
+                for (ExecutionLink link : children.values()) {
+                  Execution child = link.execution();
+                  if (visited.contains(child.getId())) continue;
                   if (rows.size() >= maxNodes) {
                     truncated = true;
+                    nodeLimitReached = true;
                     break;
                   }
+                  visited.add(child.getId());
                   ExecutionState state = location.getExecutionState(child.getId(), false);
                   Map<String, Object> row = summary(child, state);
                   row.put("depth", current.depth() + 1);
+                  row.put("via_execution_id", safeText(current.execution().getId(), 256));
+                  row.put("relationship", link.relationship());
                   rows.add(row);
                   queue.addLast(new Child(child, current.depth() + 1));
                 }
-                if (truncated) break;
+                if (nodeLimitReached) break;
               }
               if (!queue.isEmpty()) truncated = true;
               Map<String, Object> result = new LinkedHashMap<>();
@@ -280,11 +304,30 @@ final class HopExecutionRepository {
               result.put("max_depth", maxDepth);
               result.put("max_nodes", maxNodes);
               result.put("visited", visited.size());
+              result.put("scanned", scannedIds.size());
+              result.put("scan_truncated", scanTruncated);
               result.put("returned", rows.size());
               result.put("truncated", truncated);
               result.put("children", rows);
               return result;
             });
+  }
+
+  private static void indexExecution(
+      Map<String, Map<String, ExecutionLink>> links, Execution execution) throws McpException {
+    if (execution.getId() == null) return;
+    HopExecutionRelationships.Relationship relation = HopExecutionRelationships.read(execution);
+    addExecutionLink(links, relation.parentId(), execution, "parent");
+    addExecutionLink(links, relation.launcherId(), execution, "launcher");
+  }
+
+  private static void addExecutionLink(
+      Map<String, Map<String, ExecutionLink>> links, String parent, Execution child, String kind) {
+    if (!parent.isEmpty()) {
+      links
+          .computeIfAbsent(parent, ignored -> new LinkedHashMap<>())
+          .putIfAbsent(child.getId(), new ExecutionLink(child, kind));
+    }
   }
 
   Map<String, Object> metrics(String locationName, String executionId) throws Exception {
@@ -598,7 +641,8 @@ final class HopExecutionRepository {
     }
   }
 
-  private Map<String, Object> summary(Execution execution, ExecutionState state) {
+  private Map<String, Object> summary(Execution execution, ExecutionState state)
+      throws McpException {
     Map<String, Object> row = new LinkedHashMap<>();
     long start = epoch(execution.getExecutionStartDate());
     long end = state == null ? 0L : epoch(state.getExecutionEndDate());
@@ -607,6 +651,10 @@ final class HopExecutionRepository {
     row.put("name", safeText(execution.getName(), 512));
     row.put("type", typeOf(execution.getExecutionType()));
     row.put("parent_id", safeText(execution.getParentId(), 256));
+    HopExecutionRelationships.Relationship relationship = HopExecutionRelationships.read(execution);
+    row.put("owner_execution_id", safeText(relationship.ownerId(), 256));
+    row.put("launched_by_id", safeText(relationship.launcherId(), 256));
+    row.put("parent_relationship", relationship.source());
     row.put("run_configuration", safeText(execution.getRunConfigurationName(), 256));
     row.put("registration_epoch_ms", epoch(execution.getRegistrationDate()));
     row.put("start_epoch_ms", start);

@@ -53,7 +53,7 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
 
   @CommandLine.Option(
       names = {"--allow-web-api"},
-      description = "Enable read-only requests to the configured Hop Web REST API.")
+      description = "Enable read-only Hop status, pipelineStatus and workflowStatus requests.")
   private boolean allowWebApi;
 
   @CommandLine.Option(

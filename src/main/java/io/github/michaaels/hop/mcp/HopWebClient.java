@@ -32,7 +32,19 @@ final class HopWebClient {
   private static final int MAX_RESPONSE_HEADER_VALUE_BYTES = 1024;
   private static final Set<String> ALLOWED_METHODS = Set.of("GET", "HEAD");
   private static final Set<String> BLOCKED_HEADERS =
-      Set.of("authorization", "cookie", "host", "content-length", "proxy-authorization");
+      Set.of(
+          "authorization",
+          "cookie",
+          "host",
+          "content-length",
+          "proxy-authorization",
+          "forwarded",
+          "x-original-url",
+          "x-original-uri",
+          "x-rewrite-url",
+          "x-http-method-override",
+          "x-method-override",
+          "x-envoy-original-path");
   private static final Set<String> SENSITIVE_RESPONSE_HEADERS =
       Set.of("set-cookie", "authorization", "proxy-authenticate", "www-authenticate");
 
@@ -64,6 +76,7 @@ final class HopWebClient {
       throws IOException, InterruptedException {
     String requestMethod = normalizeMethod(method);
     URI uri = resolve(path);
+    HopWebReadPolicy.requireReadTarget(uri);
     HttpRequest.Builder builder =
         HttpRequest.newBuilder(uri)
             .timeout(timeout)
@@ -80,6 +93,7 @@ final class HopWebClient {
             || name.isBlank()
             || name.length() > 128
             || BLOCKED_HEADERS.contains(name.toLowerCase(Locale.ROOT))
+            || name.toLowerCase(Locale.ROOT).startsWith("x-forwarded-")
             || SensitiveData.isSensitiveKey(name)) {
           throw new IllegalArgumentException("REST request contains a forbidden header");
         }
@@ -167,26 +181,10 @@ final class HopWebClient {
     if (requested.getRawAuthority() != null) {
       throw new IllegalArgumentException("REST path cannot contain an authority");
     }
-    String rawRequestedPath = requested.getRawPath();
-    if (rawRequestedPath != null) {
-      String lowerRawPath = rawRequestedPath.toLowerCase(Locale.ROOT);
-      if (lowerRawPath.contains("%2e")
-          || lowerRawPath.contains("%2f")
-          || lowerRawPath.contains("%5c")) {
-        throw new IllegalArgumentException(
-            "REST path contains an encoded traversal segment or separator");
-      }
-    }
+    HopWebReadPolicy.requireCanonicalPath(requested.getRawPath());
     String requestedPath = requested.getPath();
     if (requestedPath == null || requestedPath.isBlank()) {
       requestedPath = "/";
-    }
-    String lowerRequestedPath = requestedPath.toLowerCase(Locale.ROOT);
-    if (lowerRequestedPath.contains("%2e")
-        || lowerRequestedPath.contains("%2f")
-        || lowerRequestedPath.contains("%5c")) {
-      throw new IllegalArgumentException(
-          "REST path contains an encoded traversal segment or separator");
     }
     String basePath = baseUri.getPath();
     String suffix = requestedPath.startsWith("/") ? requestedPath.substring(1) : requestedPath;
@@ -232,6 +230,7 @@ final class HopWebClient {
           "Hop Web URL must be an http(s) URL without credentials, query or fragment");
     }
     String path = uri.getPath();
+    HopWebReadPolicy.requireCanonicalPath(uri.getRawPath());
     if (path == null || path.isBlank()) {
       path = "/";
     }
