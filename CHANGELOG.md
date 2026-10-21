@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Replace thread-sensitive Java piped streams in STDIO integration tests with NIO pipes. Add a regression for response-writer exit and handoff while retaining timeout and EOF cleanup checks.
 - Keep asynchronous execution capacity reserved while a cancelled native worker remains active. Report `native_worker_active`, retain `stopping` until the caller and worker exit, and add cancellation checkpoints between native startup phases. Cover queued cancellation, interruption-resistant workers, timeout and submission rejection.
 - Restrict Hop Web reads to native status, pipelineStatus and workflowStatus endpoints before HTTP dispatch. Deny unknown endpoints, mutating GET/HEAD routes including getExecInfo, ambiguous path encodings and routing override headers.
 - Preserve native parent IDs while exposing explicit owner/launcher relationships when available in Hop 2.20, without linking the Hop 2.19 artifact to the optional API or guessing the meaning of old records.
