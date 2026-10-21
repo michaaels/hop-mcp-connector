@@ -753,6 +753,12 @@ class HopMcpServerStdioTest {
         clientOutput.close();
         server.awaitEof();
       }
+    } catch (Exception | AssertionError failure) {
+      failure.addSuppressed(
+          new IOException(
+              "Captured stdout: "
+                  + HopXml.redact(unexpectedStdout.toString(StandardCharsets.UTF_8))));
+      throw failure;
     } finally {
       System.setOut(originalStdout);
     }
@@ -1016,6 +1022,20 @@ class HopMcpServerStdioTest {
         assertNotNull(line, "MCP server closed STDIO before returning a response");
         return line;
       } catch (Exception | AssertionError failure) {
+        if (failure instanceof TimeoutException) {
+          StringBuilder threads = new StringBuilder("STDIO timeout thread stacks:");
+          Thread.getAllStackTraces()
+              .forEach(
+                  (thread, stack) -> {
+                    threads
+                        .append('\n')
+                        .append(thread.getName())
+                        .append(' ')
+                        .append(thread.getState());
+                    for (StackTraceElement frame : stack) threads.append("\n  ").append(frame);
+                  });
+          failure.addSuppressed(new IOException(threads.toString()));
+        }
         pending.cancel(true);
         try {
           output.close();
