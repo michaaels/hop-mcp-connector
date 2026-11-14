@@ -1,9 +1,12 @@
 package io.github.michaaels.hop.mcp;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.hop.core.variables.DescribedVariable;
@@ -25,7 +28,8 @@ final class HopRunConfigurationService {
   static final int MAX_UNRESOLVED_REFERENCES = 100;
   static final int MAX_VALUE_LENGTH = 4096;
 
-  private static final Pattern VARIABLE_REFERENCE = Pattern.compile("\\$\\{([^}]{1,256})}");
+  private static final Pattern VARIABLE_REFERENCE =
+      Pattern.compile("\\$\\{([^}]{1,256})}|%%([^%]{1,256})%%");
 
   private final IHopMetadataProvider metadataProvider;
   private final IVariables variables;
@@ -64,12 +68,13 @@ final class HopRunConfigurationService {
     Variables effective = inheritedVariables(parameters);
     List<Map<String, Object>> resolvedVariables = new ArrayList<>();
     List<String> unresolved = new ArrayList<>();
+    Set<String> redactedNames = new HashSet<>();
     List<DescribedVariable> configured = configuration.getConfigurationVariables();
     if (configured != null) {
       int count = 0;
       for (DescribedVariable variable : configured) {
         if (count++ >= MAX_VARIABLES) break;
-        addVariable(variable, effective, resolvedVariables, unresolved);
+        addVariable(variable, effective, resolvedVariables, unresolved, redactedNames);
       }
     }
     IPipelineEngineRunConfiguration engine = configuration.getEngineRunConfiguration();
@@ -121,10 +126,14 @@ final class HopRunConfigurationService {
       DescribedVariable variable,
       Variables effective,
       List<Map<String, Object>> resolvedVariables,
-      List<String> unresolved) {
+      List<String> unresolved,
+      Set<String> redactedNames) {
     if (variable == null) return;
     String name = safe(variable.getName());
     String rawValue = variable.getValue() == null ? "" : variable.getValue();
+    boolean secret =
+        SensitiveData.isSensitiveKey(name)
+            || hasSensitiveDependency(rawValue, effective, redactedNames);
     String resolvedValue = effective.resolve(rawValue);
     if (resolvedValue == null) resolvedValue = "";
     effective.setVariable(name, resolvedValue);
@@ -135,10 +144,9 @@ final class HopRunConfigurationService {
         unresolved.add(reference);
       }
     }
-    boolean secret =
-        SensitiveData.isSensitiveKey(name)
-            || references.stream().anyMatch(SensitiveData::isSensitiveKey)
-            || containsSensitiveReference(rawValue);
+    secret |= references.stream().anyMatch(SensitiveData::isSensitiveKey);
+    if (secret) redactedNames.add(name);
+    else redactedNames.remove(name);
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("name", name);
     row.put("value", secret ? SensitiveData.REDACTED : boundedValue(resolvedValue));
@@ -146,6 +154,52 @@ final class HopRunConfigurationService {
     row.put("description", boundedValue(variable.getDescription()));
     row.put("redacted", secret);
     resolvedVariables.add(row);
+  }
+
+  /** Follow only referenced names; never enumerate the inherited environment or JVM properties. */
+  private static boolean hasSensitiveDependency(
+      String value, IVariables effective, Set<String> redactedNames) {
+    ArrayDeque<String> pending = new ArrayDeque<>();
+    Set<String> visited = new HashSet<>();
+    pending.add(value);
+    while (!pending.isEmpty()) {
+      String current = pending.removeFirst();
+      if (current.length() > MAX_VALUE_LENGTH || containsOpaqueResolution(current)) return true;
+      Matcher matcher = VARIABLE_REFERENCE.matcher(current);
+      int checkedUntil = 0;
+      while (matcher.find()) {
+        String name = referenceName(matcher);
+        // An opaque or oversized token must not bypass the bounded dependency parser.
+        if (referenceOffset(current, checkedUntil) != matcher.start()
+            || name.contains("${")
+            || name.contains("%%")) return true;
+        checkedUntil = matcher.end();
+        if (SensitiveData.isSensitiveKey(name) || redactedNames.contains(name)) return true;
+        if (visited.add(name)) {
+          // When the dependency check cannot finish within its budget, withhold the value.
+          if (visited.size() > MAX_UNRESOLVED_REFERENCES) return true;
+          String nested = effective.getVariable(name);
+          if (nested != null) pending.addLast(nested);
+        }
+      }
+      if (referenceOffset(current, checkedUntil) >= 0) return true;
+    }
+    return false;
+  }
+
+  private static int referenceOffset(String value, int from) {
+    int unix = value.indexOf("${", from);
+    int windows = value.indexOf("%%", from);
+    return unix < 0 ? windows : windows < 0 ? unix : Math.min(unix, windows);
+  }
+
+  private static String referenceName(Matcher matcher) {
+    return matcher.group(1) == null ? matcher.group(2) : matcher.group(1);
+  }
+
+  private static boolean containsOpaqueResolution(String value) {
+    // Native resolvers may return credentials, and hex substitution can introduce new tokens.
+    return value != null && (value.contains("#{") || value.contains("$["));
   }
 
   private Map<String, Object> result(
@@ -218,12 +272,13 @@ final class HopRunConfigurationService {
     if (value == null) return references;
     Matcher matcher = VARIABLE_REFERENCE.matcher(value);
     while (matcher.find() && references.size() < MAX_UNRESOLVED_REFERENCES) {
-      references.add(matcher.group(1));
+      references.add(referenceName(matcher));
     }
     return references;
   }
 
   private static boolean containsSensitiveReference(String value) {
+    if (containsOpaqueResolution(value)) return true;
     for (String reference : references(value)) {
       if (SensitiveData.isSensitiveKey(reference)) return true;
     }

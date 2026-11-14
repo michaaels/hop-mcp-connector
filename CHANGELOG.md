@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Redact secrets propagated through native run-configuration aliases, including `${...}` and `%%...%%` references. Follow only referenced names within bounded dependency inspection; withhold opaque resolver/hex expressions and values whose dependencies cannot be checked safely. Redact sensitive named-variable values in metadata rows.
+- Align `hop_metadata_get` with native nested metadata using finite shared schema definitions. Preserve depth, collection and property bounds, account for the three existing root identity fields, and cover service output and STDIO redaction with regressions.
+- Add ordinary Hop 2.20 regression coverage for SSH command timeout round trips, legacy Calculator defaults, MetaInject condition migration and completion callbacks. The additional native plugin dependencies remain test-only.
+
 - Development 2.3.0: connect an agent to a normal Hop Web URL while MCP Live Sync is active. Add a four-tool `--remote-ui` agent profile and a session/project-bound MCP HTTP service inside RAP's existing servlet, with HTTPS, Host/Origin checks, ambiguous-session rejection and bounded requests/concurrency. Activation authorizes native inspection/editing, preserves plans, SHA-256, backups, rollback and guided/instant presentation, and never enables ETL execution/deep checks/proxy tools. Stop access when Live Sync stops; never fall back to a local/shared project. Keep local STDIO behavior and provided RAP/Servlet dependencies. Support an optional additional public certificate for the agent's HTTPS client without weakening TLS or modifying system trust.
 
 - Enable guided native-editor presentation in Hop Web/RAP through the existing session bridge. Share Desktop/Web polling, use a 100 ms Web animation timer, and avoid canvas redraws during unchanged holds. Let shell disposal own child cleanup to avoid removing RAP tabs after toolbar images are released. Rename the visible menu/dialog title to `MCP Live Sync`; preserve the CLI command, plugin IDs, authorization and bounds. See the dated RAP validation report for exercised UI cases and remaining checks.

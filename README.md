@@ -39,6 +39,8 @@ For local `hop mcp`, inspection and structural validation are available by defau
 
 In `hop_config`, `read_only` is true only when all four opt-in groups are disabled. Enabling deep checks, execution, or read-only Hop Web access also makes it false; use `definition_write_enabled` and the individual `allow_*` fields to identify which capability is authorized.
 
+Run-configuration reads redact secrets propagated through `${...}` and `%%...%%` aliases. Dependency inspection follows only referenced names, up to 100 distinct names and 4096 characters per inspected value. Opaque native resolver/hex expressions and values whose dependencies cannot be checked within those limits are withheld conservatively. Metadata reads also redact values in named-variable rows when their names identify secrets. Nested metadata output uses finite shared schema definitions with the existing depth and collection limits.
+
 ```text
 hop mcp --root <project>
 hop mcp --root <project> --allow-deep-check
@@ -243,6 +245,8 @@ For an agent connecting to Hop Web over the network, use the [remote Hop Web con
 The optional Tools menu adapter synchronizes native Desktop or Hop Web/RAP sessions with same-project semantic changes. It is session-scoped, protects dirty tabs and uses bounded project-local events in `.hop-mcp/`. In Hop Web those files stay on the server; agents connect through RAP's existing servlet and do not need a project share.
 
 ## Development and validation
+
+See the [Hop 2.20.0 coverage audit](docs/hop-2.20-coverage-2026-11-13.md) for the complete release-commit inventory, installed-component schema checks, reproduced gaps and remaining integration tests. Compatibility with Hop 2.20 does not certify every native feature or every component setting.
 
 For readable generated canvases, finish semantic authoring with `auto_layout`. It arranges pipeline/workflow components from left to right, separates failure branches and reports remaining geometric crossings. Preview existing flows before applying; routing, execution settings and note positions remain unchanged. See [canvas layout](docs/flow-layout.md) for examples, bounds and limitations.
 

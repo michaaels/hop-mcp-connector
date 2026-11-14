@@ -4,6 +4,8 @@ Version 2.4.0 targets Apache Hop 2.20.x exclusively, compiling against Hop 2.20.
 
 ## Changes
 
+- Redact secrets across bounded native configuration alias chains and named-variable metadata rows. Accept native nested metadata through compact, depth-bounded output schemas, with service and STDIO regressions. Extend ordinary Hop 2.20 tests for SSH timeouts, Calculator legacy defaults, MetaInject migration and completion callbacks; the added native dependencies are test-only.
+
 - Connect agents to Hop Web by URL through an explicitly enabled MCP Live Sync session. The `--remote-ui` STDIO profile exposes four lightweight tools and uses RAP's existing servlet without requiring a shared project directory. Preserve HTTPS, Host/Origin validation, bounded requests and concurrency, session binding and shutdown gating. Web activation permits project inspection and semantic editing; ETL execution, deep checks and proxy web tools remain disabled.
 - Separate Web service availability from agent presence. The compact native MCP indicator is grey when available, black when connected, and pulses during activity. Show agent, operation and timing details. Clicking the Web icon disconnects the agent; the menu stops the service. Multiple sessions return bounded project/open-file choices that require explicit user selection.
 - Present guided changes in native Desktop and Hop Web/RAP editors with asynchronous blocks, pacing, pause and instant application. Preserve dirty-tab protection and route presentation events to their owning UI.
