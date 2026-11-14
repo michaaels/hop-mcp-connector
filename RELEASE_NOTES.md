@@ -1,19 +1,19 @@
-# MCP Connector for Apache Hop 2.2.6
+# MCP Connector for Apache Hop 2.4.0
 
-Maintenance release dated 2026-10-01. Java 21, Apache Hop 2.19.0 baseline, Hop 2.20.0-SNAPSHOT compatibility profile, MCP Java SDK 2.0.1, protocol 2025-11-25 and STDIO production transport remain unchanged. No tools or permissions were added.
+Version 2.4.0 targets Apache Hop 2.20.x exclusively, compiling against Hop 2.20.0 with Java 21 and MCP Java SDK 2.1.0. The MCP protocol baseline remains 2025-11-25. This source update does not itself publish a GitHub Release or downloadable release assets.
 
 ## Changes
 
-- Keep stdout reserved for MCP for the full lifetime of the CLI process. Previously, returning from the MCP command restored stdout while native pipeline workers could still emit their final logs. Those late messages could corrupt the JSON protocol after a timeout, cancellation or EOF. Logs now remain on stderr through process exit, including startup and shutdown failures.
-- Add deterministic regression tests that emit native Hop logs and plugin console output after normal EOF and after a startup failure. Both tests reproduced the original stdout contamination before the fix.
-- Restore the README's 2.2.3 compatibility entry and add detailed recent-version history. Explain that 2.2.4 was a tag-only attempt whose failed Windows verification blocked release assets; its corrected maintenance changes shipped in 2.2.5.
-
-Execution results, cancellation behavior, tools, permission flags and resource bounds are unchanged. This release includes the maintenance improvements from 2.2.5.
+- Connect agents to Hop Web by URL through an explicitly enabled MCP Live Sync session. The `--remote-ui` STDIO profile exposes four lightweight tools and uses RAP's existing servlet without requiring a shared project directory. Preserve HTTPS, Host/Origin validation, bounded requests and concurrency, session binding and shutdown gating. Web activation permits project inspection and semantic editing; ETL execution, deep checks and proxy web tools remain disabled.
+- Separate Web service availability from agent presence. The compact native MCP indicator is grey when available, black when connected, and pulses during activity. Show agent, operation and timing details. Clicking the Web icon disconnects the agent; the menu stops the service. Multiple sessions return bounded project/open-file choices that require explicit user selection.
+- Present guided changes in native Desktop and Hop Web/RAP editors with asynchronous blocks, pacing, pause and instant application. Preserve dirty-tab protection and route presentation events to their owning UI.
+- Add semantic canvas layout and named-parameter authoring, improve native field injection and routing diagnostics, and preserve preview, SHA-256 preconditions, protected backups, native reload validation and rollback.
+- Compact component output schemas, separate schema-discovery limits from mutation limits, protect STDIO from cached Log4j console appenders, and resolve definition references in the native file context while retaining path confinement and response bounds.
 
 ## Verification and scope
 
-The stdout fix passed 135 local Java tests with zero failures and three Windows symlink skips. Its hosted CI passed the stable build, Windows junction checks, MCP conformance, installed-plugin acceptance on Hop 2.19.0 and Hop 2.20 snapshot compatibility. The snapshot job needed one retry after a separate `Pipe broken` error in the existing STDIO integration test; the command and STDIO tests also passed locally with that profile.
+The ordinary `mvn -B clean verify` build now targets Hop 2.20.0 and includes native component and JDBC tests without a snapshot compatibility profile. CI is configured for Linux verification, Windows junction security, checksum-verified clean Hop 2.20.0 installation and native acceptance, and the frozen MCP 2025-11-25 conformance regression baseline. A configured workflow is not evidence that a particular run passed.
 
-The conformance baseline retains 25 everything-server fixture failures; this is not a claim of complete everything-server conformance. This release makes no new performance claim.
+The dated reports in `docs/` describe the local UI and regression cases exercised for this version and their remaining limitations. The conformance baseline retains 25 everything-server fixture failures; it does not certify complete everything-server conformance or every behavior of the separate RAP endpoint.
 
-The tag-controlled release workflow repeats hosted verification before publishing. Assets include the Marketplace ZIP, CycloneDX JSON/XML SBOMs and SHA-256 checksums, with archive provenance and SBOM attestations. Release coordinates align at `2.2.6` / `v2.2.6`.
+The tag-controlled release workflow validates the verified Marketplace ZIP and Jandex index, retains CycloneDX JSON/XML SBOMs, creates SHA-256 checksums, and produces archive-provenance and SBOM attestations before publishing. Version coordinates are `2.4.0`; the corresponding release tag is `v2.4.0` when a release is requested.

@@ -8,3 +8,8 @@ endorsed by the Apache Software Foundation.
 Apache Hop and Apache are trademarks of the Apache Software Foundation. This
 project uses those names only to identify the software with which it is
 compatible.
+
+The bundled Model Context Protocol logo is from Model Context Protocol via
+Wikimedia Commons. Its MIT license and source attribution are included in
+the plugin JAR at mcp/LOGO-LICENSE.txt. The logo identifies MCP functionality
+and does not imply endorsement by the Model Context Protocol project.

@@ -9,11 +9,14 @@ final class HopSemanticCapabilities {
   static final List<String> OPERATION_NAMES =
       List.of(
           "add_component",
+          "add_parameter",
+          "remove_parameter",
           "update_component",
           "set_name",
           "set_description",
           "rename_component",
           "move_component",
+          "auto_layout",
           "add_hop",
           "remove_hop",
           "set_hop_enabled",
@@ -65,7 +68,7 @@ final class HopSemanticCapabilities {
     result.put("live_ui_adapter", "project_event_bridge");
     result.put("live_ui_dirty_tab_policy", "never_overwrite");
     result.put("live_ui_supported_clients", List.of("desktop", "web"));
-    result.put("tested_hop_versions", List.of("2.19.0", "2.20.0-SNAPSHOT"));
+    result.put("tested_hop_versions", List.of("2.20.0"));
     return result;
   }
 
@@ -74,17 +77,20 @@ final class HopSemanticCapabilities {
         operation(
             "add_component",
             List.of("plugin_id", "name"),
-            List.of("properties", "property_groups", "x", "y"),
+            List.of("properties", "property_groups", "x", "y", "distribute"),
             false),
         operation(
             "update_component",
             List.of("component"),
-            List.of("properties", "property_groups"),
+            List.of("properties", "property_groups", "distribute"),
             false),
+        operation("add_parameter", List.of("name", "value"), List.of(), false),
+        operation("remove_parameter", List.of("name"), List.of(), true),
         operation("set_name", List.of("value"), List.of(), false),
         operation("set_description", List.of("value"), List.of(), false),
         operation("rename_component", List.of("component", "new_name"), List.of(), false),
         operation("move_component", List.of("component", "x", "y"), List.of(), false),
+        operation("auto_layout", List.of(), List.of("x", "y"), false),
         operation(
             "add_hop",
             List.of("from", "to"),

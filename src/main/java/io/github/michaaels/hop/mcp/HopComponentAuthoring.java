@@ -22,7 +22,10 @@ import org.apache.hop.core.plugins.IPlugin;
 import org.apache.hop.core.plugins.IPluginType;
 import org.apache.hop.core.plugins.PluginRegistry;
 import org.apache.hop.core.plugins.TransformPluginType;
+import org.apache.hop.core.row.value.ValueMetaBase;
+import org.apache.hop.core.row.value.ValueMetaFactory;
 import org.apache.hop.core.row.value.ValueMetaString;
+import org.apache.hop.metadata.api.HopMetadataProperty;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
 import org.apache.hop.pipeline.transform.ITransformMeta;
 import org.apache.hop.pipeline.transform.TransformMeta;
@@ -33,6 +36,9 @@ import org.apache.hop.workflow.action.IAction;
 /** Discovers and creates Hop components using the native plugin and metadata-injection APIs. */
 final class HopComponentAuthoring {
   static final int MAX_PROPERTIES = 50;
+  // Discovery can describe a larger native plugin than one bounded mutation can set.
+  // Text File Input exposes 62 scalar properties in Hop 2.20.
+  static final int MAX_SCHEMA_PROPERTIES = 200;
   static final int MAX_PROPERTY_GROUPS = 20;
   static final int MAX_ROWS_PER_GROUP = 100;
   static final int MAX_TOTAL_GROUP_CELLS = 1_000;
@@ -123,6 +129,14 @@ final class HopComponentAuthoring {
         info == null ? List.of() : injectableScalarProperties(info);
     List<Map<String, Object>> propertyGroups =
         info == null ? List.of() : injectablePropertyGroups(info);
+    if (properties.size() > MAX_SCHEMA_PROPERTIES
+        || propertyGroups.size() > MAX_PROPERTY_GROUPS
+        || propertyGroups.stream()
+            .anyMatch(
+                group -> ((List<?>) group.get("properties")).size() > MAX_SCHEMA_PROPERTIES)) {
+      throw new IllegalArgumentException(
+          "Native component schema exceeds the bounded discovery limit");
+    }
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("kind", kind.value);
     result.put("plugin", pluginRow(plugin));
@@ -274,13 +288,60 @@ final class HopComponentAuthoring {
       if (property == null || !isPublicScalarProperty(property)) {
         throw new IllegalArgumentException("Unknown or non-scalar injectable property: " + key);
       }
-      injector.setProperty(component, key, null, String.valueOf(entry.getValue()));
+      try {
+        injector.setProperty(component, key, null, injectionValue(property, entry.getValue()));
+      } catch (Exception unsupportedCode) {
+        if (!isValueTypeCode(property) || !numberFormatCause(unsupportedCode))
+          throw unsupportedCode;
+        // Some injectable plugin properties still require the numeric Hop value-type ID.
+        injector.setProperty(
+            component, key, null, String.valueOf(nativeFieldType(entry.getValue())));
+      }
     }
     if (replacePropertyGroups) {
       resetPropertyGroups(component, info, propertyGroups.keySet());
     }
     injectPropertyGroups(component, info, injector, propertyGroups);
+    preserveDataGridCells(component, propertyGroups);
     injector.runPostInjectionProcessing(component);
+  }
+
+  private static void preserveDataGridCells(
+      Object component, Map<String, List<Map<String, Object>>> groups) throws Exception {
+    if (!component
+            .getClass()
+            .getName()
+            .equals("org.apache.hop.pipeline.transforms.datagrid.DataGridMeta")
+        || !groups.containsKey("data")) return;
+    List<?> fields =
+        (List<?>) component.getClass().getMethod("getDataGridFields").invoke(component);
+    List<?> lines = (List<?>) component.getClass().getMethod("getDataLines").invoke(component);
+    List<Map<String, Object>> requested = groups.get("data");
+    if (lines.size() != requested.size())
+      throw new IllegalArgumentException("Data grid row count changed during injection");
+    for (int i = 0; i < requested.size(); i++) {
+      Object line = lines.get(i);
+      var row = requested.get(i);
+      if (!row.containsKey("injectionDatalines")) continue;
+      List<String> cells = dataGridCells(row, fields.size());
+      line.getClass().getMethod("setDatalines", List.class).invoke(line, cells);
+      // Clear the transport-only fields so native reload cannot split the row again.
+      line.getClass().getMethod("setInjectionDatalines", String.class).invoke(line, (Object) null);
+      line.getClass().getMethod("setSplitter", String.class).invoke(line, (Object) null);
+    }
+  }
+
+  static List<String> dataGridCells(Map<String, Object> row, int columns) {
+    if (columns < 1 || columns > MAX_ROWS_PER_GROUP)
+      throw new IllegalArgumentException("Invalid data grid column count");
+    String delimiter = row.get("splitter") == null ? "," : String.valueOf(row.get("splitter"));
+    if (delimiter.isEmpty())
+      throw new IllegalArgumentException("Data grid splitter must not be empty");
+    String encoded = String.valueOf(row.get("injectionDatalines"));
+    String[] cells = encoded.split(delimiter, -1);
+    if (cells.length != columns)
+      throw new IllegalArgumentException("Data grid row width does not match its field metadata");
+    return Arrays.asList(cells);
   }
 
   @SuppressWarnings("rawtypes")
@@ -375,12 +436,29 @@ final class HopComponentAuthoring {
         RowMetaAndData row = new RowMetaAndData();
         for (String key : requestedKeys) {
           Object value = requestedRow.get(key);
-          row.addValue(new ValueMetaString(key), value == null ? null : String.valueOf(value));
+          row.addValue(
+              new ValueMetaString(key),
+              value == null ? null : injectionValue(allowed.get(key), value));
         }
         rows.add(row);
       }
       for (String key : requestedKeys) {
-        injector.setProperty(component, key, rows, key);
+        try {
+          injector.setProperty(component, key, rows, key);
+        } catch (Exception unsupportedCode) {
+          if (!isValueTypeCode(allowed.get(key)) || !numberFormatCause(unsupportedCode))
+            throw unsupportedCode;
+          List<RowMetaAndData> numericRows = new ArrayList<>();
+          for (Map<String, Object> requestedRow : requestedRows) {
+            Object value = requestedRow.get(key);
+            RowMetaAndData numericRow = new RowMetaAndData();
+            numericRow.addValue(
+                new ValueMetaString(key),
+                value == null ? null : String.valueOf(nativeFieldType(value)));
+            numericRows.add(numericRow);
+          }
+          injector.setProperty(component, key, numericRows, key);
+        }
       }
     }
   }
@@ -394,7 +472,7 @@ final class HopComponentAuthoring {
     return property.pathArraysCount == 0
         && (property.getGroupKey() == null || property.getGroupKey().isBlank())
         && !property.isExcludedFromInjection()
-        && !isReserved(property.getKey())
+        && (!isReserved(property.getKey()) || isConfigurationType(property))
         && !isSensitive(property.getKey())
         && isScalar(property.getPropertyClass());
   }
@@ -408,13 +486,22 @@ final class HopComponentAuthoring {
         && isScalar(property.getPropertyClass());
   }
 
-  private Map<String, Object> propertyRow(BeanInjectionInfo<?>.Property property) {
+  Map<String, Object> propertyRow(BeanInjectionInfo<?>.Property property) {
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("key", property.getKey());
     row.put("description", safe(property.getTranslatedDescription()));
     row.put("java_type", property.getPropertyClass().getName());
-    row.put("value_type", valueType(property.getPropertyClass()));
-    if (property.getPropertyClass().isEnum()) {
+    row.put(
+        "value_type",
+        isValueTypeCode(property) ? "string" : valueType(property.getPropertyClass()));
+    if (isValueTypeCode(property)) {
+      row.put(
+          "allowed_values",
+          Arrays.stream(ValueMetaFactory.getValueMetaNames())
+              .filter(name -> ValueMetaFactory.getIdForValueMeta(name) > 0)
+              .limit(64)
+              .toList());
+    } else if (property.getPropertyClass().isEnum()) {
       List<String> values = new ArrayList<>();
       for (Object value : property.getPropertyClass().getEnumConstants()) {
         values.add(String.valueOf(value));
@@ -422,6 +509,44 @@ final class HopComponentAuthoring {
       row.put("allowed_values", values);
     }
     return row;
+  }
+
+  private static boolean isValueTypeCode(BeanInjectionInfo<?>.Property property) {
+    var path = property.getPath();
+    if (path.isEmpty()) return false;
+    BeanLevelInfo<?> leaf = path.get(path.size() - 1);
+    HopMetadataProperty metadata =
+        leaf.field == null ? null : leaf.field.getAnnotation(HopMetadataProperty.class);
+    return metadata != null
+        && metadata.intCodeConverter() == ValueMetaBase.ValueTypeCodeConverter.class;
+  }
+
+  private static String injectionValue(BeanInjectionInfo<?>.Property property, Object value) {
+    if (!isValueTypeCode(property)) return String.valueOf(value);
+    return ValueMetaFactory.getValueMetaName(nativeFieldType(value));
+  }
+
+  private static int nativeFieldType(Object value) {
+    if (value instanceof Number number) {
+      int type = number.intValue();
+      if (number.doubleValue() != type || type <= 0)
+        throw new IllegalArgumentException("Invalid native Hop field type ID");
+      String code = ValueMetaFactory.getValueMetaName(type);
+      if (ValueMetaFactory.getIdForValueMeta(code) != type)
+        throw new IllegalArgumentException("Unknown native Hop field type ID");
+      return type;
+    }
+    String code = String.valueOf(value);
+    int type = ValueMetaFactory.getIdForValueMeta(code);
+    if (type <= 0) throw new IllegalArgumentException("Unknown native Hop field type name");
+    return type;
+  }
+
+  private static boolean numberFormatCause(Throwable failure) {
+    for (int depth = 0; failure != null && depth < 10; depth++, failure = failure.getCause()) {
+      if (failure instanceof NumberFormatException) return true;
+    }
+    return false;
   }
 
   private static Map<String, Object> validatedProperties(Object value) {
@@ -594,6 +719,20 @@ final class HopComponentAuthoring {
 
   private static boolean isReserved(String key) {
     return key != null && RESERVED_PROPERTIES.contains(key.toLowerCase(Locale.ROOT));
+  }
+
+  private static boolean isConfigurationType(BeanInjectionInfo<?>.Property property) {
+    if (!"type".equalsIgnoreCase(property.getKey()) || !property.getPropertyClass().isEnum())
+      return false;
+    var path = property.getPath();
+    if (path.isEmpty()) return false;
+    var leaf = path.get(path.size() - 1);
+    HopMetadataProperty metadata =
+        leaf.field == null ? null : leaf.field.getAnnotation(HopMetadataProperty.class);
+    return metadata != null
+        && !metadata.key().isBlank()
+        && !isReserved(metadata.key())
+        && !isSensitive(metadata.key());
   }
 
   private static String normalize(String value) {

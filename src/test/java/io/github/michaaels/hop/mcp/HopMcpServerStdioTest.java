@@ -80,6 +80,39 @@ class HopMcpServerStdioTest {
   }
 
   @Test
+  void componentDiscoverySchemaAcceptsNativeLargePluginsAndKeepsMutationBound() throws Exception {
+    var method = HopMcpServer.class.getDeclaredMethod("componentSchemaOutputSchema");
+    method.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> schema = (Map<String, Object>) method.invoke(null);
+    Map<String, Object> projection =
+        new java.util.LinkedHashMap<>(
+            new HopComponentAuthoring(new MemoryMetadataProvider()).schema("pipeline", "Dummy"));
+    var properties =
+        java.util.stream.IntStream.range(0, 62)
+            .mapToObj(
+                i ->
+                    Map.<String, Object>of(
+                        "key",
+                        "PROPERTY_" + i,
+                        "description",
+                        "",
+                        "java_type",
+                        "java.lang.String",
+                        "value_type",
+                        "string"))
+            .toList();
+    projection.put("properties", properties);
+    projection.put("property_count", properties.size());
+    projection.put("scalar_injection_supported", true);
+    assertTrue(OUTPUT_VALIDATOR.validate(schema, projection).valid());
+    projection.put("properties", java.util.Collections.nCopies(201, properties.getFirst()));
+    projection.put("property_count", 201);
+    assertFalse(OUTPUT_VALIDATOR.validate(schema, projection).valid());
+    assertEquals(50, HopComponentAuthoring.MAX_PROPERTIES);
+  }
+
+  @Test
   void earlyStdioCloseFailsPromptly() throws Exception {
     assertTimeout(
         Duration.ofSeconds(4),
@@ -261,6 +294,9 @@ class HopMcpServerStdioTest {
         assertTrue(initialized.contains("\"name\":\"hop-mcp-connector\""));
         assertTrue(initialized.contains("\"protocolVersion\":\"2025-11-25\""));
         assertTrue(initialized.contains("\"version\":\"" + HopMcpVersion.current() + "\""));
+        assertTrue(initialized.contains("Prefer native Hop components"));
+        assertTrue(initialized.contains("line breaks and indentation"));
+        assertTrue(initialized.contains("named parameters and preserve parent parameter passing"));
 
         requests.println(
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
@@ -530,14 +566,19 @@ class HopMcpServerStdioTest {
         assertStructuredOutputConforms(componentTypes, "hop_component_types", outputSchemas);
 
         requests.println(
-            toolCall(14, "hop_mutate_definition", "{\"path\":\"valid.hpl\",\"operations\":[]}"));
+            toolCall(
+                14,
+                "hop_mutate_definition",
+                "{\"path\":\"valid.hpl\",\"operations\":[{\"operation\":\"auto_layout\"}]}"));
         String mutation = responses.readResponse();
         assertSuccessfulToolResponse(mutation, 14);
         assertStructuredOutputConforms(mutation, "hop_mutate_definition", outputSchemas);
 
         requests.println(
             toolCall(
-                15, "hop_prepare_correction_plan", "{\"path\":\"valid.hpl\",\"operations\":[]}"));
+                15,
+                "hop_prepare_correction_plan",
+                "{\"path\":\"valid.hpl\",\"operations\":[],\"presentation\":\"guided\"}"));
         String correctionPlan = responses.readResponse();
         assertSuccessfulToolResponse(correctionPlan, 15);
         assertStructuredOutputConforms(
@@ -549,6 +590,21 @@ class HopMcpServerStdioTest {
         String planId = (String) correctionContent.get("plan_id");
         String planSha256 = (String) correctionContent.get("plan_sha256");
         requests.println(
+            toolCall(
+                201,
+                "hop_prepare_correction_plan",
+                "{\"path\":\"valid.hpl\",\"operations\":[],\"previous_plan_id\":\""
+                    + planId
+                    + "\"}"));
+        String appendedPlan = responses.readResponse();
+        assertSuccessfulToolResponse(appendedPlan, 201);
+        assertStructuredOutputConforms(appendedPlan, "hop_prepare_correction_plan", outputSchemas);
+        correctionContent =
+            objectValue(
+                objectValue(parseObject(appendedPlan).get("result")).get("structuredContent"));
+        planId = (String) correctionContent.get("plan_id");
+        planSha256 = (String) correctionContent.get("plan_sha256");
+        requests.println(
             toolCall(53, "hop_correction_plan_status", "{\"plan_id\":\"" + planId + "\"}"));
         String correctionStatus = responses.readResponse();
         assertSuccessfulToolResponse(correctionStatus, 53);
@@ -559,7 +615,11 @@ class HopMcpServerStdioTest {
             toolCall(
                 54,
                 "hop_apply_correction_plan",
-                "{\"plan_id\":\"" + planId + "\",\"plan_sha256\":\"" + planSha256 + "\"}"));
+                "{\"plan_id\":\""
+                    + planId
+                    + "\",\"plan_sha256\":\""
+                    + planSha256
+                    + "\",\"presentation\":\"instant\"}"));
         String appliedCorrection = responses.readResponse();
         assertSuccessfulToolResponse(appliedCorrection, 54);
         assertStructuredOutputConforms(
@@ -571,6 +631,25 @@ class HopMcpServerStdioTest {
         assertSuccessfulToolResponse(appliedCorrectionStatus, 55);
         assertStructuredOutputConforms(
             appliedCorrectionStatus, "hop_correction_plan_status", outputSchemas);
+        requests.println(
+            toolCall(
+                202,
+                "hop_prepare_correction_plan",
+                "{\"path\":\"cancelled.hpl\",\"operations\":[],\"presentation\":\"instant\"}"));
+        String cancelPreview = responses.readResponse();
+        assertSuccessfulToolResponse(cancelPreview, 202);
+        Map<String, Object> cancelContent =
+            objectValue(
+                objectValue(parseObject(cancelPreview).get("result")).get("structuredContent"));
+        requests.println(
+            toolCall(
+                203,
+                "hop_correction_plan_status",
+                "{\"plan_id\":\"" + cancelContent.get("plan_id") + "\",\"cancel\":true}"));
+        String cancelledPlan = responses.readResponse();
+        assertSuccessfulToolResponse(cancelledPlan, 203);
+        assertStructuredOutputConforms(cancelledPlan, "hop_correction_plan_status", outputSchemas);
+        assertFalse(Files.exists(project.resolve("cancelled.hpl")));
 
         byte[] mutableDefinition =
             "<?xml version=\"1.0\"?><pipeline><info><name>mutation-contract</name></info><order/></pipeline>"
@@ -992,6 +1071,8 @@ class HopMcpServerStdioTest {
 
   private static Map<String, Map<String, Object>> extractOutputSchemas(String response)
       throws Exception {
+    int bytes = response.getBytes(StandardCharsets.UTF_8).length;
+    assertTrue(bytes < 1024 * 1024, "Serialized tools/list must remain below 1 MiB: " + bytes);
     Map<String, Object> envelope = parseObject(response);
     Map<String, Object> result = objectValue(envelope.get("result"));
     Map<String, Map<String, Object>> schemas = new java.util.HashMap<>();

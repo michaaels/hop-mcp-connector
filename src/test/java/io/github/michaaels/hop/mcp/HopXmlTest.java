@@ -47,6 +47,50 @@ class HopXmlTest {
   }
 
   @Test
+  void scriptFormattingWarningsAreAdvisoryAndNeverExposeOrRewriteSource() throws Exception {
+    String source = "var confidentialValue = '" + "private-content".repeat(20) + "';";
+    String xml =
+        "<pipeline><transform><name>Prepare</name><type>ScriptValueMod</type>"
+            + "<jsScripts><jsScript><jsScript_script>"
+            + source
+            + "</jsScript_script></jsScript></jsScripts></transform></pipeline>";
+    var result = HopXml.validate("script.hpl", xml);
+    assertEquals(true, result.get("valid"));
+    assertTrue(result.get("warnings").toString().contains("Prepare"));
+    assertFalse(result.toString().contains("private-content"));
+    String singleStatement = xml.replace(source, "var message = '" + "x".repeat(140) + "';");
+    assertTrue(
+        ((java.util.List<?>) HopXml.validate("message.hpl", singleStatement).get("warnings"))
+            .isEmpty());
+    assertEquals(
+        source, HopXml.parse(xml).getElementsByTagName("jsScript_script").item(0).getTextContent());
+    String formatted =
+        "<workflow><actions><action><name>Evaluate</name><type>EVAL</type>"
+            + "<script>var enabled = true;\nif (enabled) {\n  enabled = false;\n}\n</script>"
+            + "</action></actions></workflow>";
+    assertTrue(
+        ((java.util.List<?>) HopXml.validate("flow.hwf", formatted).get("warnings")).isEmpty());
+  }
+
+  @Test
+  void scriptStyleChecksRespectDiagnosticBoundsAndIgnoreSql() throws Exception {
+    String source = "var value = 1;".repeat(30);
+    var component =
+        HopXml.parse(
+                "<action><name>Check</name><type>EVAL</type><script>"
+                    + source
+                    + "</script></action>")
+            .getDocumentElement();
+    java.util.List<String> warnings =
+        new java.util.ArrayList<>(
+            java.util.Collections.nCopies(ProjectFiles.MAX_RESULTS, "existing"));
+    assertTrue(HopAuthoringGuidance.checkScriptStyle(component, warnings));
+    assertEquals(ProjectFiles.MAX_RESULTS, warnings.size());
+    component.getElementsByTagName("type").item(0).setTextContent("SQL");
+    assertFalse(HopAuthoringGuidance.checkScriptStyle(component, warnings));
+  }
+
+  @Test
   void blocksXxe() {
     String xxe =
         "<!DOCTYPE x [<!ENTITY e SYSTEM \"file:///etc/passwd\">]><pipeline><info><name>&e;</name></info></pipeline>";

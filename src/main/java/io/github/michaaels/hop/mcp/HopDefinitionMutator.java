@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
+import org.apache.hop.core.parameters.INamedParameterDefinitions;
 import org.apache.hop.core.variables.IVariables;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
 import org.apache.hop.pipeline.PipelineHopMeta;
@@ -622,12 +623,42 @@ final class HopDefinitionMutator {
     }
   }
 
+  record VisualDraft(
+      HopGuidedPresentation.Graph baseline,
+      HopGuidedPresentation.Graph result,
+      HopNativeDraft nativeDraft) {}
+
+  synchronized VisualDraft visualPreview(
+      String relative,
+      String requestedKind,
+      List<Map<String, Object>> operations,
+      String expectedSha256)
+      throws Exception {
+    requireRuntime();
+    String kind = kind(relative, requestedKind);
+    Path target = files.resolveForWrite(relative);
+    boolean existed = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+    byte[] bytes = existed ? files.readBytes(target) : new byte[0];
+    if (!ProjectFiles.sha256(bytes).equals(expectedSha256))
+      throw McpException.precondition(
+          "STALE_SHA256", "The definition changed while preparing its visual preview.", false);
+    Definition definition =
+        existed ? load(kind, bytes, target.toString()) : create(kind, target, relative);
+    var baseline = definition.visual();
+    String baselineXml = definition.xml();
+    for (var operation : operations) definition.apply(operation);
+    return new VisualDraft(
+        baseline, definition.visual(), new HopNativeDraft(baselineXml, definition.xml()));
+  }
+
   private interface Definition {
     Map<String, Object> summary();
 
     Map<String, Object> apply(Map<String, Object> operation) throws Exception;
 
     String xml() throws Exception;
+
+    HopGuidedPresentation.Graph visual();
   }
 
   private final class PipelineDefinition implements Definition {
@@ -635,6 +666,11 @@ final class HopDefinitionMutator {
 
     private PipelineDefinition(PipelineMeta meta) {
       this.meta = meta;
+    }
+
+    @Override
+    public HopGuidedPresentation.Graph visual() {
+      return HopGuidedPresentation.graph(meta);
     }
 
     @Override
@@ -649,6 +685,12 @@ final class HopDefinitionMutator {
     @Override
     public Map<String, Object> apply(Map<String, Object> operation) throws Exception {
       String name = operationName(operation);
+      if ("auto_layout".equals(name)) HopFlowLayout.validateOptions(operation);
+      if (operation.containsKey("distribute")
+          && !List.of("add_component", "update_component").contains(name)) {
+        throw new IllegalArgumentException(
+            "distribute is only supported for pipeline add/update_component");
+      }
       return switch (name) {
         case "add_component" -> {
           String componentName = required(operation, "name");
@@ -666,15 +708,26 @@ final class HopDefinitionMutator {
                   operation.get("property_groups"),
                   x,
                   y);
+          transform.setDistributes(
+              optionalBoolean(operation, "distribute", transform.isDistributes()));
           meta.addTransform(transform);
           yield Map.of(
-              "operation", name,
-              "component", componentName,
-              "plugin_id", transform.getPluginId(),
-              "x", x,
-              "y", y,
-              "property_count", propertyCount(operation.get("properties")),
-              "property_group_count", propertyCount(operation.get("property_groups")));
+              "operation",
+              name,
+              "component",
+              componentName,
+              "plugin_id",
+              transform.getPluginId(),
+              "distribute",
+              transform.isDistributes(),
+              "x",
+              x,
+              "y",
+              y,
+              "property_count",
+              propertyCount(operation.get("properties")),
+              "property_group_count",
+              propertyCount(operation.get("property_groups")));
         }
         case "update_component" -> {
           String componentName = required(operation, "component");
@@ -684,12 +737,22 @@ final class HopDefinitionMutator {
               transform.getTransform(),
               operation.get("properties"),
               operation.get("property_groups"));
+          if (operation.containsKey("distribute")) {
+            transform.setDistributes(booleanValue(operation, "distribute"));
+          }
           yield Map.of(
               "operation", name,
               "component", componentName,
               "plugin_id", transform.getPluginId(),
+              "distribute", transform.isDistributes(),
               "property_count", propertyCount(operation.get("properties")),
               "property_group_count", propertyCount(operation.get("property_groups")));
+        }
+        case "add_parameter", "remove_parameter" -> {
+          String parameter = required(operation, "name");
+          if (name.equals("remove_parameter")) removeParameter(meta, parameter);
+          else meta.addParameterDefinition(parameter, stringValue(operation, "value", 8192), "");
+          yield Map.of("operation", name, "parameter", parameter);
         }
         case "set_name" -> {
           String next = required(operation, "value");
@@ -715,6 +778,11 @@ final class HopDefinitionMutator {
           transform.setName(next);
           yield change(name, "from", component, "to", next);
         }
+        case "auto_layout" ->
+            HopFlowLayout.arrange(
+                meta,
+                optionalCoordinate(operation, "x", 80),
+                optionalCoordinate(operation, "y", 80));
         case "move_component" -> {
           String component = required(operation, "component");
           TransformMeta transform = requireTransform(meta, component);
@@ -785,6 +853,11 @@ final class HopDefinitionMutator {
     }
 
     @Override
+    public HopGuidedPresentation.Graph visual() {
+      return HopGuidedPresentation.graph(meta);
+    }
+
+    @Override
     public Map<String, Object> summary() {
       return Map.of(
           "name", value(meta.getName()),
@@ -796,6 +869,10 @@ final class HopDefinitionMutator {
     @Override
     public Map<String, Object> apply(Map<String, Object> operation) throws Exception {
       String name = operationName(operation);
+      if ("auto_layout".equals(name)) HopFlowLayout.validateOptions(operation);
+      if (operation.containsKey("distribute")) {
+        throw new IllegalArgumentException("distribute is only supported for pipeline components");
+      }
       return switch (name) {
         case "add_component" -> {
           String componentName = required(operation, "name");
@@ -837,6 +914,12 @@ final class HopDefinitionMutator {
               "property_count", propertyCount(operation.get("properties")),
               "property_group_count", propertyCount(operation.get("property_groups")));
         }
+        case "add_parameter", "remove_parameter" -> {
+          String parameter = required(operation, "name");
+          if (name.equals("remove_parameter")) removeParameter(meta, parameter);
+          else meta.addParameterDefinition(parameter, stringValue(operation, "value", 8192), "");
+          yield Map.of("operation", name, "parameter", parameter);
+        }
         case "set_name" -> {
           String next = required(operation, "value");
           String previous = value(meta.getName());
@@ -861,6 +944,11 @@ final class HopDefinitionMutator {
           action.setName(next);
           yield change(name, "from", component, "to", next);
         }
+        case "auto_layout" ->
+            HopFlowLayout.arrange(
+                meta,
+                optionalCoordinate(operation, "x", 80),
+                optionalCoordinate(operation, "y", 80));
         case "move_component" -> {
           String component = required(operation, "component");
           ActionMeta action = requireAction(meta, component);
@@ -1018,8 +1106,10 @@ final class HopDefinitionMutator {
 
   private static void requireComponentUpdates(Map<String, Object> operation) {
     if (propertyCount(operation.get("properties")) == 0
-        && propertyCount(operation.get("property_groups")) == 0) {
-      throw new IllegalArgumentException("update_component requires properties or property_groups");
+        && propertyCount(operation.get("property_groups")) == 0
+        && !operation.containsKey("distribute")) {
+      throw new IllegalArgumentException(
+          "update_component requires properties, property_groups or distribute");
     }
   }
 
@@ -1030,6 +1120,27 @@ final class HopDefinitionMutator {
     result.put(firstKey, first);
     result.put(secondKey, second);
     return result;
+  }
+
+  private static void removeParameter(INamedParameterDefinitions meta, String parameter)
+      throws Exception {
+    record Definition(String name, String defaultValue, String description) {}
+    List<Definition> retained = new ArrayList<>();
+    boolean found = false;
+    for (String name : meta.listParameters()) {
+      if (name.equals(parameter)) {
+        found = true;
+        continue;
+      }
+      retained.add(
+          new Definition(name, meta.getParameterDefault(name), meta.getParameterDescription(name)));
+    }
+    if (!found) throw new IllegalArgumentException("Unknown parameter: " + parameter);
+    meta.removeAllParameters();
+    for (Definition definition : retained) {
+      meta.addParameterDefinition(
+          definition.name(), definition.defaultValue(), definition.description());
+    }
   }
 
   private static String value(String value) {

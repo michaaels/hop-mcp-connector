@@ -30,7 +30,6 @@ final class HopXml {
   private static final Pattern TABLE =
       Pattern.compile(
           "(?i)\\b(?:from|join|update|into|delete\\s+from|merge\\s+into)\\s+([`\"\\[\\]A-Za-z0-9_.$#-]+)");
-  private static final Pattern REF = Pattern.compile("(?i)([^\\s\"'<>]+\\.(?:hpl|hwf))");
 
   private HopXml() {}
 
@@ -91,7 +90,7 @@ final class HopXml {
     out.put("component_count", components.size());
     out.put("hop_count", hops.size());
     out.put("tables", findTables(searchable));
-    out.put("references", references(searchable));
+    out.put("references", HopDefinitionReferences.extract(root, ProjectFiles.MAX_RESULTS));
     return out;
   }
 
@@ -114,7 +113,7 @@ final class HopXml {
           out.put("config", elementMap(e, 0, budget));
           out.put("config_truncated", budget.truncated);
           out.put("tables", findTables(searchable));
-          out.put("references", references(searchable));
+          out.put("references", HopDefinitionReferences.extract(e, ProjectFiles.MAX_RESULTS));
           return out;
         }
       }
@@ -134,6 +133,8 @@ final class HopXml {
     Set<String> names = new HashSet<>();
     NodeList list = root.getElementsByTagName(tag);
     for (int i = 0; i < list.getLength(); i++) {
+      diagnosticsTruncated |=
+          HopAuthoringGuidance.checkScriptStyle((Element) list.item(i), warnings);
       String n = childText((Element) list.item(i), "name");
       if (n == null || n.isBlank()) {
         if (warnings.size() < ProjectFiles.MAX_RESULTS) warnings.add(tag + " without name");
@@ -143,7 +144,8 @@ final class HopXml {
         else diagnosticsTruncated = true;
       }
     }
-    for (Map<String, Object> h : hops(root)) {
+    List<Map<String, Object>> routingHops = hops(root);
+    for (Map<String, Object> h : routingHops) {
       String from = String.valueOf(h.getOrDefault("from", ""));
       String to = String.valueOf(h.getOrDefault("to", ""));
       if (!names.contains(from)) {
@@ -155,6 +157,7 @@ final class HopXml {
         else diagnosticsTruncated = true;
       }
     }
+    diagnosticsTruncated |= HopRouting.validate(root, routingHops, errors, warnings);
     return Map.of(
         "path",
         path,
@@ -167,7 +170,11 @@ final class HopXml {
         "warnings",
         warnings,
         "diagnostics_truncated",
-        diagnosticsTruncated);
+        diagnosticsTruncated,
+        "validation_level",
+        "structural",
+        "execution_validated",
+        false);
   }
 
   static List<Map<String, Object>> lineage(String xml, String start, String direction, int maxDepth)
@@ -250,10 +257,12 @@ final class HopXml {
   }
 
   static Set<String> references(String text, int maxItems) {
-    LinkedHashSet<String> out = new LinkedHashSet<>();
-    Matcher m = REF.matcher(text == null ? "" : text);
-    while (m.find() && out.size() < maxItems) out.add(m.group(1));
-    return out;
+    try {
+      return HopDefinitionReferences.extract(parse(text).getDocumentElement(), maxItems);
+    } catch (Exception invalidXml) {
+      throw new IllegalArgumentException(
+          "Unable to inspect definition-file references", invalidXml);
+    }
   }
 
   static String redact(String text) {
@@ -266,6 +275,7 @@ final class HopXml {
 
   private static List<Map<String, Object>> hops(Element root, int maxItems) {
     List<Map<String, Object>> out = new ArrayList<>();
+    Map<String, HopRouting.Routes> components = HopRouting.routes(root);
     NodeList list = root.getElementsByTagName("hop");
     for (int i = 0; i < list.getLength() && out.size() < maxItems; i++) {
       Element e = (Element) list.item(i);
@@ -278,6 +288,7 @@ final class HopXml {
       String enabled = childText(e, "enabled");
       if (enabled != null)
         h.put("enabled", !enabled.equalsIgnoreCase("N") && !enabled.equalsIgnoreCase("false"));
+      HopRouting.describeHop(e, components.get(from), h);
       out.add(h);
     }
     return out;
@@ -401,7 +412,7 @@ final class HopXml {
     return dot > 0 ? f.substring(0, dot) : f;
   }
 
-  private static String childText(Element e, String tag) {
+  static String childText(Element e, String tag) {
     NodeList n = e.getChildNodes();
     for (int i = 0; i < n.getLength(); i++) {
       Node x = n.item(i);

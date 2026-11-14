@@ -170,7 +170,7 @@ jobs:
           name: mcp-conformance-2025-11-25
           path: ${{ runner.temp }}/mcp-conformance-2025-11-25
 
-  hop-219-smoke:
+  hop-220-smoke:
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -240,24 +240,8 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: hop-219-native-acceptance-evidence
+          name: hop-220-native-acceptance-evidence
           path: ${{ runner.temp }}/hop-acceptance
-
-  hop-220-compatibility:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-      - name: Verify against the Apache Hop 2.20 snapshot line
-        run: mvn -B -P hop-2.20 clean verify
-      - name: Require real Linux symlink security coverage
-        run: python3 scripts/ci/check-required-tests.py target/surefire-reports
 
   windows-junction-security:
     runs-on: windows-latest

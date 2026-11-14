@@ -37,6 +37,18 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
   private String root;
 
   @CommandLine.Option(
+      names = "--remote-ui",
+      description =
+          "Expose four lightweight tools to connect an agent to Hop Web by URL, without a local project.")
+  private boolean remoteUi;
+
+  @CommandLine.Option(
+      names = "--remote-ca-certificate",
+      description =
+          "Optional additional trusted public X.509 certificate for remote Hop Web HTTPS.")
+  private Path remoteCaCertificate;
+
+  @CommandLine.Option(
       names = {"--allow-deep-check"},
       description = "Enable Hop native deep checks. They may access configured external systems.")
   private boolean allowDeepCheck;
@@ -93,10 +105,28 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
     // Only the transport retains the protocol stream; never restore it for logging.
     HopLogStore.OriginalSystemOut = HopLogStore.OriginalSystemErr;
     System.setOut(System.err);
+    HopStdioLogging.redirectConsoleAppenders();
     Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
 
     try {
       System.setProperty(Const.HOP_PLATFORM_RUNTIME, "MCP");
+      if (!remoteUi && remoteCaCertificate != null) {
+        throw new IllegalArgumentException("--remote-ca-certificate requires --remote-ui");
+      }
+      if (remoteUi) {
+        if (StringUtils.isNotBlank(root)
+            || allowDeepCheck
+            || allowExecution
+            || allowMutation
+            || allowWebApi) {
+          throw new IllegalArgumentException(
+              "--remote-ui does not accept a local project or local permission flags");
+        }
+        try (var server = new HopWebAgentServer(System.in, protocolOut, remoteCaCertificate)) {
+          server.awaitEof();
+        }
+        return;
+      }
       handleMixinActions();
 
       Path projectRoot = determineProjectRoot();

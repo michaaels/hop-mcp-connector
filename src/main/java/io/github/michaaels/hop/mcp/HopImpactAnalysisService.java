@@ -305,17 +305,8 @@ final class HopImpactAnalysisService {
       if (reference == null || reference.isBlank() || reference.length() > MAX_PATH_LENGTH) {
         return null;
       }
-      String resolvedReference = reference.replace("${PROJECT_HOME}", files.root().toString());
-      if (variables != null) resolvedReference = variables.resolve(resolvedReference);
-      if (resolvedReference == null || resolvedReference.isBlank()) return null;
       Path sourcePath = files.root().resolve(source).normalize();
-      Path sourceFolder = sourcePath.getParent();
-      if (sourceFolder == null) return null;
-      resolvedReference =
-          resolvedReference.replace("${Internal.Entry.Current.Folder}", sourceFolder.toString());
-      Path raw = Path.of(resolvedReference);
-      Path candidate = (raw.isAbsolute() ? raw : sourceFolder.resolve(raw)).normalize();
-      return candidate.startsWith(files.root()) ? candidate : null;
+      return HopDefinitionReferences.resolve(files, variables, sourcePath, reference);
     } catch (Exception ignored) {
       return null;
     }

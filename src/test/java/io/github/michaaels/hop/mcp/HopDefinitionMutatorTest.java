@@ -95,6 +95,61 @@ class HopDefinitionMutatorTest {
   }
 
   @Test
+  void namedParametersPreservePreviewNativeReloadAndRollback() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider provider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), variables, provider, HopSemanticEventSink.NONE, path -> {});
+    for (String kind : List.of("pipeline", "workflow")) {
+      String path = kind + (kind.equals("pipeline") ? ".hpl" : ".hwf");
+      List<Map<String, Object>> first =
+          List.of(
+              Map.of("operation", "add_parameter", "name", "fecha_proceso", "value", "2026-10-21"));
+      mutator.mutate(path, kind, first, null, false);
+      assertFalse(Files.exists(project.resolve(path)));
+      var created = mutator.mutate(path, kind, first, null, true);
+      var meta =
+          kind.equals("pipeline")
+              ? new PipelineMeta(Files.newInputStream(project.resolve(path)), provider, variables)
+              : new WorkflowMeta(variables, project.resolve(path).toString(), provider);
+      assertEquals("2026-10-21", meta.getParameterDefault("fecha_proceso"));
+      String hash = String.valueOf(created.get("new_sha256"));
+      List<Map<String, Object>> second =
+          List.of(
+              Map.of(
+                  "operation", "add_parameter", "name", "source_root", "value", "//server/share"));
+      mutator.mutate(path, kind, second, null, false);
+      assertEquals(hash, ProjectFiles.sha256(Files.readAllBytes(project.resolve(path))));
+      var changed = mutator.mutate(path, kind, second, hash, true);
+      String changedHash = String.valueOf(changed.get("new_sha256"));
+      var remove =
+          List.<Map<String, Object>>of(
+              Map.of("operation", "remove_parameter", "name", "source_root"));
+      mutator.mutate(path, kind, remove, null, false);
+      assertEquals(changedHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve(path))));
+      var removed = mutator.mutate(path, kind, remove, changedHash, true);
+      var remaining =
+          kind.equals("pipeline")
+              ? new PipelineMeta(Files.newInputStream(project.resolve(path)), provider, variables)
+              : new WorkflowMeta(variables, project.resolve(path).toString(), provider);
+      assertArrayEquals(new String[] {"fecha_proceso"}, remaining.listParameters());
+      assertEquals("2026-10-21", remaining.getParameterDefault("fecha_proceso"));
+      assertThrows(
+          Exception.class,
+          () ->
+              mutator.mutate(path, kind, remove, String.valueOf(removed.get("new_sha256")), true));
+      mutator.rollback(
+          String.valueOf(removed.get("transaction_id")), String.valueOf(removed.get("new_sha256")));
+      assertEquals(changedHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve(path))));
+      mutator.rollback(
+          String.valueOf(changed.get("transaction_id")), String.valueOf(changed.get("new_sha256")));
+      assertEquals(hash, ProjectFiles.sha256(Files.readAllBytes(project.resolve(path))));
+      assertThrows(Exception.class, () -> mutator.mutate(path, kind, first, hash, true));
+    }
+  }
+
+  @Test
   void mutatesExistingWorkflowWithHashBackupReloadAndRollback() throws Exception {
     Variables variables = new Variables();
     MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
@@ -582,7 +637,7 @@ class HopDefinitionMutatorTest {
     assertEquals("MCP Connector for Apache Hop", capabilities.get("product"));
     assertEquals(List.of("pipeline", "workflow"), capabilities.get("definition_kinds"));
     assertTrue(((List<?>) capabilities.get("semantic_operations")).size() >= 8);
-    assertEquals(List.of("2.19.0", "2.20.0-SNAPSHOT"), capabilities.get("tested_hop_versions"));
+    assertEquals(List.of("2.20.0"), capabilities.get("tested_hop_versions"));
     Map<?, ?> testCycle = (Map<?, ?>) capabilities.get("test_cycle");
     assertEquals("advisory_only", testCycle.get("correction_mode"));
     assertEquals(false, testCycle.get("auto_apply"));
@@ -981,6 +1036,99 @@ class HopDefinitionMutatorTest {
                         "property_groups", Map.of("fields", tooManyRows))),
                 null,
                 false));
+  }
+
+  @Test
+  void distributionChangesPreservePreviewPreconditionsNativeReloadAndRollback() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider provider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, provider);
+    var created =
+        mutator.mutate(
+            "copy.hpl",
+            "pipeline",
+            List.of(
+                Map.of(
+                    "operation",
+                    "add_component",
+                    "plugin_id",
+                    "Dummy",
+                    "name",
+                    "Copy",
+                    "distribute",
+                    false)),
+            null,
+            true);
+    String originalHash = String.valueOf(created.get("new_sha256"));
+    assertFalse(
+        new PipelineMeta(Files.newInputStream(project.resolve("copy.hpl")), provider, variables)
+            .findTransform("Copy")
+            .isDistributes());
+    var operations =
+        List.<Map<String, Object>>of(
+            Map.of("operation", "update_component", "component", "Copy", "distribute", true));
+    mutator.mutate("copy.hpl", "pipeline", operations, originalHash, false);
+    assertFalse(
+        new PipelineMeta(Files.newInputStream(project.resolve("copy.hpl")), provider, variables)
+            .findTransform("Copy")
+            .isDistributes());
+    assertThrows(
+        Exception.class,
+        () -> mutator.mutate("copy.hpl", "pipeline", operations, "0".repeat(64), true));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "copy.hpl",
+                "pipeline",
+                List.of(
+                    Map.of(
+                        "operation",
+                        "update_component",
+                        "component",
+                        "Copy",
+                        "distribute",
+                        "invalid")),
+                originalHash,
+                false));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "copy.hpl",
+                "pipeline",
+                List.of(Map.of("operation", "set_name", "value", "Renamed", "distribute", false)),
+                originalHash,
+                false));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "bad.hwf",
+                "workflow",
+                List.of(
+                    Map.of(
+                        "operation",
+                        "add_component",
+                        "plugin_id",
+                        "SPECIAL",
+                        "name",
+                        "Start",
+                        "distribute",
+                        false)),
+                null,
+                false));
+    var changed = mutator.mutate("copy.hpl", "pipeline", operations, originalHash, true);
+    assertEquals(true, changed.get("native_reload_valid"));
+    assertTrue(
+        new PipelineMeta(Files.newInputStream(project.resolve("copy.hpl")), provider, variables)
+            .findTransform("Copy")
+            .isDistributes());
+    mutator.rollback(
+        String.valueOf(changed.get("transaction_id")), String.valueOf(changed.get("new_sha256")));
+    assertEquals(
+        originalHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve("copy.hpl"))));
   }
 
   @Test

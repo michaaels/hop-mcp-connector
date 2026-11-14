@@ -18,11 +18,9 @@ import org.apache.hop.pipeline.PipelineMeta;
 import org.apache.hop.pipeline.transform.ITransformMeta;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Real plugin jars are test-only dependencies of the Hop 2.20 compatibility profile. */
-@EnabledIfSystemProperty(named = "hop.compatibility.components", matches = "true")
+/** Real Hop 2.20 plugin jars are test-only dependencies of the ordinary build. */
 class HopOptionalComponentsTest {
   @TempDir Path project;
 

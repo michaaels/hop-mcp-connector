@@ -120,14 +120,18 @@ final class HopMcpService implements AutoCloseable {
             metadataProvider,
             this.semanticEventSink,
             this.definitionIndex::invalidate);
-    this.correctionPlans = new HopCorrectionPlanManager(definitionMutator);
+    this.correctionPlans = new HopCorrectionPlanManager(definitionMutator, this.semanticEventSink);
   }
 
   Map<String, Object> config() {
+    return config("stdio");
+  }
+
+  Map<String, Object> config(String transport) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("version", HopMcpVersion.current());
     result.put("project_root", files.root().toString());
-    result.put("transport", "stdio");
+    result.put("transport", transport);
     result.put("read_only", !(allowMutation || allowExecution || allowDeepCheck || allowWebApi));
     result.put("definition_write_enabled", allowMutation);
     result.put("allow_deep_check", allowDeepCheck);
@@ -426,9 +430,20 @@ final class HopMcpService implements AutoCloseable {
       try {
         Path p = resolveReference(path, ref);
         row.put("resolved", files.relative(p));
+        files.resolve(files.relative(p));
         row.put("exists", true);
-      } catch (Exception e) {
+        row.put("resolution_status", "resolved");
+      } catch (HopDefinitionReferences.UnresolvedReferenceException e) {
+        row.put("exists", null);
+        row.put("resolution_status", "unresolved");
+        row.put("error", e.getMessage());
+      } catch (java.nio.file.NoSuchFileException e) {
         row.put("exists", false);
+        row.put("resolution_status", "missing");
+        row.put("error", "Dependency was resolved but the file does not exist.");
+      } catch (Exception e) {
+        row.put("exists", null);
+        row.put("resolution_status", "rejected");
         row.put("error", HopXml.redact(String.valueOf(e.getMessage())));
       }
       resolved.add(row);
@@ -664,18 +679,38 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> prepareCorrectionPlan(
       String path, String kind, List<Map<String, Object>> operations) throws Exception {
+    return prepareCorrectionPlan(path, kind, operations, null, null);
+  }
+
+  Map<String, Object> prepareCorrectionPlan(
+      String path,
+      String kind,
+      List<Map<String, Object>> operations,
+      String presentation,
+      String previousPlanId)
+      throws Exception {
     requireMutation();
-    return correctionPlans.prepare(path, kind, operations);
+    return correctionPlans.prepare(path, kind, operations, presentation, previousPlanId);
   }
 
   Map<String, Object> applyCorrectionPlan(String planId, String planSha256) throws Exception {
+    return applyCorrectionPlan(planId, planSha256, null);
+  }
+
+  Map<String, Object> applyCorrectionPlan(String planId, String planSha256, String presentation)
+      throws Exception {
     requireMutation();
-    return correctionPlans.apply(planId, planSha256);
+    return correctionPlans.apply(planId, planSha256, presentation);
   }
 
   Map<String, Object> correctionPlanStatus(String planId) {
     requireMutation();
     return correctionPlans.status(planId);
+  }
+
+  Map<String, Object> correctionPlanStatus(String planId, boolean cancel) throws McpException {
+    requireMutation();
+    return correctionPlans.status(planId, cancel);
   }
 
   Map<String, Object> rollbackMutation(String transactionId, String expectedSha256)
@@ -716,15 +751,7 @@ final class HopMcpService implements AutoCloseable {
 
   private Path resolveReference(String definitionPath, String reference) throws Exception {
     Path definition = resolveDefinition(definitionPath);
-    String resolvedReference = reference.replace("${PROJECT_HOME}", files.root().toString());
-    if (variables != null) resolvedReference = variables.resolve(resolvedReference);
-    resolvedReference =
-        resolvedReference.replace(
-            "${Internal.Entry.Current.Folder}", definition.getParent().toString());
-    Path candidate = definition.getParent().resolve(resolvedReference).normalize();
-    if (!candidate.startsWith(files.root()))
-      throw new IllegalArgumentException("Dependency escapes project root: " + reference);
-    return files.resolve(files.relative(candidate));
+    return HopDefinitionReferences.resolve(files, variables, definition, reference);
   }
 
   private Map<String, Object> safe(String operation, CheckedMap call) {

@@ -1,6 +1,6 @@
 # MCP Connector for Apache Hop
 
-MCP Connector for Apache Hop is an independent community project and is not an Apache Software Foundation project or an official Apache Hop component. It is a native Java Apache Hop plugin that exposes bounded project inspection and selected native Hop APIs over MCP STDIO.
+MCP Connector for Apache Hop is an independent community project and is not an Apache Software Foundation project or an official Apache Hop component. It is a native Java Apache Hop plugin that exposes bounded project inspection and selected native Hop APIs over MCP STDIO, with an optional Hop Web transport enabled by MCP Live Sync.
 
 ## Architecture
 
@@ -24,11 +24,18 @@ The plugin uses Hop's `@HopCommand`, plugin registry, `PipelineMeta`, `WorkflowM
 - Incremental project-definition indexing, precise typed metadata references, and a read-only `hop_runtime_metrics` tool for bounded index and deep-check worker counters.
 - Transactional semantic mutation with preview, SHA-256 preconditions, protected backups, temporary-file replacement, native reload validation, automatic recovery, and explicit rollback. The result reports whether the filesystem supported an atomic move.
 - Bounded inputs, scans, results, execution and logs; project-root confinement; secure XML parsing; sensitive-data redaction.
-- Optional Hop Desktop and Hop Web live synchronization, explicitly started from the UI and without a network listener.
+- Optional Hop Desktop and Hop Web live synchronization, explicitly started from the UI. Desktop uses project-local events; Hop Web reuses RAP's existing servlet without opening another port.
+- Development 2.4.0: compact native MCP icon, grey when available and black when an agent is connected, with a subtle activity pulse and agent/operation/timing tooltip. Clicking the Web icon disconnects only the agent; the MCP Live Sync menu stops the service. Multiple Web sessions return project/open-file choices for explicit user selection. See [Live Sync indicator](docs/live-sync-indicator.md) and [Web agent sessions](docs/web-agent-sessions.md).
+- Development 2.3.0: [remote Hop Web](docs/remote-hop-web.md) by URL while MCP Live Sync is active, using HTTPS through RAP's servlet. The agent's `--remote-ui` profile exposes four small tools and needs no local/shared project. Activation permits native inspection and editing of the Web project; execution remains disabled. Direct HTTP MCP clients are also supported.
+- Optional [guided Desktop and Hop Web/RAP authoring](docs/guided-desktop-authoring.md) in Hop's native pipeline/workflow editors, with asynchronous blocks, adjustable pacing, pause and instant application.
+
+See [local production-regression fixes](docs/production-regressions.md) for the
+unreleased catalog-size, STDIO logging, dependency resolution and routing
+diagnostics changes, their response fields and verification scope.
 
 ## Security defaults
 
-Inspection and structural validation are available by default. Deep checks, execution, authoring/mutation, and Hop Web tools are omitted from `tools/list` unless their respective flags are enabled. The service layer also checks authorization before deep checks, execution, writes, and web requests.
+For local `hop mcp`, inspection and structural validation are available by default. Deep checks, execution, authoring/mutation, and Hop Web tools are omitted from `tools/list` unless their respective flags are enabled. The service layer also checks authorization before deep checks, execution, writes, and web requests. In Hop Web, explicitly activating MCP Live Sync enables inspection and editing for that session through the site's existing access controls; execution, deep checks and the Web proxy remain disabled. See the [remote connection guide](docs/remote-hop-web.md) for this distinct activation model.
 
 In `hop_config`, `read_only` is true only when all four opt-in groups are disabled. Enabling deep checks, execution, or read-only Hop Web access also makes it false; use `definition_write_enabled` and the individual `allow_*` fields to identify which capability is authorized.
 
@@ -42,13 +49,17 @@ hop mcp --root <project> --allow-web-api --web-url http://127.0.0.1:8080/hop
 
 Only enable the flags trusted MCP clients need. Execution can reach any systems available to the Hop process. Hop Web credentials are configured server-side; callers cannot supply authorization headers.
 
-When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`. Apache Hop 2.19 prints a configuration-creation message to stdout if it creates `hop-config.json` during CLI startup, before the MCP command can redirect Hop logs to stderr. The clean-install smoke uses the configuration shipped with the Hop distribution.
+When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`; Hop CLI startup can emit initialization messages before MCP redirects logs to stderr. The clean-install smoke uses the configuration shipped with the distribution.
 
 ## Requirements and compatibility
 
+See the [Hop 2.20-only target and verification](docs/hop220-only-2026-11-12.md) for the current development scope.
+
 - Java 21.
-- The Maven compile baseline is Apache Hop 2.19.0. The `hop-2.20` profile targets the 2.20.0-SNAPSHOT line.
-- MCP Java SDK 2.1.0; protocol baseline 2025-11-25 over STDIO.
+- Apache Hop 2.20.x is the only supported runtime. Maven builds against 2.20.0 directly; no snapshot compatibility profile is needed.
+- MCP Java SDK 2.1.0; protocol baseline 2025-11-25 over STDIO and the optional Hop Web HTTP transport.
+
+Released-version rows record their original targets; the current development target is exclusively Hop 2.20.x.
 
 | Connector | Apache Hop | Java | MCP Java SDK | MCP revision |
 |---|---|---:|---:|---|
@@ -61,9 +72,9 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 | 2.2.4 (tag only; no release) | 2.19.0 target; Windows verification failed | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.5 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.6 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
-| Unreleased | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.1.0 | 2025-11-25 |
+| Unreleased | 2.20.x only; compile baseline 2.20.0 | 21 | 2.1.0 | 2025-11-25 |
 
-The MCP Java SDK 2.1.0 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
+The MCP Java SDK 2.1.0 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not implemented here. Current development targets Apache Hop 2.20.0 with Java 21. CI is configured to verify the Hop 2.20.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise native STDIO acceptance. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Recent release history
 
@@ -95,7 +106,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history, [RELEASE_NOTES.md](RELEAS
 
 ## Installation
 
-Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This release checkout builds `target/hop-mcp-connector-2.2.6.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
+Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This development checkout builds `target/hop-mcp-connector-2.4.0.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
 
 Hop runtime libraries (`hop-core`, `hop-engine`, and `hop-ui`) are provided by Hop and are not included in the ZIP. The ZIP includes the project license and notice.
 
@@ -145,11 +156,41 @@ Error categories are `VALIDATION`, `AUTHORIZATION`, `NOT_FOUND`, `CONFLICT`, `PR
 
 Use `hop_component_types` and `hop_component_schema` to discover native plugin metadata, prepare an immutable correction plan, review its preview, and explicitly apply it. Plans are SHA-bound, single-use, expire, and never apply automatically. Mutation is transactional and can be rolled back with the returned transaction identifier and current file hash.
 
+For pipeline `add_component` and `update_component`, the optional top-level
+`distribute` boolean controls native row routing: `true` distributes rows between
+outgoing hops; `false` copies each row to every outgoing hop. Omission preserves
+the native default for creation or the existing setting for updates. This is a
+transform setting, rather than a plugin injection property, and is rejected for
+workflow actions. Updates may change only this setting.
+
+`add_parameter` creates a native pipeline/workflow named parameter using `name`
+and `value` (the default, at most 8192 characters). Existing parameter names are
+rejected. Preview, SHA-256 preconditions, native reload and rollback apply as for
+other semantic writes.
+
+`remove_parameter` removes an obsolete named parameter by `name`, preserving the
+other default values and descriptions through Hop's native parameter API. Unknown
+names are rejected; preview, SHA-256 preconditions and rollback remain required.
+
+Authoring instructions favor native components, shared readers for files with the
+same format, minimal business fields and small understandable flows. Necessary
+scripts should use line breaks and indentation. `hop_validate` adds advisory,
+source-free formatting warnings for compressed or very long JavaScript lines;
+it never rewrites code, executes it or treats style as an execution error.
+
+`hop_component_schema` describes up to 200 scalar properties, while each mutation
+still accepts at most 50 scalar properties. These bounds are separate because
+native Text File Input exposes 62 scalar settings. Discovery fails safely if its
+schema exceeds the bound; the complete response remains capped at 512 KiB.
+An injection key named `TYPE` is exposed only for enum settings whose native
+serialized key identifies safe configuration (for example Checksum's
+`checksumtype`), without allowing structural plugin-type replacement.
+
 Execution is local, bounded, and disabled by default. Use `hop_start_execution`, `hop_execution_status`, `hop_stop_execution`, and `hop_logs` only when `--allow-execution` was explicitly enabled. `hop_execution_history`, `hop_execution_detail`, `hop_execution_children`, and `hop_execution_metrics` read the named native Apache Hop Execution Information Location; they do not create a parallel session history or execution database. The native location name is required because it may be a local file, execution database, Hop Server location, or another Hop plugin.
 
 Asynchronous status includes `native_worker_active`, which tracks the connector's queued/running native worker separately from the caller waiting for its result. Cancellation or timeout keeps the operation in `stopping` and retains its concurrency slot until both have exited; `finished_at` is set only then. A pending timeout may already include `result.timed_out: true`. Poll until a terminal state instead of treating a cancellation request or a cancelled Java future as completion. Native calls that ignore interruption can keep a slot occupied. This field does not track every thread or JDBC statement spawned by Hop plugins, and `false` does not certify that all external work ended.
 
-Execution summaries preserve the native `parent_id` and also expose `launched_by_id`, `owner_execution_id`, and `parent_relationship`. Hop 2.20 records with an explicit launcher distinguish their owning execution from the launching action/transform. A parent-only record remains `unresolved`, even on a newer runtime: old documents can still use the component ID as their parent. The connector does not infer an owner from runtime version alone. A missing optional launcher API is supported on Hop 2.19; a present but failing API returns `EXECUTION_RELATIONSHIP_UNAVAILABLE`.
+Execution summaries preserve the native `parent_id` and also expose `launched_by_id`, `owner_execution_id`, and `parent_relationship`. Hop 2.20 records with an explicit launcher distinguish their owning execution from the launching action/transform. A parent-only record remains `unresolved`: old documents can still use the component ID as their parent. The connector uses the native 2.20 launcher API and returns `EXECUTION_RELATIONSHIP_UNAVAILABLE` if that API fails.
 
 Child traversal indexes at most 1,000 native execution IDs plus the requested root, reads state only for returned children, and retains the 200-node/32-depth output bounds. Each child includes `via_execution_id` and a `relationship` of `parent` or `launcher`, identifying the edge used for its depth. `scanned`, `scan_truncated`, and `truncated` distinguish an incomplete native scan from a complete small tree. Native location implementations may perform their own internal work while answering bounded API calls; the connector does not claim to control their storage or JDBC implementation.
 
@@ -195,24 +236,29 @@ For distribution-level measurements, the manual Windows [full-Hop benchmark](doc
 
 ## Live UI
 
-The optional Tools menu adapter synchronizes native Desktop or Hop Web/RAP sessions with same-project semantic changes. It is session-scoped, protects dirty tabs, uses bounded project-local events in `.hop-mcp/`, and opens no network listener.
+For an agent connecting to Hop Web over the network, use the [remote Hop Web connection](docs/remote-hop-web.md). The project stays on the server. The same-project directory bridge remains available for local STDIO/Desktop use; it is not a network filesystem requirement for remote agents.
+
+[Live browser validation on Hop Web 2.20](docs/validation-hop-web-2026-11-12.md) confirms native open/reload and rollback through the project event bridge. The [RAP implementation and validation](docs/validation-rap-live-sync-2026-11-13.md) extends guided presentation to Hop Web with pacing, pause and asynchronous blocks. Activate **MCP Live Sync** from Hop's Tools/actions menu for the same project as the MCP server.
+
+The optional Tools menu adapter synchronizes native Desktop or Hop Web/RAP sessions with same-project semantic changes. It is session-scoped, protects dirty tabs and uses bounded project-local events in `.hop-mcp/`. In Hop Web those files stay on the server; agents connect through RAP's existing servlet and do not need a project share.
 
 ## Development and validation
+
+For readable generated canvases, finish semantic authoring with `auto_layout`. It arranges pipeline/workflow components from left to right, separates failure branches and reports remaining geometric crossings. Preview existing flows before applying; routing, execution settings and note positions remain unchanged. See [canvas layout](docs/flow-layout.md) for examples, bounds and limitations.
 
 STDIO uses the native SDK 2.1.0 transport, including its concurrent-send correction. The SDK continues to own JSON-RPC encoding, STDIO I/O and session handling. A regression test sends 32 requests without waiting for their responses, mixes successful calls with schema errors, and verifies that the session remains usable. Timeout diagnostics are bounded and captured stdout is redacted before inclusion in test failures.
 
 ```bash
 mvn -B clean verify
-mvn -B -P hop-2.20 clean verify
 ```
 
-The STDIO integration tests cover initialization, the 2025-11-25 handshake, `notifications/initialized`, tool discovery, consecutive calls, schema errors, unknown tools, handler failures, EOF, enabled execution, mutation and rollback, and the correction-plan lifecycle. They validate the advertised output schemas that are exercised locally with the MCP SDK JSON Schema validator, and use a local HTTP fixture for the web response and redaction path. Native execution-location reads are also covered with bounded repository fixtures and unknown-location error paths. CI is configured to install the plugin into a clean Hop 2.19.0 distribution, exercise `hop_config` and `hop_validate`, compare typed native references for seven real database transform plugins, and run operational MCP acceptance on disposable local fixtures, then build separately against 2.20.0-SNAPSHOT. Linux confinement tests must execute without skips. See [production verification](docs/production-verification.md) for scope, evidence and remaining release conditions.
+The STDIO integration tests cover initialization, the 2025-11-25 handshake, tool discovery, consecutive calls, schema errors, unknown tools, handler failures, EOF, enabled execution, mutation/rollback and correction plans. They validate exercised output schemas and use a local HTTP fixture for web access. CI is configured for clean Hop 2.20.0 installation, native reference equivalence across seven database transforms, and operational acceptance on disposable local fixtures. Linux confinement tests must execute without skips. Dated verification reports preserve the runtime versions on which those earlier checks ran.
 
-The `hop-2.20` profile also loads real Watch Files, OpenFormula, Pipeline Executor, Table Input and Database Join plugins in tests. It verifies semantic round trips and cancellation/timeout of running H2 queries through the MCP service. These plugin and H2 dependencies are test-only and are not bundled in the Marketplace ZIP. The seven component/JDBC tests are skipped in the stable profile; their results do not establish the same behavior on Hop 2.19 or other JDBC drivers. See [upstream implementation status](docs/hop-upstream-implementation.md) for completed work, validation evidence and remaining linter/cancellation limits.
+The ordinary build loads real Watch Files, OpenFormula, Pipeline Executor, Table Input and Database Join plugins in tests, covering semantic round trips and cancellation/timeout of running H2 queries. These dependencies are test-only and are not bundled in the Marketplace ZIP. The tests run by default on Hop 2.20.0; their results do not certify other JDBC drivers. See the [2026-11-13 remote Web validation](docs/validation-remote-web-2026-11-13.md) for the URL-only agent tests and deployment status.
 
 ## MCP Conformance
 
-Production remains STDIO (`hop mcp`). Conformance uses a test-only adapter built on the MCP Java SDK's official `HttpServletStreamableServerTransportProvider` and embedded Tomcat. It binds only to `127.0.0.1`, uses a dynamic port, and reuses the same server definition, tool registry, handlers, schemas and service as STDIO; it is not a supported production HTTP transport.
+The default transport remains STDIO (`hop mcp`); the optional production Hop Web transport is described separately in the [remote connection guide](docs/remote-hop-web.md). Conformance uses a test-only adapter built on the MCP Java SDK's official `HttpServletStreamableServerTransportProvider` and embedded Tomcat. This test adapter binds only to `127.0.0.1`, uses a dynamic port, and reuses the same server definition, tool registry, handlers, schemas and service as STDIO; it is separate from the RAP endpoint.
 
 The CI job `mcp-conformance-2025-11-25` pins `@modelcontextprotocol/conformance@0.2.0-alpha.11` because that runner provides the frozen `--requirements 2025-11-25` set. CI records the requirement list and runs the official requirement-set command directly against the test-only HTTP adapter.
 
@@ -220,9 +266,9 @@ The official 2025-11-25 requirement set is an "everything-server" conformance pr
 
 The baseline does not convert those scenarios into conformance passes: they remain documented failures against the full requirement set. It is a regression guard. Any new unlisted failure fails CI, and any baselined scenario that starts passing makes the baseline stale and also fails CI until the entry is removed. Core scenarios that the connector actually exercises, including initialization, ping, logging level handling, tool listing, the Streamable HTTP transport checks reached by the requirement set, and DNS-rebinding protection, are not baselined and must pass normally.
 
-CI additionally inspects the raw `checks.json` reports with `scripts/ci/check-conformance-results.py`, independently of the runner's exit code. It rejects missing/unexecuted core scenarios, unlisted failures, stale baselines and wire-schema violations even inside a baselined fixture scenario. The baseline explicitly includes the runner's `json_schema_2020_12_tool` fixture requirement; this does not add a fake production tool. The test-only HTTP adapter flushes idle GET event-stream headers immediately so resumability probes can start their bounded read/cancellation timers. Production remains STDIO.
+CI additionally inspects the raw `checks.json` reports with `scripts/ci/check-conformance-results.py`, independently of the runner's exit code. It rejects missing/unexecuted core scenarios, unlisted failures, stale baselines and wire-schema violations even inside a baselined fixture scenario. The baseline explicitly includes the runner's `json_schema_2020_12_tool` fixture requirement; this does not add a fake production tool. The test-only HTTP adapter flushes idle GET event-stream headers immediately so resumability probes can start their bounded read/cancellation timers.
 
-The report is uploaded as the `mcp-conformance-2025-11-25` CI artifact. Production remains STDIO; the HTTP adapter exists only for conformance testing and binds explicitly to `127.0.0.1`.
+The report is uploaded as the `mcp-conformance-2025-11-25` CI artifact. That HTTP adapter exists only for conformance testing and binds explicitly to `127.0.0.1`; its results do not certify every behavior of the separate RAP endpoint.
 
 The CI workflow also checks the Marketplace ZIP layout, license and notice files, Jandex index, and absence of bundled Hop runtime jars, and produces a CycloneDX SBOM. Tag-triggered releases validate the `vMAJOR.MINOR.PATCH` tag against the POM and verified artifact, generate SHA-256 checksums, and publish provenance and SBOM attestations for the release ZIP through GitHub's attestation service. The GitHub Release receives the ZIP, SBOM files, and checksum list. Workflow configuration is not itself evidence that a particular run succeeded.
 
@@ -230,7 +276,7 @@ The CI workflow also checks the Marketplace ZIP layout, license and notice files
 
 No official MCP Registry `server.json` is included: the registry's current package types do not include Apache Hop Marketplace ZIPs. MCPB is a separate package format and is not used to label this Marketplace artifact.
 
-Inspect the release package with `unzip -l target/hop-mcp-connector-2.2.6.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+Inspect the development package with `unzip -l target/hop-mcp-connector-2.4.0.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
 
 ## Security reporting
 

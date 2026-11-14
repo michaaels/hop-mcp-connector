@@ -17,6 +17,15 @@ interface HopSemanticEventSink {
   /** Publishes an event without blocking on UI work. */
   boolean publish(Event event);
 
+  default boolean publishPresentation(HopGuidedPresentation presentation) {
+    return false;
+  }
+
+  default boolean publishPresentation(
+      HopGuidedPresentation presentation, HopNativeDraft nativeDraft) {
+    return publishPresentation(presentation);
+  }
+
   /** Returns whether at least one UI session is currently available to consume events. */
   default boolean isAvailable() {
     return false;

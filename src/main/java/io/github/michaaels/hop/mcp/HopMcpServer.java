@@ -1,13 +1,17 @@
 package io.github.michaaels.hop.mcp;
 
+import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapperSupplier;
 import io.modelcontextprotocol.json.schema.jackson3.JacksonJsonSchemaValidatorSupplier;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpStatelessServerFeatures;
+import io.modelcontextprotocol.server.McpStatelessSyncServer;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpStatelessServerTransport;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +24,10 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
 final class HopMcpServer implements AutoCloseable {
+  private static final String SERVER_INSTRUCTIONS =
+      "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, protected backups, atomic filesystem replacement when supported (with a safe replace fallback), native reload validation and rollback."
+          + HopAuthoringGuidance.INSTRUCTIONS;
+
   @FunctionalInterface
   interface SpecificationFactory {
     McpServer.SyncSpecification<?> create(
@@ -33,7 +41,11 @@ final class HopMcpServer implements AutoCloseable {
 
   private final TrackingInputStream input;
   private final McpSyncServer server;
+  private final McpStatelessSyncServer httpServer;
+  private final String transportName;
   private final HopMcpService service;
+  private final java.util.function.BiFunction<McpTransportContext, String, AutoCloseable>
+      toolActivity;
   private final List<McpServerFeatures.SyncToolSpecification> toolSpecifications =
       new java.util.ArrayList<>();
 
@@ -51,28 +63,92 @@ final class HopMcpServer implements AutoCloseable {
     return new HopMcpServer(service, null, null, specificationFactory);
   }
 
+  static HopMcpServer withHttpTransport(
+      HopMcpService service, McpStatelessServerTransport transport) {
+    return new HopMcpServer(service, null, null, null, transport);
+  }
+
+  static HopMcpServer withHttpTransport(
+      HopMcpService service,
+      McpStatelessServerTransport transport,
+      java.util.function.BiFunction<McpTransportContext, String, AutoCloseable> activity) {
+    return new HopMcpServer(service, null, null, null, transport, activity);
+  }
+
   private HopMcpServer(
       HopMcpService service,
       InputStream in,
       OutputStream protocolOut,
       SpecificationFactory specificationFactory) {
+    this(service, in, protocolOut, specificationFactory, null);
+  }
+
+  private HopMcpServer(
+      HopMcpService service,
+      InputStream in,
+      OutputStream protocolOut,
+      SpecificationFactory specificationFactory,
+      McpStatelessServerTransport httpTransport) {
+    this(
+        service, in, protocolOut, specificationFactory, httpTransport, (context, name) -> () -> {});
+  }
+
+  private HopMcpServer(
+      HopMcpService service,
+      InputStream in,
+      OutputStream protocolOut,
+      SpecificationFactory specificationFactory,
+      McpStatelessServerTransport httpTransport,
+      java.util.function.BiFunction<McpTransportContext, String, AutoCloseable> activity) {
     this.service = service;
+    toolActivity = activity;
     input = in == null ? null : new TrackingInputStream(in);
+    transportName = httpTransport == null ? "stdio" : "streamable_http";
     var mapper = new JacksonMcpJsonMapperSupplier().get();
-    var specification =
-        specificationFactory
-            .create(mapper, input, protocolOut)
-            .jsonMapper(mapper)
-            .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("hop-mcp-connector", HopMcpVersion.current())
-            .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-            .instructions(
-                "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, protected backups, atomic filesystem replacement when supported (with a safe replace fallback), native reload validation and rollback.");
+    registerTools();
+    var validator = new JacksonJsonSchemaValidatorSupplier().get();
+    var capabilities = McpSchema.ServerCapabilities.builder().tools(false).build();
+    if (httpTransport == null) {
+      httpServer = null;
+      server =
+          specificationFactory
+              .create(mapper, input, protocolOut)
+              .jsonMapper(mapper)
+              .jsonSchemaValidator(validator)
+              .serverInfo("hop-mcp-connector", HopMcpVersion.current())
+              .capabilities(capabilities)
+              .instructions(SERVER_INSTRUCTIONS)
+              .tools(toolSpecifications)
+              .build();
+    } else {
+      server = null;
+      // Project tools never use the stateful client exchange; retain their exact handlers/schemas.
+      var httpTools =
+          toolSpecifications.stream()
+              .map(
+                  tool ->
+                      new McpStatelessServerFeatures.SyncToolSpecification(
+                          tool.tool(), (context, request) -> callHttp(tool, context, request)))
+              .toList();
+      httpServer =
+          McpServer.sync(httpTransport)
+              .jsonMapper(mapper)
+              .jsonSchemaValidator(validator)
+              .serverInfo("hop-mcp-connector", HopMcpVersion.current())
+              .capabilities(capabilities)
+              .instructions(SERVER_INSTRUCTIONS)
+              .immediateExecution(true)
+              .tools(httpTools)
+              .build();
+    }
+  }
+
+  private void registerTools() {
     add(
         "hop_config",
         "Show MCP project root, limits and security mode.",
         schema(Map.of(), List.of()),
-        a -> service.config());
+        a -> service.config(transportName));
     add(
         "hop_runtime_metrics",
         "Show bounded aggregate project-index and deep-check worker metrics without project content or secrets.",
@@ -787,7 +863,7 @@ final class HopMcpServer implements AutoCloseable {
                 iDefault(a, "to", 0)));
     add(
         "hop_prepare_correction_plan",
-        "Validate and retain an immutable single-use semantic correction plan. This only previews changes and never writes the definition.",
+        "Preview an immutable correction plan. presentation=guided queues an asynchronous read-only draft in Desktop; instant skips animation. previous_plan_id appends a block without writing the definition.",
         schema(
             Map.of(
                 "path",
@@ -795,11 +871,21 @@ final class HopMcpServer implements AutoCloseable {
                 "kind",
                 enumStr("pipeline", "workflow"),
                 "operations",
-                operationsSchema()),
+                operationsSchema(),
+                "presentation",
+                enumStr("guided", "instant"),
+                "previous_plan_id",
+                boundedString(
+                    36,
+                    "Previous prepared plan ID; append operations to a new immutable revision")),
             List.of("path", "operations")),
         a ->
             service.prepareCorrectionPlan(
-                s(a, "path"), sDefault(a, "kind", null), operations(a.get("operations"))));
+                s(a, "path"),
+                sDefault(a, "kind", null),
+                operations(a.get("operations")),
+                sDefault(a, "presentation", null),
+                sDefault(a, "previous_plan_id", null)));
     add(
         "hop_apply_correction_plan",
         "Apply one prepared correction plan through the transactional native mutator. Requires --allow-mutation and the plan SHA-256.",
@@ -808,15 +894,24 @@ final class HopMcpServer implements AutoCloseable {
                 "plan_id",
                 boundedString(36, "Session correction plan ID"),
                 "plan_sha256",
-                boundedString(64, "SHA-256 returned when the plan was prepared")),
+                boundedString(64, "SHA-256 returned when the plan was prepared"),
+                "presentation",
+                enumStr("guided", "instant")),
             List.of("plan_id", "plan_sha256")),
-        a -> service.applyCorrectionPlan(s(a, "plan_id"), s(a, "plan_sha256")));
+        a ->
+            service.applyCorrectionPlan(
+                s(a, "plan_id"), s(a, "plan_sha256"), sDefault(a, "presentation", null)));
     add(
         "hop_correction_plan_status",
-        "Read the bounded audit status of a correction plan retained in this MCP session.",
+        "Inspect a retained correction plan; cancel=true cancels an unapplied draft and prevents its application.",
         schema(
-            Map.of("plan_id", boundedString(36, "Session correction plan ID")), List.of("plan_id")),
-        a -> service.correctionPlanStatus(s(a, "plan_id")));
+            Map.of(
+                "plan_id",
+                boundedString(36, "Session correction plan ID"),
+                "cancel",
+                bool("Cancel a prepared draft; default false")),
+            List.of("plan_id")),
+        a -> service.correctionPlanStatus(s(a, "plan_id"), boolDefault(a, "cancel", false)));
     add(
         "hop_mutate_definition",
         "Preview or apply transactional native semantic changes to a pipeline/workflow. Call hop_capabilities for the supported operation contract. Existing files require expected_sha256 when apply=true.",
@@ -867,7 +962,26 @@ final class HopMcpServer implements AutoCloseable {
         a ->
             service.webRequest(
                 sDefault(a, "method", "GET"), s(a, "path"), headers(a.get("headers"))));
-    server = specification.tools(toolSpecifications).build();
+  }
+
+  private McpSchema.CallToolResult callHttp(
+      McpServerFeatures.SyncToolSpecification tool,
+      McpTransportContext context,
+      McpSchema.CallToolRequest request) {
+    try (var activity = toolActivity.apply(context, request.name())) {
+      return tool.callHandler().apply(null, request);
+    } catch (Exception failure) {
+      return toolFailure(failure);
+    }
+  }
+
+  private McpSchema.CallToolResult toolFailure(Exception failure) {
+    var error = service.errorPayload(failure);
+    return McpSchema.CallToolResult.builder()
+        .content(List.of(new McpSchema.TextContent(JsonUtil.toJson(error))))
+        .structuredContent(error)
+        .isError(true)
+        .build();
   }
 
   void awaitEof() throws InterruptedException {
@@ -925,12 +1039,7 @@ final class HopMcpServer implements AutoCloseable {
                         .isError(responseTooLarge)
                         .build();
                   } catch (Exception e) {
-                    Map<String, Object> error = service.errorPayload(e);
-                    return McpSchema.CallToolResult.builder()
-                        .content(List.of(new McpSchema.TextContent(JsonUtil.toJson(error))))
-                        .structuredContent(error)
-                        .isError(true)
-                        .build();
+                    return toolFailure(e);
                   }
                 })
             .build();
@@ -955,7 +1064,7 @@ final class HopMcpServer implements AutoCloseable {
         destructive = true;
         openWorld = true;
       }
-      case "hop_prepare_correction_plan" -> {
+      case "hop_prepare_correction_plan", "hop_correction_plan_status" -> {
         readOnly = false;
         idempotent = false;
       }
@@ -1038,7 +1147,7 @@ final class HopMcpServer implements AutoCloseable {
         fields(
             "version", boundedString(64, "Connector version"),
             "project_root", boundedString(4096, "Canonical configured project root"),
-            "transport", enumStr("stdio"),
+            "transport", enumStr("stdio", "streamable_http"),
             "read_only",
                 bool("Whether mutation, execution, deep checks and web requests are all disabled"),
             "definition_write_enabled", bool("Whether native definition writes are enabled"),
@@ -1348,7 +1457,13 @@ final class HopMcpServer implements AutoCloseable {
             fields(
                 "reference", boundedString(4096, "Definition reference"),
                 "resolved", boundedString(4096, "Resolved project-relative path"),
-                "exists", bool("Whether the dependency exists"),
+                "exists",
+                    Map.of(
+                        "type",
+                        List.of("boolean", "null"),
+                        "description",
+                        "Existence after resolution, or null when resolution could not be checked"),
+                "resolution_status", enumStr("resolved", "missing", "unresolved", "rejected"),
                 "error", boundedString(1000, "Safe resolution error")),
             List.of("reference", "exists"));
     return toolOutputSchema(
@@ -1368,22 +1483,31 @@ final class HopMcpServer implements AutoCloseable {
   }
 
   private static Map<String, Object> componentOutputSchema() {
-    return toolOutputSchema(
-        fields(
-            "path", boundedString(4096, "Project-relative definition path"),
-            "name", boundedString(1024, "Component name"),
-            "kind", enumStr("transform", "action"),
-            "config", componentConfigObjectSchema(0),
-            "config_truncated", bool("Whether the component configuration was bounded"),
-            "tables",
-                arrayOf(
-                    boundedString(2048, "SQL table reference"),
-                    ProjectFiles.MAX_STRUCTURED_RESULTS),
-            "references",
-                arrayOf(
-                    boundedString(4096, "Project-relative definition reference"),
-                    ProjectFiles.MAX_STRUCTURED_RESULTS)),
-        List.of("path", "name", "kind", "config", "config_truncated", "tables", "references"));
+    Map<String, Object> output =
+        new LinkedHashMap<>(
+            toolOutputSchema(
+                fields(
+                    "path", boundedString(4096, "Project-relative definition path"),
+                    "name", boundedString(1024, "Component name"),
+                    "kind", enumStr("transform", "action"),
+                    "config", componentConfigObjectSchema(0),
+                    "config_truncated", bool("Whether the component configuration was bounded"),
+                    "tables",
+                        arrayOf(
+                            boundedString(2048, "SQL table reference"),
+                            ProjectFiles.MAX_STRUCTURED_RESULTS),
+                    "references",
+                        arrayOf(
+                            boundedString(4096, "Project-relative definition reference"),
+                            ProjectFiles.MAX_STRUCTURED_RESULTS)),
+                List.of(
+                    "path", "name", "kind", "config", "config_truncated", "tables", "references")));
+    Map<String, Object> definitions = new LinkedHashMap<>();
+    for (int depth = 0; depth <= HopXml.MAX_COMPONENT_CONFIG_DEPTH; depth++) {
+      definitions.put("componentConfigValue" + depth, componentConfigValueSchema(depth));
+    }
+    output.put("$defs", definitions);
+    return output;
   }
 
   private static Map<String, Object> componentConfigObjectSchema(int depth) {
@@ -1391,7 +1515,7 @@ final class HopMcpServer implements AutoCloseable {
         "type",
         "object",
         "additionalProperties",
-        componentConfigValueSchema(depth),
+        componentConfigValueReference(depth),
         "propertyNames",
         boundedString(256, "Bounded component configuration key"),
         "maxProperties",
@@ -1407,7 +1531,27 @@ final class HopMcpServer implements AutoCloseable {
         List.of(
             text,
             componentConfigObjectSchema(depth + 1),
-            arrayOf(componentConfigValueSchema(depth + 1), HopXml.MAX_COMPONENT_CONFIG_VALUES)));
+            arrayOf(componentConfigValueReference(depth + 1), HopXml.MAX_COMPONENT_CONFIG_VALUES)));
+  }
+
+  private static Map<String, Object> componentConfigValueReference(int depth) {
+    return Map.of("$ref", "#/$defs/componentConfigValue" + depth);
+  }
+
+  private static Map<String, Object> routingBranchesSchema() {
+    return arrayOf(
+        enumStr(
+            "true",
+            "false",
+            "case",
+            "default",
+            "execution_result",
+            "result_rows",
+            "result_files",
+            "success",
+            "failure",
+            "unconditional"),
+        10);
   }
 
   private static Map<String, Object> contextOutputSchema() {
@@ -1607,6 +1751,10 @@ final class HopMcpServer implements AutoCloseable {
                 "from", boundedString(1024, "Source component"),
                 "to", boundedString(1024, "Target component"),
                 "enabled", bool("Whether the hop is enabled"),
+                "evaluation", bool("Workflow result required by this edge"),
+                "unconditional", bool("Whether this workflow edge ignores the result"),
+                "branches", routingBranchesSchema(),
+                "routing_field", boundedString(256, "Switch routing field"),
                 "depth", boundedInteger(1, 50, "Traversal depth")),
             List.of("from", "to", "depth"));
     return toolOutputSchema(
@@ -2724,7 +2872,10 @@ final class HopMcpServer implements AutoCloseable {
             "valid", bool("Whether structural validation passed"),
             "errors", stringArray(ProjectFiles.MAX_RESULTS),
             "warnings", stringArray(ProjectFiles.MAX_RESULTS),
-            "diagnostics_truncated", bool("Whether the diagnostics limit was reached")),
+            "diagnostics_truncated", bool("Whether the diagnostics limit was reached"),
+            "validation_level", enumStr("structural"),
+            "execution_validated",
+                bool("False: structural checks do not execute ETL or test connections")),
         List.of("path", "type", "valid", "errors", "warnings", "diagnostics_truncated"));
   }
 
@@ -2741,7 +2892,11 @@ final class HopMcpServer implements AutoCloseable {
             fields(
                 "from", boundedString(1024, "Hop source component"),
                 "to", boundedString(1024, "Hop target component"),
-                "enabled", bool("Whether this Hop edge is enabled")),
+                "enabled", bool("Whether this Hop edge is enabled"),
+                "evaluation", bool("Workflow result required by this edge"),
+                "unconditional", bool("Whether this workflow edge ignores the result"),
+                "branches", routingBranchesSchema(),
+                "routing_field", boundedString(256, "Switch routing field")),
             List.of("from", "to"));
     return toolOutputSchema(
         fields(
@@ -2877,7 +3032,7 @@ final class HopMcpServer implements AutoCloseable {
                 "max_rows",
                     boundedInteger(
                         1, HopComponentAuthoring.MAX_ROWS_PER_GROUP, "Maximum supported rows"),
-                "properties", arrayOf(property, HopComponentAuthoring.MAX_PROPERTIES)),
+                "properties", arrayOf(property, HopComponentAuthoring.MAX_SCHEMA_PROPERTIES)),
             List.of("key", "description", "max_rows", "properties"));
     return toolOutputSchema(
         fields(
@@ -2887,8 +3042,9 @@ final class HopMcpServer implements AutoCloseable {
             "scalar_injection_supported", bool("Whether safe scalar injection is supported"),
             "tabular_injection_supported", bool("Whether supported tabular injection is available"),
             "property_count",
-                boundedInteger(0, HopComponentAuthoring.MAX_PROPERTIES, "Scalar property count"),
-            "properties", arrayOf(property, HopComponentAuthoring.MAX_PROPERTIES),
+                boundedInteger(
+                    0, HopComponentAuthoring.MAX_SCHEMA_PROPERTIES, "Scalar property count"),
+            "properties", arrayOf(property, HopComponentAuthoring.MAX_SCHEMA_PROPERTIES),
             "property_group_count",
                 boundedInteger(0, HopComponentAuthoring.MAX_PROPERTY_GROUPS, "Tabular group count"),
             "property_groups", arrayOf(propertyGroup, HopComponentAuthoring.MAX_PROPERTY_GROUPS),
@@ -3331,6 +3487,8 @@ final class HopMcpServer implements AutoCloseable {
             bool("Whether the correction plan can be applied once"),
             "auto_apply",
             bool("Whether the correction plan applies automatically"),
+            "presentation",
+            presentationOutputSchema(),
             "preview",
             mutationSuccessSchema()),
         List.of(
@@ -3365,6 +3523,7 @@ final class HopMcpServer implements AutoCloseable {
             "expires_at", boundedString(64, "Expiry time in RFC 3339 format"),
             "single_use", bool("Whether the correction plan can be applied once"),
             "auto_apply", bool("Whether the correction plan applies automatically"),
+            "presentation", presentationOutputSchema(),
             "mutation", mutationSuccessSchema()),
         List.of(
             "plan_id",
@@ -3387,7 +3546,7 @@ final class HopMcpServer implements AutoCloseable {
         schema(
             fields(
                 "timestamp", boundedString(64, "Audit timestamp in RFC 3339 format"),
-                "event", enumStr("prepared", "applied", "failed"),
+                "event", enumStr("prepared", "applied", "failed", "superseded", "cancelled"),
                 "message",
                     boundedString(
                         SensitiveData.MAX_SANITIZED_TEXT_LENGTH, "Sanitized audit message")),
@@ -3396,7 +3555,7 @@ final class HopMcpServer implements AutoCloseable {
         fields(
             "plan_id", boundedString(64, "Session correction plan ID"),
             "plan_sha256", boundedString(64, "Immutable plan SHA-256"),
-            "state", enumStr("prepared", "applied", "failed"),
+            "state", enumStr("prepared", "applied", "failed", "superseded", "cancelled"),
             "path", boundedString(4096, "Project-relative definition path"),
             "kind", enumStr("pipeline", "workflow"),
             "target_exists", bool("Whether a definition existed when the plan was prepared"),
@@ -3407,6 +3566,7 @@ final class HopMcpServer implements AutoCloseable {
             "expires_at", boundedString(64, "Expiry time in RFC 3339 format"),
             "single_use", bool("Whether the correction plan can be applied once"),
             "auto_apply", bool("Whether the correction plan applies automatically"),
+            "presentation", presentationOutputSchema(),
             "audit", arrayOf(auditEvent, 10)),
         List.of(
             "plan_id",
@@ -3422,6 +3582,22 @@ final class HopMcpServer implements AutoCloseable {
             "single_use",
             "auto_apply",
             "audit"));
+  }
+
+  private static Map<String, Object> presentationOutputSchema() {
+    return schema(
+        fields(
+            "mode",
+            enumStr("guided", "instant"),
+            "async",
+            bool("The model need not wait for GUI playback"),
+            "ui_notified",
+            bool("Whether a visual packet was delivered to the bridge"),
+            "presentation_id",
+            boundedString(36, "Stable visual draft ID"),
+            "revision",
+            boundedInteger(1, 100, "Visual draft revision")),
+        List.of("mode", "async", "ui_notified", "presentation_id", "revision"));
   }
 
   private static Map<String, Object> executionResultFields() {
@@ -3606,7 +3782,13 @@ final class HopMcpServer implements AutoCloseable {
                 "message", boundedString(1000, "Safe, actionable error message"),
                 "retryable", bool("Whether retrying without changes may succeed")),
             List.of("code", "category", "message", "retryable"));
-    return Map.of("type", "object", "oneOf", List.of(success, error));
+    Map<String, Object> result = new LinkedHashMap<>();
+    Map<String, Object> successBranch = new LinkedHashMap<>(success);
+    Object definitions = successBranch.remove("$defs");
+    result.put("type", "object");
+    result.put("oneOf", List.of(successBranch, error));
+    if (definitions != null) result.put("$defs", definitions);
+    return result;
   }
 
   private static Map<String, Object> boundedInteger(
@@ -3713,7 +3895,10 @@ final class HopMcpServer implements AutoCloseable {
                 Map.entry(
                     "operation",
                     enumStr(HopSemanticCapabilities.OPERATION_NAMES.toArray(String[]::new))),
-                Map.entry("value", boundedString(8192, "Value for set_name or set_description")),
+                Map.entry(
+                    "value",
+                    boundedString(
+                        8192, "Value for set_name/set_description or add_parameter default")),
                 Map.entry(
                     "plugin_id",
                     boundedString(
@@ -3729,6 +3914,10 @@ final class HopMcpServer implements AutoCloseable {
                     componentPropertiesSchema(
                         "Safe scalar properties returned by hop_component_schema")),
                 Map.entry("property_groups", componentPropertyGroupsSchema()),
+                Map.entry(
+                    "distribute",
+                    bool(
+                        "Pipeline add/update_component only: true distributes rows; false copies to every outgoing hop")),
                 Map.entry("component", boundedString(1024, "Existing transform/action name")),
                 Map.entry("new_name", boundedString(1024, "New transform/action name")),
                 Map.entry("from", boundedString(1024, "Hop source component")),
@@ -3743,7 +3932,7 @@ final class HopMcpServer implements AutoCloseable {
         "type",
         "array",
         "description",
-        "Ordered native semantic mutation operations",
+        "Ordered native semantic mutation operations; finish new flows with auto_layout to arrange the canvas without changing routing",
         "items",
         item,
         "maxItems",
@@ -3961,7 +4150,8 @@ final class HopMcpServer implements AutoCloseable {
   @Override
   public void close() {
     try {
-      server.closeGracefully();
+      if (server != null) server.closeGracefully();
+      if (httpServer != null) httpServer.close();
     } finally {
       service.close();
     }

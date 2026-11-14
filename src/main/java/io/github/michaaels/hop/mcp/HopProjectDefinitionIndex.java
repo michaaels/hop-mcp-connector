@@ -379,7 +379,8 @@ final class HopProjectDefinitionIndex {
     Document document = HopXml.parse(xml);
     Map<String, Object> inspection = immutableMap(HopXml.inspect(relative, document));
     Set<String> tables = HopXml.findTables(xml, null, MAX_TABLES + 1);
-    Set<String> references = HopXml.references(xml, MAX_REFERENCES + 1);
+    Set<String> references =
+        HopDefinitionReferences.extract(document.getDocumentElement(), MAX_REFERENCES + 1);
     HopMetadataReferenceExtractor.Result metadata =
         metadataReferenceExtractor.extract(relative, document);
     return new Entry(
