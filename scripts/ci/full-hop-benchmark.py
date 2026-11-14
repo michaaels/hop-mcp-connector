@@ -13,7 +13,7 @@ from zipfile import ZipFile
 
 
 # Test tooling only: production remains native Java and STDIO.
-parser = argparse.ArgumentParser(description="Compare published/current connector ZIPs in an isolated full Hop 2.19 runtime (Windows).")
+parser = argparse.ArgumentParser(description="Compare published/current connector ZIPs in an isolated full Hop 2.20 runtime (Windows).")
 parser.add_argument("--runtime", type=Path, required=True)
 parser.add_argument("--fixture", type=Path, required=True)
 parser.add_argument("--generate-fixture", action="store_true", help="Create the fixed 5000-definition fixture in a new directory")
@@ -37,7 +37,7 @@ BASELINE_ZIP = args.baseline.resolve()
 CANDIDATE_ZIP = args.candidate.resolve()
 PLUGIN = RUNTIME / "plugins" / "misc" / "hop-mcp-connector"
 PREFIX = "plugins/misc/hop-mcp-connector/"
-HOP_VERSION = "2.19.0"
+HOP_VERSION = "2.20.0"
 EXPECTED_FIXTURE_HASH = "54a2edfdd7ac3e0ff35190e537421a51ec126f0ef83d3005e0bcde21fb7b2334"
 RESULTS = BASE / "results.json"
 REPORT = BASE / "report.md"
@@ -251,7 +251,7 @@ def main():
         report = [
             "# Full-Hop performance comparison (current tree)",
             "",
-            f"Apache Hop 2.19.0, Java 21, {args.trials} fresh JVMs per version, alternating order, 5,000 definitions.",
+            f"Apache Hop 2.20.0, Java 21, {args.trials} fresh JVMs per version, alternating order, 5,000 definitions.",
             f"Fixture SHA-256: `{fixture_hash}` (1,284,756 bytes). Plugins TableInput and FilterRows checked; hop_validate passed each run.",
             "All impact results: 64 unique nodes, 63 edges, complete counts, no truncation, identical canonical hashes.",
             "",

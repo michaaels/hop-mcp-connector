@@ -13,9 +13,9 @@ Always prefix shell commands with `rtk` (use `rtk proxy` for commands without an
 Maintain a small, secure, native-Java MCP plugin for Apache Hop. The Marketplace edition must remain installable as one Hop plugin and expose `hop mcp` through Hop's `@HopCommand` discovery.
 
 - Java 21.
-- Apache Hop 2.19.0 Maven compile baseline; 2.20.0-SNAPSHOT compatibility profile.
+- Apache Hop 2.20.0 is the only Maven compile/runtime target. Do not maintain a Hop 2.19 baseline or a separate snapshot compatibility profile.
 - MCP Java SDK 2.1.0; protocol baseline 2025-11-25.
-- Production transport is STDIO.
+- `hop mcp` uses STDIO by default. Hop Web 2.3.0 additionally supports an explicitly enabled, session-bound Streamable HTTP endpoint through RAP's existing servlet; agents require no shared filesystem access.
 - Maven coordinate: `io.github.michaaels:hop-mcp-connector`.
 - Product name: `MCP Connector for Apache Hop`.
 
@@ -35,8 +35,12 @@ Keep `hop mcp` as the CLI command. Do not rename Java packages solely for brandi
 10. Do not bundle `hop-core`, `hop-engine`, `hop-ui`, or other Hop runtime jars in the Marketplace ZIP; keep Hop dependencies `provided` where applicable.
 11. Do not weaken file-size, scan-count, result-count, input-size, operation-count, or traversal-depth bounds without a documented reason and tests.
 12. Preserve and verify Jandex plugin metadata generation.
+13. The remote Web service permits project access only while its owner explicitly enables MCP Live Sync. Activation authorizes inspection and semantic editing of that session's project; execution, deep checks and proxy web tools remain disabled. Preserve the Web deployment's access controls, HTTPS outside loopback tests, Host/Origin validation, session binding, ambiguous-session rejection, request/concurrency bounds and immediate shutdown gating. The agent's --remote-ui profile accepts a Web URL through four small tools and must never fall back to a local/shared project. Do not bundle RAP or Servlet runtime jars; do not disable TLS verification or modify system trust stores.
 
 ## Bounded operation contract
+
+- In Hop Web, distinguish service availability from agent presence: the grey footer icon is available, black is connected, and opacity pulses represent work. Icon activation revokes the agent binding only; the MCP Live Sync menu stops the full service. A revoked binding cannot run queued tools as a new agent. Do not infer authenticated identity from clientInfo.
+- When multiple Web sessions are available, return bounded project/open-file choices and require the agent to ask the user before selecting session_id. Never guess a session or fall back to local/shared project access. Route Web MCP events and guided presentations to their owning UI; shared project files remain shared.
 
 - Keep project file reads at or below 4 MiB per file; content scans and catalog hashing are bounded to 32 MiB.
 - Project traversal is capped at 50,000 visited entries, 5,000 files, and depth 64. Keep pagination stable and preserve `count_complete`, `has_more`, and truncation signals when a scan ends early.
@@ -52,7 +56,7 @@ A new MCP tool is complete only when it has a stable name, concise description, 
 
 ## Before editing and validation
 
-Read the relevant source and Apache Hop 2.19 API before guessing a method signature. Prefer Apache Hop release/2.19.0 sources when compatibility matters.
+Read the relevant Apache Hop 2.20.0 source/API before guessing a method signature. Target Hop 2.20 with Java 21.
 
 For ordinary changes run:
 
@@ -60,13 +64,9 @@ For ordinary changes run:
 rtk mvn -B clean verify
 ```
 
-For compatibility changes run:
+The ordinary build includes the real Hop 2.20 component and JDBC tests; no compatibility profile is needed.
 
-```bash
-rtk mvn -B -P hop-2.20 clean verify
-```
-
-For packaging changes inspect `target/hop-mcp-connector-${version}.zip`. It must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, include the generated Jandex index inside the plugin jar, and must not contain Hop runtime jars. The build must also produce CycloneDX SBOM files in `target/`. CI is configured for a checksum-verified clean Hop 2.19.0 install smoke and the separate Hop 2.20.0-SNAPSHOT compatibility build; describe configured coverage without asserting a run passed unless you inspected its result.
+For packaging changes inspect `target/hop-mcp-connector-${version}.zip`. It must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, include the generated Jandex index inside the plugin jar, and must not contain Hop runtime jars. The build must also produce CycloneDX SBOM files in `target/`. CI is configured for a checksum-verified clean Hop 2.20.0 install smoke and the ordinary Hop 2.20 build; describe configured coverage without asserting a run passed unless you inspected its result.
 
 Update tests when adding or changing a tool. Preserve coverage for protocol handshake, schema failures, unknown tools, error results, security bounds, package layout, and clean shutdown.
 
@@ -75,7 +75,7 @@ Update tests when adding or changing a tool. Preserve coverage for protocol hand
 - The project is independent of the Apache Software Foundation. Keep the complete Apache License 2.0 text and attribution/mark notice in source and ZIP.
 - Keep Maven, Marketplace catalog, `version.xml`, server metadata, release notes, ZIP filename, and release tag consistent.
 - Artifact and ZIP name: `hop-mcp-connector-${version}`; GitHub tag: `v${version}`.
-- Keep Marketplace minimum Hop version aligned with the verified stable Hop 2.19.0 baseline; describe Hop 2.20.0-SNAPSHOT only as a compatibility profile.
+- Keep Marketplace support restricted to Hop 2.20.x (minimum 2.20.0, maximum 2.20.999). Dated verification reports retain their historical results; they do not extend current support.
 - Release workflows are tag-controlled and must validate tag/POM consistency; never publish solely because a commit message contains `[release]`.
 - Release gates must validate the verified package and Jandex index, retain the CycloneDX SBOM, create SHA-256 checksums, and produce archive-provenance and SBOM attestations for the release artifact. A workflow definition is not evidence of a successful run.
 - Do not push, tag, release, or publish artifacts unless the user explicitly asks.

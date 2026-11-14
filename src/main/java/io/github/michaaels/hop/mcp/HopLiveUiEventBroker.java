@@ -36,6 +36,8 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   static final int MAX_ACKNOWLEDGEMENT_FILES = 400;
   static final int MAX_SESSION_FILES = 32;
   static final int MAX_CONTROL_FILE_BYTES = 16 * 1024;
+  static final int MAX_PRESENTATION_FILES = 100;
+  static final long MAX_DRAFT_STORAGE_BYTES = 32L * 1024 * 1024;
 
   private static final Pattern CLIENT_TYPE = Pattern.compile("[a-z0-9_-]{1,32}");
   private static final Pattern SHA_256 = Pattern.compile("[a-fA-F0-9]{64}");
@@ -48,8 +50,14 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   private final Path eventsDirectory;
   private final Path sessionsDirectory;
   private final Path acknowledgementsDirectory;
+  private final Path draftsDirectory;
+  private final String targetSession;
 
   HopLiveUiEventBroker(Path projectRoot) throws IOException {
+    this(projectRoot, "");
+  }
+
+  HopLiveUiEventBroker(Path projectRoot, String targetSession) throws IOException {
     if (projectRoot == null) {
       throw new IllegalArgumentException("projectRoot is required");
     }
@@ -59,6 +67,9 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     this.eventsDirectory = controlRoot.resolve("events");
     this.sessionsDirectory = controlRoot.resolve("sessions");
     this.acknowledgementsDirectory = controlRoot.resolve("acknowledgements");
+    this.draftsDirectory = controlRoot.resolve("drafts");
+    this.targetSession =
+        targetSession.isEmpty() ? "" : requireUuid(targetSession, "target_session");
   }
 
   @Override
@@ -82,10 +93,179 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
       values.setProperty("transaction_id", requireUuid(event.transactionId(), "transaction_id"));
       values.setProperty("old_sha256", requireSha256(event.oldSha256(), "old_sha256"));
       values.setProperty("new_sha256", requireSha256(event.newSha256(), "new_sha256"));
+      values.setProperty("target_session", targetSession);
       writeProperties(eventsDirectory.resolve(eventId + ".event"), values);
       return true;
     } catch (IOException | IllegalArgumentException ignored) {
       return false;
+    }
+  }
+
+  @Override
+  public synchronized boolean publishPresentation(
+      HopGuidedPresentation presentation, HopNativeDraft draft) {
+    if (presentation == null || draft == null) return false;
+    try {
+      if (!hasPresentationClient()) return false;
+      requireRelativeDefinitionPath(presentation.path());
+      byte[] bytes = draft.encode();
+      if (!ProjectFiles.sha256(bytes).equals(presentation.snapshotSha256())) return false;
+      ensureDirectories();
+      ensureSecureDirectory(draftsDirectory);
+      pruneDrafts(bytes.length);
+      Path target = draftPath(presentation);
+      Path temporary = Files.createTempFile(draftsDirectory, ".draft-", ".tmp");
+      try {
+        Files.write(temporary, bytes);
+        move(temporary, target);
+      } finally {
+        Files.deleteIfExists(temporary);
+      }
+      return publishPresentation(presentation);
+    } catch (IOException | IllegalArgumentException ignored) {
+      return false;
+    }
+  }
+
+  synchronized HopNativeDraft readDraft(HopGuidedPresentation presentation) throws IOException {
+    Path file = draftPath(presentation);
+    if (!isSecureDirectory(controlRoot)
+        || !isSecureDirectory(draftsDirectory)
+        || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
+        || Files.isSymbolicLink(file)) throw new IOException("Native draft is unavailable");
+    byte[] bytes;
+    try (var input =
+        Files.newInputStream(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+      bytes = input.readNBytes(HopNativeDraft.MAX_BYTES + 1);
+    }
+    if (bytes.length > HopNativeDraft.MAX_BYTES
+        || !ProjectFiles.sha256(bytes).equals(presentation.snapshotSha256()))
+      throw new IOException("Native draft fingerprint changed");
+    return HopNativeDraft.decode(bytes);
+  }
+
+  private Path draftPath(HopGuidedPresentation presentation) {
+    return draftsDirectory.resolve(requireUuid(presentation.id(), "presentation_id") + ".draft");
+  }
+
+  private void pruneDrafts(int incomingBytes) throws IOException {
+    List<Path> files;
+    try (Stream<Path> paths = Files.list(draftsDirectory)) {
+      files =
+          paths
+              .filter(
+                  p ->
+                      Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)
+                          && !Files.isSymbolicLink(p)
+                          && p.getFileName().toString().endsWith(".draft"))
+              .sorted(Comparator.comparingLong(this::lastModifiedSafely).reversed())
+              .limit(MAX_PRESENTATION_FILES + 1)
+              .toList();
+    }
+    long retained = incomingBytes;
+    long oldest = System.currentTimeMillis() - HopCorrectionPlanManager.PLAN_TTL.toMillis();
+    for (int i = 0; i < files.size(); i++) {
+      Path file = files.get(i);
+      long size = Files.size(file);
+      if (i >= MAX_PRESENTATION_FILES - 1
+          || lastModifiedSafely(file) < oldest
+          || retained + size > MAX_DRAFT_STORAGE_BYTES) Files.deleteIfExists(file);
+      else retained += size;
+    }
+  }
+
+  @Override
+  public synchronized boolean publishPresentation(HopGuidedPresentation presentation) {
+    if (presentation == null) return false;
+    try {
+      if (!hasPresentationClient()) return false;
+      requireRelativeDefinitionPath(presentation.path());
+      ensureDirectories();
+      cleanupControlFiles(eventsDirectory, ".visual", EVENT_TTL, MAX_PRESENTATION_FILES - 1);
+      pruneRoutes();
+      Path target =
+          eventsDirectory.resolve(requireUuid(presentation.id(), "presentation_id") + ".visual");
+      byte[] content = presentation.encode();
+      if (!targetSession.isEmpty()) {
+        Properties routing = new Properties();
+        routing.setProperty("target_session", targetSession);
+        writeProperties(eventsDirectory.resolve(presentation.id() + ".route"), routing);
+      }
+      Path temporary = Files.createTempFile(eventsDirectory, ".visual-", ".tmp");
+      try {
+        Files.write(temporary, content);
+        move(temporary, target);
+      } finally {
+        Files.deleteIfExists(temporary);
+      }
+      return true;
+    } catch (IOException | IllegalArgumentException ignored) {
+      return false;
+    }
+  }
+
+  private boolean hasPresentationClient() throws IOException {
+    var clients = activeSessionsByClient();
+    return clients.containsKey("desktop") || clients.containsKey("web");
+  }
+
+  synchronized List<HopGuidedPresentation> presentationsSince(long since) throws IOException {
+    return presentationsSince(since, null);
+  }
+
+  synchronized List<HopGuidedPresentation> presentationsSince(long since, String receiver)
+      throws IOException {
+    if (!isSecureDirectory(eventsDirectory)) return List.of();
+    List<HopGuidedPresentation> result = new ArrayList<>();
+    try (Stream<Path> paths = Files.list(eventsDirectory)) {
+      for (Path file :
+          paths
+              .filter(p -> isRegularControlFile(p, ".visual"))
+              .sorted(Comparator.comparingLong(this::lastModifiedSafely).reversed())
+              .limit(MAX_PRESENTATION_FILES)
+              .toList()) {
+        try {
+          if (!presentationFor(file, receiver)) continue;
+          HopGuidedPresentation presentation;
+          try (var input =
+              Files.newInputStream(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            presentation =
+                HopGuidedPresentation.decode(input.readNBytes(HopGuidedPresentation.MAX_BYTES + 1));
+          }
+          requireRelativeDefinitionPath(presentation.path());
+          if (!file.getFileName().toString().equals(presentation.id() + ".visual")) continue;
+          if (presentation.updatedAt() >= since) result.add(presentation);
+        } catch (IOException | IllegalArgumentException ignored) {
+          /* Isolate malformed packets. */
+        }
+      }
+    }
+    result.sort(Comparator.comparingLong(HopGuidedPresentation::updatedAt));
+    return List.copyOf(result);
+  }
+
+  private boolean presentationFor(Path file, String receiver) throws IOException {
+    if (receiver == null) return true;
+    String name = file.getFileName().toString();
+    Path route =
+        eventsDirectory.resolve(name.substring(0, name.length() - ".visual".length()) + ".route");
+    if (!Files.exists(route, LinkOption.NOFOLLOW_LINKS)) return true;
+    return receiver.equals(
+        requireUuid(
+            readProperties(route, ".route").getProperty("target_session"), "target_session"));
+  }
+
+  private void pruneRoutes() throws IOException {
+    try (var files = Files.list(eventsDirectory)) {
+      for (Path route :
+          files
+              .filter(p -> isRegularControlFile(p, ".route"))
+              .limit(MAX_PRESENTATION_FILES + 1)
+              .toList()) {
+        String name = route.getFileName().toString();
+        Path visual = eventsDirectory.resolve(name.substring(0, name.length() - 6) + ".visual");
+        if (!Files.exists(visual, LinkOption.NOFOLLOW_LINKS)) Files.deleteIfExists(route);
+      }
     }
   }
 
@@ -151,6 +331,11 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   }
 
   synchronized List<LiveEvent> eventsSince(long createdAtInclusive) throws IOException {
+    return eventsSince(createdAtInclusive, null);
+  }
+
+  synchronized List<LiveEvent> eventsSince(long createdAtInclusive, String receiver)
+      throws IOException {
     if (!isSecureDirectory(eventsDirectory)) {
       return List.of();
     }
@@ -167,7 +352,10 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     for (Path eventFile : eventFiles) {
       try {
         LiveEvent event = readEvent(eventFile);
-        if (event.createdAt() >= createdAtInclusive) {
+        if (event.createdAt() >= createdAtInclusive
+            && (receiver == null
+                || event.targetSession().isEmpty()
+                || receiver.equals(event.targetSession()))) {
           events.add(event);
         }
       } catch (IOException ignored) {
@@ -298,7 +486,10 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
           && path.getFileName().toString().endsWith(suffix)
           && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
           && !Files.isSymbolicLink(path)
-          && Files.size(path) <= MAX_CONTROL_FILE_BYTES;
+          && Files.size(path)
+              <= (".visual".equals(suffix)
+                  ? HopGuidedPresentation.MAX_BYTES
+                  : MAX_CONTROL_FILE_BYTES);
     } catch (IOException ignored) {
       return false;
     }
@@ -337,7 +528,10 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
           requireDefinitionKind(values.getProperty("definition_kind")),
           requireUuid(values.getProperty("transaction_id"), "transaction_id"),
           requireSha256(values.getProperty("old_sha256"), "old_sha256"),
-          requireSha256(values.getProperty("new_sha256"), "new_sha256"));
+          requireSha256(values.getProperty("new_sha256"), "new_sha256"),
+          values.getProperty("target_session", "").isEmpty()
+              ? ""
+              : requireUuid(values.getProperty("target_session"), "target_session"));
     } catch (RuntimeException e) {
       throw new IOException("Invalid live UI event", e);
     }
@@ -477,7 +671,20 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
       String definitionKind,
       String transactionId,
       String oldSha256,
-      String newSha256) {}
+      String newSha256,
+      String targetSession) {
+    LiveEvent(
+        String eventId,
+        long createdAt,
+        String type,
+        String path,
+        String definitionKind,
+        String transactionId,
+        String oldSha256,
+        String newSha256) {
+      this(eventId, createdAt, type, path, definitionKind, transactionId, oldSha256, newSha256, "");
+    }
+  }
 
   final class LiveSession implements AutoCloseable {
     private final String id;

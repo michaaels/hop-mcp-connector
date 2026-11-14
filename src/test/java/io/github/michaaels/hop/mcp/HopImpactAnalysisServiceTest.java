@@ -185,15 +185,19 @@ class HopImpactAnalysisServiceTest {
         + metadata
         + "</connection></transform><transform><name>Filter Rows</name><type>FilterRows</type></transform>"
         + "<hop><from>Table Input</from><to>Filter Rows</to></hop>"
-        + (reference.isBlank() ? "" : "<note>" + reference + "</note>")
+        + (reference.isBlank()
+            ? ""
+            : "<transform><name>Execute child</name><type>WorkflowExecutor</type><filename>"
+                + reference
+                + "</filename></transform><hop><from>Filter Rows</from><to>Execute child</to></hop>")
         + "</pipeline>";
   }
 
   private static String workflow(String reference, String metadata) {
     return "<workflow><action><name>Run pipeline</name><type>Pipeline</type><connection>"
         + metadata
-        + "</connection></action><hop><from>Run pipeline</from><to>Run pipeline</to></hop><note>"
+        + "</connection><filename>"
         + reference
-        + "</note></workflow>";
+        + "</filename></action><hop><from>Run pipeline</from><to>Run pipeline</to></hop></workflow>";
   }
 }

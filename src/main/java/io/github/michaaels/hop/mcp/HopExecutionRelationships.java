@@ -1,40 +1,21 @@
 package io.github.michaaels.hop.mcp;
 
-import java.lang.reflect.Method;
-import java.util.Optional;
 import org.apache.hop.execution.Execution;
 
-/** Reads the optional Hop 2.20 launcher API without linking the 2.19 artifact against it. */
+/**
+ * Reads native Hop 2.20 owner/launcher relationships without guessing legacy document semantics.
+ */
 final class HopExecutionRelationships {
-  private static final ClassValue<Optional<Method>> LAUNCHER_GETTERS =
-      new ClassValue<>() {
-        @Override
-        protected Optional<Method> computeValue(Class<?> type) {
-          try {
-            Method getter = type.getMethod("getLaunchedById");
-            if (getter.getReturnType() != String.class) {
-              throw new IllegalStateException("Unsupported native execution launcher API");
-            }
-            return Optional.of(getter);
-          } catch (NoSuchMethodException absentInHop219) {
-            return Optional.empty();
-          }
-        }
-      };
-
   private HopExecutionRelationships() {}
 
   record Relationship(String parentId, String ownerId, String launcherId, String source) {}
 
   static Relationship read(Execution execution) throws McpException {
     String parent = text(execution.getParentId());
-    String launcher = "";
+    String launcher;
     try {
-      Optional<Method> getter = LAUNCHER_GETTERS.get(execution.getClass());
-      if (getter.isPresent()) launcher = text((String) getter.get().invoke(execution));
-    } catch (ReflectiveOperationException | RuntimeException incompatible) {
-      // A missing method is expected on 2.19. A present but failing method must not silently
-      // turn a modern record into a legacy one or expose an exception containing native secrets.
+      launcher = text(execution.getLaunchedById());
+    } catch (RuntimeException incompatible) {
       throw McpException.precondition(
           "EXECUTION_RELATIONSHIP_UNAVAILABLE",
           "Unable to read the native execution launcher.",

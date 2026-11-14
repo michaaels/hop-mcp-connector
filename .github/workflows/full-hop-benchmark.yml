@@ -49,10 +49,10 @@ jobs:
         run: |
           $evidence = Join-Path $env:RUNNER_TEMP 'full-hop-benchmark'
           New-Item -ItemType Directory -Path $evidence | Out-Null
-          $archive = Join-Path $evidence 'apache-hop-client-2.19.0.zip'
+          $archive = Join-Path $evidence 'apache-hop-client-2.20.0.zip'
           $checksum = "$archive.sha512"
-          Invoke-WebRequest 'https://downloads.apache.org/hop/2.19.0/apache-hop-client-2.19.0.zip' -OutFile $archive
-          Invoke-WebRequest 'https://downloads.apache.org/hop/2.19.0/apache-hop-client-2.19.0.zip.sha512' -OutFile $checksum
+          Invoke-WebRequest 'https://downloads.apache.org/hop/2.20.0/apache-hop-client-2.20.0.zip' -OutFile $archive
+          Invoke-WebRequest 'https://downloads.apache.org/hop/2.20.0/apache-hop-client-2.20.0.zip.sha512' -OutFile $checksum
           $expected = [regex]::Match((Get-Content $checksum -Raw), '[0-9a-fA-F]{128}').Value.ToLowerInvariant()
           $actual = (Get-FileHash $archive -Algorithm SHA512).Hash.ToLowerInvariant()
           if ($expected.Length -ne 128 -or $actual -ne $expected) { throw 'Hop archive checksum mismatch' }
@@ -77,7 +77,7 @@ jobs:
           $runtime = Join-Path $evidence 'runtime/hop'
           $fixture = Join-Path $evidence 'fixture-5000'
           $output = Join-Path $evidence 'run'
-          python scripts/ci/full-hop-benchmark.py --runtime $runtime --runtime-archive (Join-Path $evidence 'apache-hop-client-2.19.0.zip') --fixture $fixture --generate-fixture --java-home $env:JAVA_HOME --baseline $baselineZip --candidate $candidateZip --baseline-version $baselineVersion --candidate-version $candidateVersion --output $output
+          python scripts/ci/full-hop-benchmark.py --runtime $runtime --runtime-archive (Join-Path $evidence 'apache-hop-client-2.20.0.zip') --fixture $fixture --generate-fixture --java-home $env:JAVA_HOME --baseline $baselineZip --candidate $candidateZip --baseline-version $baselineVersion --candidate-version $candidateVersion --output $output
           if ($LASTEXITCODE -ne 0) { throw 'Full-Hop benchmark failed' }
           "baseline_tag=$env:BASELINE_TAG`nbaseline_commit=$env:BASELINE_COMMIT`ncandidate_commit=$env:GITHUB_SHA" | Set-Content (Join-Path $evidence 'provenance.txt')
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

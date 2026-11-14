@@ -67,8 +67,8 @@ public final class HopMcpConformanceServer {
     }
   }
 
-  static Tomcat createTomcat(
-      HttpServletStreamableServerTransportProvider transportProvider, int port) throws IOException {
+  static Tomcat createTomcat(jakarta.servlet.http.HttpServlet transportProvider, int port)
+      throws IOException {
     Tomcat tomcat = new Tomcat();
     tomcat.setPort(port);
     tomcat.setBaseDir(Files.createTempDirectory("hop-mcp-conformance-tomcat-").toString());

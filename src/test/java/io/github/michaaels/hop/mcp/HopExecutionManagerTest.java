@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -74,7 +75,8 @@ class HopExecutionManagerTest {
             callers)) {
       String id = start(manager);
       assertTrue(entered.await(5, TimeUnit.SECONDS));
-      Map<String, Object> pending = awaitState(manager, id, "stopping");
+      // Cancellation becomes visible before the controller publishes its timeout result.
+      Map<String, Object> pending = awaitState(manager, id, "stopping", "result");
       assertEquals(true, ((Map<?, ?>) pending.get("result")).get("timed_out"));
       assertEquals(true, pending.get("native_worker_active"));
       assertEquals(1, pending.get("active_executions"));
@@ -230,12 +232,14 @@ class HopExecutionManagerTest {
   }
 
   private static Map<String, Object> awaitState(
-      HopExecutionManager manager, String id, String state) throws Exception {
+      HopExecutionManager manager, String id, String state, String... publishedFields)
+      throws Exception {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
     Map<String, Object> result;
     do {
       result = manager.status(id);
-      if (state.equals(result.get("state"))) return result;
+      if (state.equals(result.get("state"))
+          && Arrays.stream(publishedFields).allMatch(result::containsKey)) return result;
       Thread.sleep(10);
     } while (System.nanoTime() < deadline);
     fail("Expected " + state + ": " + result);

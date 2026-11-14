@@ -414,7 +414,7 @@ final class ProjectFiles {
     return readBoundedBytes(path, maximumBytes);
   }
 
-  private void requirePublicPath(Path path) throws IOException {
+  void requirePublicPath(Path path) throws IOException {
     if (!path.startsWith(root))
       throw McpException.security(
           "PATH_OUTSIDE_PROJECT", "Resolved path must remain under the configured project root.");

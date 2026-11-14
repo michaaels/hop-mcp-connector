@@ -40,6 +40,18 @@ await writeFile(
   '<?xml version="1.0"?>\n<pipeline><info><name>stdio-contract</name></info><order/></pipeline>\n',
   "utf8",
 );
+await writeFile(path.join(projectDir, "child.hwf"),
+  '<workflow><name>child</name><actions/><hops/></workflow>', "utf8");
+await writeFile(path.join(projectDir, "references.hpl"),
+  '<pipeline><info><description>historical-only.hwf</description></info>' +
+  '<transform><name>Execute</name><type>WorkflowExecutor</type>' +
+  '<filename>${Internal.Pipeline.Filename.Directory}/child.hwf</filename></transform></pipeline>', "utf8");
+await writeFile(path.join(projectDir, "routing.hpl"),
+  '<pipeline><transform><name>Filter</name><type>FilterRows</type>' +
+  '<send_true_to>Missing</send_true_to></transform></pipeline>', "utf8");
+await writeFile(path.join(projectDir, "unresolved.hpl"),
+  '<pipeline><transform><name>Execute</name><type>WorkflowExecutor</type>' +
+  '<filename>${NOT_CONFIGURED}/child.hwf</filename></transform></pipeline>', "utf8");
 
 const hopCommand = path.join(hopDir, process.platform === "win32" ? "hop.bat" : "hop");
 const command =
@@ -106,6 +118,7 @@ function nextLine(timeoutMs = 30_000) {
 }
 
 let nextId = 1;
+let catalogBytes = 0;
 async function request(method, params) {
   const id = nextId++;
   const responseLine = nextLine();
@@ -114,6 +127,11 @@ async function request(method, params) {
     "utf8",
   );
   const rawLine = await responseLine;
+  if (method === "tools/list") {
+    const bytes = Buffer.byteLength(rawLine, "utf8");
+    catalogBytes += bytes;
+    if (bytes >= 1024 * 1024) throw new Error("tools/list exceeds the 1 MiB catalog budget: " + bytes);
+  }
   let response;
   try {
     response = JSON.parse(rawLine);
@@ -196,6 +214,16 @@ try {
     if (toolNames.has(name)) throw new Error("Disabled tool was exposed: " + name);
   }
 
+  let invalidArgumentsRejected = false;
+  try {
+    const invalid = await request("tools/call", { name: "hop_context", arguments: {} });
+    invalidArgumentsRejected = invalid.isError === true;
+  } catch (error) {
+    if (!error.message.startsWith("MCP request failed:")) throw error;
+    invalidArgumentsRejected = true;
+  }
+  if (!invalidArgumentsRejected) throw new Error("Missing required arguments were accepted");
+
   const config = await request("tools/call", {
     name: "hop_config",
     arguments: {},
@@ -210,6 +238,24 @@ try {
   if (validation.isError || validation.structuredContent?.valid !== true) {
     throw new Error("hop_validate did not validate the clean fixture");
   }
+  const dependencies = await request("tools/call", {
+    name: "hop_dependencies", arguments: { path: "references.hpl" },
+  });
+  const rows = dependencies.structuredContent?.dependencies;
+  if (dependencies.isError || rows?.length !== 1 || rows[0].resolved !== "child.hwf" || rows[0].exists !== true)
+    throw new Error("File-local reference resolution or semantic dependency extraction failed");
+  const unresolved = await request("tools/call", {
+    name: "hop_dependencies", arguments: { path: "unresolved.hpl" },
+  });
+  const unknown = unresolved.structuredContent?.dependencies?.[0];
+  if (unresolved.isError || unknown?.exists !== null || unknown.resolution_status !== "unresolved")
+    throw new Error("An unresolved variable was incorrectly reported as a missing file");
+  const routing = await request("tools/call", { name: "hop_validate", arguments: { path: "routing.hpl" } });
+  if (routing.isError || routing.structuredContent?.valid !== false || !routing.structuredContent.errors.length)
+    throw new Error("Missing routing destination was not diagnosed");
+  console.log("tools/list bytes: " + catalogBytes);
+  console.log("Invalid arguments rejected without corrupting stdout; subsequent calls passed.");
+  console.log("File-local references, documentary exclusions and routing diagnostics passed.");
 
   child.stdin.end();
   let shutdownTimer;

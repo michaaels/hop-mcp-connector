@@ -33,7 +33,7 @@ If network policy prevents Maven resolution, report that limitation rather than 
 
 ## API discipline
 
-Use Apache Hop `release/2.19.0` as the compatibility source. In particular:
+Use Apache Hop 2.20.0 as the only runtime/API target. The ordinary build runs the native component and JDBC tests without a compatibility profile. In particular:
 
 - `@HopCommand` + `IHopCommand` provide the headless command.
 - `Hop` discovers command plugins from `PluginRegistry`.

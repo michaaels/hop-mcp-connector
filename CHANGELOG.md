@@ -1,6 +1,44 @@
 # Changelog
 
+- Development 2.4.0: separate Web service availability from a revocable agent connection. Keep the compact icon grey without an agent, black when connected, and pulse only for activity. Show agent identity, operation, elapsed time and last activity. Icon activation disconnects the agent; the menu still shuts down Live Sync. Return bounded project/open-file session choices, require explicit selection on ambiguity, reject occupied/revoked bindings and target Web presentation events to their owning window. Preserve four lightweight agent tools, native mutation safeguards and disabled ETL execution.
+
+- Development 2.3.2: size the native MCP indicator to 16 px and center it in the existing status toolbar height. Reserve only a 24 px control width and preserve the original footer height, activity pulse, tooltip and shutdown behavior.
+
+- Development 2.3.1: show the bundled MCP logo in the native lower-right footer while Live Sync is enabled. Breathe smoothly between solid and translucent during Web requests or native guided playback, settle to solid at rest, show user-facing status/project details, and stop Live Sync on click or keyboard activation. Reserve footer space, preserve dirty tabs and permission gates, and dispose the session's timer/image/control when stopped. Desktop activity reflects native presentation/events; Web also reflects remote requests. No runtime dependency or tool-catalog additions.
+
 ## Unreleased
+
+- Development 2.3.0: connect an agent to a normal Hop Web URL while MCP Live Sync is active. Add a four-tool `--remote-ui` agent profile and a session/project-bound MCP HTTP service inside RAP's existing servlet, with HTTPS, Host/Origin checks, ambiguous-session rejection and bounded requests/concurrency. Activation authorizes native inspection/editing, preserves plans, SHA-256, backups, rollback and guided/instant presentation, and never enables ETL execution/deep checks/proxy tools. Stop access when Live Sync stops; never fall back to a local/shared project. Keep local STDIO behavior and provided RAP/Servlet dependencies. Support an optional additional public certificate for the agent's HTTPS client without weakening TLS or modifying system trust.
+
+- Enable guided native-editor presentation in Hop Web/RAP through the existing session bridge. Share Desktop/Web polling, use a 100 ms Web animation timer, and avoid canvas redraws during unchanged holds. Let shell disposal own child cleanup to avoid removing RAP tabs after toolbar images are released. Rename the visible menu/dialog title to `MCP Live Sync`; preserve the CLI command, plugin IDs, authorization and bounds. See the dated RAP validation report for exercised UI cases and remaining checks.
+
+- Target Apache Hop 2.20.x exclusively, compile against 2.20.0, run native component/JDBC tests by default, and replace the 2.19 launcher reflection adapter with the native API. Remove the duplicate snapshot build; restrict Marketplace metadata to 2.20.x.
+
+- Add bounded native `auto_layout` semantic mutations for readable pipeline/workflow canvases: left-to-right stages, separated failure lanes, branch-order refinement and before/after geometric diagnostics. Preserve all routing and execution semantics, preview, SHA-256, protected backup and rollback; introduce no new tool, dependency or authorization.
+
+- Warn when a failed pipeline/workflow/SQL action ends at a terminal DUMMY, including when a notification hop was disabled. Preserve advisory validation, bounds and intentional condition recovery; do not execute or rewrite flows automatically.
+
+- Explicitly guide reusable-definition authoring to declare public named parameters while preserving parent parameter passing.
+
+- Remove obsolete named parameters semantically while preserving the other native definitions, preview, SHA-256 preconditions and rollback. Reject unused properties on parameter creation instead of advertising ignored input.
+
+- Guide authoring toward native components, shared readers, minimal business fields and formatted scripts. Add bounded, source-free advisory formatting warnings for JavaScript transforms/actions; never rewrite scripts automatically.
+
+- Separate bounded schema discovery (200 scalar properties) from mutation input (unchanged: 50). Fix Text File Input's 62-property schema failing SDK output validation; enforce discovery bounds before returning and preserve the 512 KiB response limit and compact catalog.
+
+- Add bounded native named-parameter creation for pipelines and workflows, preserving preview, SHA-256 preconditions, native reload and rollback.
+- Expose enum injection key `TYPE` only when its native serialized metadata key is a safe configuration property (for example Checksum `checksumtype`); keep structural type fields protected.
+
+- Preserve interior/trailing empty Data grid cells after tabular native injection, enforce the configured row width and clear transient injection fields before serialization so native reload cannot corrupt catalog rows.
+- Advertise native Hop value-type codes as names and validate them before metadata injection. Normalize compatible numeric IDs, preserve Hop 2.19 numeric injection compatibility, and reject unknown/None types instead of silently creating unusable JavaScript/CSV output fields.
+- Allow pipeline `add_component` and `update_component` operations to set native `distribute` mode explicitly. Preserve preview, SHA-256 preconditions, native reload and rollback; reject this pipeline-only setting for workflow actions and unrelated operations.
+- Reject structurally incomplete Repeat actions (missing filename/run configuration or invalid literal delay) and warn when a child must supply End repeat instead of a stop variable.
+- Replace the exponentially expanded component output schema with finite, shared `$defs` references. Keep depth, text, property and array limits and enforce a serialized catalog budget in STDIO tests.
+- Resolve project-local dependency paths in the inspected file's native folder context, including pipeline/workflow folder variables and file URIs, while retaining traversal, symlink and internal-path confinement. Distinguish unresolved variables and rejected paths from confirmed missing files.
+- Extract definition references from declared file fields instead of descriptions, notes, JavaScript and SQL. Apply the same rules to inspection, dependency, diff and impact-index consumers.
+- Redirect Log4j console appenders cached before MCP startup to stderr, so SDK argument-validation warnings cannot corrupt stdout. Cover a cached appender and request/error/recovery sequencing.
+- Preserve workflow evaluation/unconditional flags and filter/switch/executor branch labels in inspection and component lineage.
+- Validate configured routing destinations and outgoing hops locally, warn about legacy executor target fields and the incorrect imported pipeline-folder variable, and explicitly identify structural validation as non-executing.
 
 - Upgrade the MCP Java SDK to 2.1.0, including its native STDIO concurrent-send fix for `Failed to enqueue message`. Add pipelined success/schema-error regression coverage and bounded timeout diagnostics; keep protocol baseline 2025-11-25.
 - Update test-only embedded Tomcat to 11.0.27 and refresh the pinned setup-java, setup-node and artifact Actions. Tomcat is not included in the Marketplace runtime.

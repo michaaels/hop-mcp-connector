@@ -11,7 +11,7 @@ const fixture = path.resolve(fixtureArg);
 const config = path.resolve(configArg);
 const profileDir = profileArg ? path.resolve(profileArg) : null;
 const trial = Number(trialArg);
-const hopVersion = '2.19.0';
+const hopVersion = '2.20.0';
 const javaCheck = spawnSync(path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'), ['-version'], { encoding: 'utf8', windowsHide: true });
 if (javaCheck.status !== 0 || !/version "21[."]/i.test(javaCheck.stdout + javaCheck.stderr)) throw new Error('Benchmark requires Java 21');
 const warmCount = 5;

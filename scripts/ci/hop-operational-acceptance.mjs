@@ -74,7 +74,7 @@ try {
     });
     report.cases.push({ name: `schema-${plugin_id}`, evidence: schema });
   }
-  // Native injection property names are part of the tested Hop 2.19 baseline contract.
+  // Native injection property names are part of the tested Hop 2.20 contract.
   await author("success.hpl", [
     component("RowGenerator", "Rows", { limit: "5" }),
     component("Dummy", "Sink"),

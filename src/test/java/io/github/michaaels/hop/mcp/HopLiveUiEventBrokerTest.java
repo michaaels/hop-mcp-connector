@@ -127,4 +127,35 @@ class HopLiveUiEventBrokerTest {
         ONE_SHA,
         List.of(Map.of("operation", "set_name")));
   }
+
+  @Test
+  void targetedWebEventsAndDraftsReachOnlyTheSelectedSessionOnTheSameProject() throws Exception {
+    var broker = new HopLiveUiEventBroker(projectRoot);
+    try (var first = broker.openSession("web");
+        var second = broker.openSession("web")) {
+      var targeted = new HopLiveUiEventBroker(projectRoot, first.id());
+      assertTrue(targeted.publish(semanticEvent("private.hpl")));
+      assertEquals(1, broker.eventsSince(0, first.id()).size());
+      assertTrue(broker.eventsSince(0, second.id()).isEmpty());
+      var graph = new HopGuidedPresentation.Graph(List.of(), List.of());
+      var presentation =
+          new HopGuidedPresentation(
+              UUID.randomUUID().toString(),
+              1,
+              System.currentTimeMillis(),
+              "private.hpl",
+              "pipeline",
+              "guided",
+              "prepared",
+              graph,
+              graph,
+              List.of());
+      assertTrue(targeted.publishPresentation(presentation));
+      assertEquals(1, broker.presentationsSince(0, first.id()).size());
+      assertTrue(broker.presentationsSince(0, second.id()).isEmpty());
+      assertTrue(broker.publish(semanticEvent("legacy-broadcast.hpl")));
+      assertEquals(1, broker.eventsSince(0, second.id()).size());
+      assertEquals("legacy-broadcast.hpl", broker.eventsSince(0, second.id()).getFirst().path());
+    }
+  }
 }

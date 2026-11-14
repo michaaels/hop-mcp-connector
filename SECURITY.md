@@ -2,7 +2,7 @@
 
 ## Supported version
 
-The stable Maven compile baseline is Apache Hop 2.19.0 with Java 21. The separate `hop-2.20` profile targets the 2.20.0-SNAPSHOT line as a compatibility check, not a stable-support promise. Consult the repository's release tags and Marketplace catalog for the connector versions currently distributed.
+The only supported Hop runtime is 2.20.x with Java 21. Maven compiles against Hop 2.20.0, and ordinary verification includes the native component and JDBC tests. Marketplace metadata restricts installation to 2.20.x.
 
 ## Design assumptions
 
@@ -24,7 +24,7 @@ Optional Hop Web access is read-only: only GET and HEAD are accepted. Requests s
 
 The native deep checker is disabled by default because some plugins may resolve fields or contact configured external systems during checking.
 
-The MCP SDK and server declare protocol revision `2025-11-25` over STDIO. This server advertises tools only; it does not implement prompts, resources, completion, sampling, elicitation, or SSE. The official Conformance Suite is wired into CI with an explicit expected-failure baseline; no complete conformance pass is claimed. The 2.20.0-SNAPSHOT compatibility profile is separate from the 2.19.0 stable compile baseline.
+The MCP SDK and server declare protocol revision `2025-11-25` over STDIO. This server advertises tools only; it does not implement prompts, resources, completion, sampling, elicitation, or SSE. The official Conformance Suite is wired into CI with an explicit expected-failure baseline; no complete conformance pass is claimed. The current build targets Hop 2.20.0 directly.
 
 ## Reporting
 

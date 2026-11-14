@@ -307,27 +307,16 @@ class HopExecutionRepositoryTest {
   }
 
   private static Execution modernExecution(String id, String owner, String launcher) {
-    LauncherExecution execution = new LauncherExecution(launcher);
+    Execution execution = new Execution();
+    execution.setLaunchedById(launcher);
     execution.setId(id);
     execution.setParentId(owner);
     execution.setExecutionType(ExecutionType.Pipeline);
     return execution;
   }
 
-  /** Supplies the additive getter when this test is compiled against Hop 2.19. */
-  public static class LauncherExecution extends Execution {
-    private final String launcher;
-
-    LauncherExecution(String launcher) {
-      this.launcher = launcher;
-    }
-
-    public String getLaunchedById() {
-      return launcher;
-    }
-  }
-
   public static class BrokenLauncherExecution extends Execution {
+    @Override
     public String getLaunchedById() {
       throw new IllegalStateException("native-secret");
     }

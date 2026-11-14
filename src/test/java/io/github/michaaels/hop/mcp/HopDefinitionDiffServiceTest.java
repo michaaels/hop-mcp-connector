@@ -123,14 +123,19 @@ class HopDefinitionDiffServiceTest {
     return workflow;
   }
 
-  private static String withReference(String xml, String reference) {
-    int closing = xml.lastIndexOf("</");
-    if (closing < 0) throw new IllegalArgumentException("Serialized pipeline has no closing tag");
-    return xml.substring(0, closing)
-        + "<note>uses "
-        + reference
-        + "</note>"
-        + xml.substring(closing);
+  private static String withReference(String xml, String reference) throws Exception {
+    // A declared file field is a reference; a description or historical note is not.
+    var document = HopXml.parse(xml);
+    var field = document.createElement("filename");
+    field.setTextContent(reference);
+    document.getElementsByTagName("transform").item(0).appendChild(field);
+    var output = new java.io.StringWriter();
+    javax.xml.transform.TransformerFactory.newInstance()
+        .newTransformer()
+        .transform(
+            new javax.xml.transform.dom.DOMSource(document),
+            new javax.xml.transform.stream.StreamResult(output));
+    return output.toString();
   }
 
   private static String withParameter(String xml, String defaultValue) {

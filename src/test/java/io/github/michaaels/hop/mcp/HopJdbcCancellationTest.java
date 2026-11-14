@@ -29,11 +29,9 @@ import org.apache.hop.pipeline.transform.TransformMeta;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Cancels SQL that has entered a real in-memory JDBC engine, without external infrastructure. */
-@EnabledIfSystemProperty(named = "hop.compatibility.components", matches = "true")
 @Timeout(20)
 public class HopJdbcCancellationTest {
   private static volatile CountDownLatch queryStarted;
