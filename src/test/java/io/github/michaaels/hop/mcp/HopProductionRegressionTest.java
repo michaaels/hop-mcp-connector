@@ -83,6 +83,8 @@ class HopProductionRegressionTest {
 
   @Test
   void resolvesFileLocalVariablesBeforeInheritedContextAndSupportsFileUris() throws Exception {
+    // Hosted Windows can expose an 8.3 temp alias; use the same real root as ProjectFiles.
+    project = project.toRealPath();
     Path flows = Files.createDirectories(project.resolve("flows with spaces"));
     Files.writeString(flows.resolve("child.hwf"), "<workflow><name>child</name></workflow>");
     Variables inherited = new Variables();
