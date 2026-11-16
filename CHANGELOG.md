@@ -1,12 +1,19 @@
 # Changelog
 
-- Development 2.4.0: separate Web service availability from a revocable agent connection. Keep the compact icon grey without an agent, black when connected, and pulse only for activity. Show agent identity, operation, elapsed time and last activity. Icon activation disconnects the agent; the menu still shuts down Live Sync. Return bounded project/open-file session choices, require explicit selection on ambiguity, reject occupied/revoked bindings and target Web presentation events to their owning window. Preserve four lightweight agent tools, native mutation safeguards and disabled ETL execution.
+## 2.4.0 - 2026-11-15
+
+- Rewrite the README around local MCP, Desktop Live Sync and Web Live Sync, with an illustrative animation, a reduced-motion alternative and short setup examples. Keep detailed documentation in docs/reference.md.
+
+- Separate Web service availability from a revocable agent connection. Keep the compact icon grey without an agent, black when connected, and pulse only for activity. Show agent identity, operation, elapsed time and last activity. Icon activation disconnects the agent; the menu still shuts down Live Sync. Return bounded project/open-file session choices, require explicit selection on ambiguity, reject occupied/revoked bindings and target Web presentation events to their owning window. Preserve four lightweight agent tools, native mutation safeguards and disabled ETL execution.
 
 - Development 2.3.2: size the native MCP indicator to 16 px and center it in the existing status toolbar height. Reserve only a 24 px control width and preserve the original footer height, activity pulse, tooltip and shutdown behavior.
 
 - Development 2.3.1: show the bundled MCP logo in the native lower-right footer while Live Sync is enabled. Breathe smoothly between solid and translucent during Web requests or native guided playback, settle to solid at rest, show user-facing status/project details, and stop Live Sync on click or keyboard activation. Reserve footer space, preserve dirty tabs and permission gates, and dispose the session's timer/image/control when stopped. Desktop activity reflects native presentation/events; Web also reflects remote requests. No runtime dependency or tool-catalog additions.
 
-## Unreleased
+
+- Redact secrets propagated through native run-configuration aliases, including `${...}` and `%%...%%` references. Follow only referenced names within bounded dependency inspection; withhold opaque resolver/hex expressions and values whose dependencies cannot be checked safely. Redact sensitive named-variable values in metadata rows.
+- Align `hop_metadata_get` with native nested metadata using finite shared schema definitions. Preserve depth, collection and property bounds, account for the three existing root identity fields, and cover service output and STDIO redaction with regressions.
+- Add ordinary Hop 2.20 regression coverage for SSH command timeout round trips, legacy Calculator defaults, MetaInject condition migration and completion callbacks. The additional native plugin dependencies remain test-only.
 
 - Development 2.3.0: connect an agent to a normal Hop Web URL while MCP Live Sync is active. Add a four-tool `--remote-ui` agent profile and a session/project-bound MCP HTTP service inside RAP's existing servlet, with HTTPS, Host/Origin checks, ambiguous-session rejection and bounded requests/concurrency. Activation authorizes native inspection/editing, preserves plans, SHA-256, backups, rollback and guided/instant presentation, and never enables ETL execution/deep checks/proxy tools. Stop access when Live Sync stops; never fall back to a local/shared project. Keep local STDIO behavior and provided RAP/Servlet dependencies. Support an optional additional public certificate for the agent's HTTPS client without weakening TLS or modifying system trust.
 

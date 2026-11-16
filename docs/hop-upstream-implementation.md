@@ -1,5 +1,7 @@
 # Implementación de compatibilidad con los cambios de Apache Hop
 
+> Este documento conserva resultados históricos de octubre. El target actual es exclusivamente Hop 2.20.x. Véase la [auditoría de cobertura de la entrega 2.20.0](hop-2.20-coverage-2026-11-13.md) para el inventario completo de cambios, las comprobaciones actuales y los pendientes reproducidos en MCP 2.4.0.
+
 Trabajo local del 16 de octubre de 2026, basado en el [análisis del 15 de octubre](apache-hop-upstream-analysis-2026-10-15.md). La base estable continúa siendo Hop 2.19.0 y el perfil de compatibilidad usa 2.20.0-SNAPSHOT. Los cambios se registran en `Unreleased`; no constituyen una nueva publicación.
 
 ## Cambios implementados

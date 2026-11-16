@@ -253,6 +253,16 @@ class HopMcpServerStdioTest {
     MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
     PipelineRunConfiguration local = new PipelineRunConfiguration();
     local.setName("local");
+    local
+        .getConfigurationVariables()
+        .addAll(
+            List.of(
+                new org.apache.hop.core.variables.DescribedVariable(
+                    "DB_PASSWORD", "stdio-variable-fixture-private", "Synthetic credential"),
+                new org.apache.hop.core.variables.DescribedVariable(
+                    "FIRST_ALIAS", "${DB_PASSWORD}", "First alias"),
+                new org.apache.hop.core.variables.DescribedVariable(
+                    "SECOND_ALIAS", "${FIRST_ALIAS}", "Second alias")));
     LocalPipelineRunConfiguration localEngine = new LocalPipelineRunConfiguration();
     localEngine.setEnginePluginId("Local");
     localEngine.setEnginePluginName("Local");
@@ -334,6 +344,7 @@ class HopMcpServerStdioTest {
         assertFalse(tools.contains("hop_web_request"), tools);
         assertTrue(tools.contains("readOnlyHint"), tools);
         assertTrue(tools.contains("outputSchema"), tools);
+        assertTrue(tools.getBytes(StandardCharsets.UTF_8).length <= 512 * 1024);
         Map<String, Map<String, Object>> outputSchemas = extractOutputSchemas(tools);
 
         requests.println(toolCall(3, "hop_config", "{}"));
@@ -392,6 +403,8 @@ class HopMcpServerStdioTest {
         assertSuccessfulToolResponse(metadataGet, 62);
         assertStructuredOutputConforms(metadataGet, "hop_metadata_get", outputSchemas);
         assertTrue(metadataGet.contains("redaction_applied"), metadataGet);
+        assertFalse(metadataGet.contains("stdio-variable-fixture-private"));
+        assertTrue(metadataGet.contains(SensitiveData.REDACTED));
 
         requests.println(
             toolCall(
@@ -413,6 +426,7 @@ class HopMcpServerStdioTest {
         assertStructuredOutputConforms(
             resolvedRunConfiguration, "hop_resolve_configuration", outputSchemas);
         assertTrue(resolvedRunConfiguration.contains("\"plugin_id\""), resolvedRunConfiguration);
+        assertFalse(resolvedRunConfiguration.contains("stdio-variable-fixture-private"));
 
         requests.println(toolCall(4, "hop_validate", "{\"path\":\"valid.hpl\"}"));
         String firstValidation = responses.readResponse();

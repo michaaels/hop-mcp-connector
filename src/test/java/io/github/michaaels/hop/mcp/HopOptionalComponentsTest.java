@@ -30,6 +30,104 @@ class HopOptionalComponentsTest {
   }
 
   @Test
+  void createsAndReloadsSshCommandTimeoutWithoutExecutingSsh() throws Exception {
+    ITransformMeta component =
+        createAndReload(
+            "ssh.hpl",
+            "SSH",
+            Map.of(
+                "serverName",
+                "127.0.0.1",
+                "command",
+                "echo fixture",
+                "commandTimeOut",
+                "7",
+                "timeOut",
+                "2"),
+            Map.of());
+    assertEquals("7", component.getClass().getMethod("getCommandTimeOut").invoke(component));
+    assertEquals("2", component.getClass().getMethod("getTimeOut").invoke(component));
+    assertTrue(component.getXml().contains("<commandTimeOut>7</commandTimeOut>"));
+    assertTrue(authoring().schema("pipeline", "SSH").toString().contains("commandTimeOut"));
+  }
+
+  @Test
+  void preservesUnspecifiedCalculatorLengthsDuringSemanticEdits() throws Exception {
+    Files.writeString(
+        project.resolve("calculator.hpl"),
+        """
+        <pipeline><info><name>Legacy calculator</name></info>
+        <transform><name>Fixture</name><type>Calculator</type>
+          <calculation><field_name>calculated</field_name><calc_type>ADD</calc_type>
+            <field_a>a</field_a><field_b>b</field_b><value_type>Number</value_type>
+          </calculation>
+        </transform></pipeline>
+        """);
+    renameFixture("calculator.hpl");
+    ITransformMeta component = reload("calculator.hpl", "Renamed");
+    RowMeta fields = new RowMeta();
+    component.getFields(
+        fields, "Fixture", null, null, new Variables(), new MemoryMetadataProvider());
+    assertEquals(-1, fields.searchValueMeta("calculated").getLength());
+    assertEquals(-1, fields.searchValueMeta("calculated").getPrecision());
+    assertTrue(component.getXml().contains("<value_length>-1</value_length>"));
+  }
+
+  @Test
+  void migratesLegacyMetaInjectConditionAndKeepsCurrentEnumPrecedence() throws Exception {
+    for (boolean hasCurrent : List.of(false, true)) {
+      String path = hasCurrent ? "current-inject.hpl" : "legacy-inject.hpl";
+      Files.writeString(
+          project.resolve(path),
+          """
+          <pipeline><info><name>Legacy injection</name></info>
+          <transform><name>Fixture</name><type>metainject</type>
+            <allow_empty_stream_on_execution>Y</allow_empty_stream_on_execution>
+            %s
+          </transform></pipeline>
+          """
+              .formatted(
+                  hasCurrent
+                      ? "<condition_stream_behavior>always</condition_stream_behavior>"
+                      : ""));
+      renameFixture(path);
+      ITransformMeta component = reload(path, "Renamed");
+      Object condition =
+          component.getClass().getMethod("getConditionStreamBehavior").invoke(component);
+      assertEquals(hasCurrent ? "ALWAYS" : "AT_LEAST_ONE_NON_EMPTY", condition.toString());
+      String saved = Files.readString(project.resolve(path));
+      assertTrue(saved.contains("<type>MetaInject</type>"), saved);
+      assertFalse(saved.contains("allow_empty_stream_on_execution"), saved);
+      assertTrue(saved.contains(hasCurrent ? ">always<" : ">at-least-one-non-empty<"), saved);
+    }
+  }
+
+  private void renameFixture(String path) throws Exception {
+    String expected = ProjectFiles.sha256(Files.readAllBytes(project.resolve(path)));
+    mutator()
+        .mutate(
+            path,
+            "pipeline",
+            List.of(
+                Map.of(
+                    "operation",
+                    "rename_component",
+                    "component",
+                    "Fixture",
+                    "new_name",
+                    "Renamed")),
+            expected,
+            true);
+  }
+
+  private ITransformMeta reload(String path, String name) throws Exception {
+    return new PipelineMeta(
+            project.resolve(path).toString(), new MemoryMetadataProvider(), new Variables())
+        .findTransform(name)
+        .getTransform();
+  }
+
+  @Test
   void createsAndReloadsWatchFilesWithFiniteRuntimeAndStableIdentity() throws Exception {
     Map<String, Object> properties =
         Map.of(

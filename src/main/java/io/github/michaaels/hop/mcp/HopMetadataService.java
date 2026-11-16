@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.apache.hop.core.variables.DescribedVariable;
 import org.apache.hop.metadata.api.HopMetadata;
 import org.apache.hop.metadata.api.HopMetadataProperty;
 import org.apache.hop.metadata.api.IHopMetadata;
@@ -306,6 +307,11 @@ final class HopMetadataService {
     }
     Map<String, Object> nested = new LinkedHashMap<>();
     projectProperties(value, nested, depth, seen);
+    if (value instanceof DescribedVariable variable
+        && SensitiveData.isSensitiveKey(variable.getName())
+        && nested.containsKey("value")) {
+      nested.put("value", SensitiveData.redactedMarker());
+    }
     return nested.isEmpty() ? Map.of("type", value.getClass().getSimpleName()) : nested;
   }
 

@@ -1823,6 +1823,10 @@ final class HopMcpServer implements AutoCloseable {
   }
 
   private static Map<String, Object> metadataValueSchema() {
+    return Map.of("$ref", "#/$defs/metadataValue" + HopMetadataService.MAX_METADATA_DEPTH);
+  }
+
+  private static Map<String, Object> metadataValueDefinitions() {
     Map<String, Object> scalar =
         Map.of(
             "anyOf",
@@ -1832,15 +1836,29 @@ final class HopMcpServer implements AutoCloseable {
                 Map.of("type", "number"),
                 bool("Metadata boolean"),
                 Map.of("type", "null")));
-    Map<String, Object> object = new LinkedHashMap<>();
-    object.put("type", "object");
-    object.put("additionalProperties", scalar);
-    object.put("maxProperties", HopMetadataService.MAX_METADATA_FIELDS);
-    Map<String, Object> array = new LinkedHashMap<>();
-    array.put("type", "array");
-    array.put("items", scalar);
-    array.put("maxItems", HopMetadataService.MAX_METADATA_COLLECTION_ITEMS + 1);
-    return Map.of("anyOf", List.of(scalar, object, array));
+    Map<String, Object> definitions = new LinkedHashMap<>();
+    definitions.put("metadataValue0", scalar);
+    for (int remaining = 1; remaining <= HopMetadataService.MAX_METADATA_DEPTH; remaining++) {
+      Map<String, Object> child = Map.of("$ref", "#/$defs/metadataValue" + (remaining - 1));
+      Map<String, Object> object =
+          Map.of(
+              "type",
+              "object",
+              "additionalProperties",
+              child,
+              "maxProperties",
+              HopMetadataService.MAX_METADATA_FIELDS);
+      Map<String, Object> array =
+          Map.of(
+              "type",
+              "array",
+              "items",
+              child,
+              "maxItems",
+              HopMetadataService.MAX_METADATA_COLLECTION_ITEMS + 1);
+      definitions.put("metadataValue" + remaining, Map.of("anyOf", List.of(scalar, object, array)));
+    }
+    return definitions;
   }
 
   private static Map<String, Object> metadataMapSchema() {
@@ -1850,7 +1868,7 @@ final class HopMcpServer implements AutoCloseable {
         "additionalProperties",
         metadataValueSchema(),
         "maxProperties",
-        HopMetadataService.MAX_METADATA_FIELDS);
+        HopMetadataService.MAX_METADATA_FIELDS + 3);
   }
 
   private static Map<String, Object> metadataTypesOutputSchema() {
@@ -1910,14 +1928,21 @@ final class HopMcpServer implements AutoCloseable {
   }
 
   private static Map<String, Object> metadataGetOutputSchema() {
-    return toolOutputSchema(
-        fields(
-            "type", boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
-            "name",
-                boundedString(HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
-            "metadata", metadataMapSchema(),
-            "redaction_applied", bool("Whether secret-safe projection was applied")),
-        List.of("type", "name", "metadata", "redaction_applied"));
+    Map<String, Object> output =
+        new LinkedHashMap<>(
+            toolOutputSchema(
+                fields(
+                    "type",
+                        boundedString(
+                            HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata type key"),
+                    "name",
+                        boundedString(
+                            HopMetadataService.MAX_METADATA_NAME_LENGTH, "Metadata object name"),
+                    "metadata", metadataMapSchema(),
+                    "redaction_applied", bool("Whether secret-safe projection was applied")),
+                List.of("type", "name", "metadata", "redaction_applied")));
+    output.put("$defs", metadataValueDefinitions());
+    return output;
   }
 
   private static Map<String, Object> metadataDependenciesOutputSchema() {
