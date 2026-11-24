@@ -2,6 +2,8 @@
 
 ## 2.6.0 development candidate
 
+- Use MCP Java SDK 2.2.0 with protocol revision 2025-11-25.
+
 - **MCP Connect** offers **Live Sync** and **Result Only** for native authoring. **MCP Disconnect** turns off the service in the window.
 - **Connect Agent** pairs one agent with a Web window using a two-minute, single-use link. The UUID belongs to the active connection and disappears when the agent disconnects.
 - Unpaired requests receive a single instruction to copy a link. Conflict notices show only the affected file, and Web editor acknowledgements remain scoped to the requesting window.

@@ -14,7 +14,7 @@ Maintain a small, secure, native-Java MCP plugin for Apache Hop. The Marketplace
 
 - Java 21.
 - Apache Hop 2.20.0 is the only Maven compile/runtime target. Do not maintain a Hop 2.19 baseline or a separate snapshot compatibility profile.
-- MCP Java SDK 2.1.0; protocol baseline 2025-11-25.
+- MCP Java SDK 2.2.0; protocol baseline 2025-11-25.
 - `hop mcp` uses STDIO by default. Hop Web 2.3.0 additionally supports an explicitly enabled, session-bound Streamable HTTP endpoint through RAP's existing servlet; agents require no shared filesystem access.
 - Maven coordinate: `io.github.michaaels:hop-mcp-connector`.
 - Product name: `MCP Connector for Apache Hop`.

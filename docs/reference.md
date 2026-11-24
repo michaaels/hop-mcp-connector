@@ -64,7 +64,7 @@ See the [Hop 2.20-only target and verification](hop220-only-2026-11-12.md) for t
 
 - Java 21.
 - Apache Hop 2.20.x is the only supported runtime. Maven builds against 2.20.0 directly; no snapshot compatibility profile is needed.
-- MCP Java SDK 2.1.0; protocol baseline 2025-11-25 over STDIO and the optional Hop Web HTTP transport.
+- MCP Java SDK 2.2.0; protocol baseline 2025-11-25 over STDIO and the optional Hop Web HTTP transport.
 
 Released-version rows record their original targets; the current development target is exclusively Hop 2.20.x.
 
@@ -79,9 +79,9 @@ Released-version rows record their original targets; the current development tar
 | 2.2.4 (tag only; no release) | 2.19.0 target; Windows verification failed | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.5 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.6 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
-| Unreleased | 2.20.x only; compile baseline 2.20.0 | 21 | 2.1.0 | 2025-11-25 |
+| 2.6.0 development candidate | 2.20.x only; compile baseline 2.20.0 | 21 | 2.2.0 | 2025-11-25 |
 
-The MCP Java SDK 2.1.0 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not implemented here. Current development targets Apache Hop 2.20.0 with Java 21. CI is configured to verify the Hop 2.20.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise native STDIO acceptance. Installation through the published Hop Marketplace catalog requires post-release verification.
+The connector uses the SDK interfaces for protocol revision `2025-11-25`. The SDK provides a separate API for revision `2026-07-28`. Current development targets Apache Hop 2.20.0 with Java 21. CI is configured to verify the Hop 2.20.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise native STDIO acceptance. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Recent release history
 
@@ -255,7 +255,7 @@ See the [Hop 2.20.0 coverage audit](hop-2.20-coverage-2026-11-13.md) for the com
 
 For readable generated canvases, finish semantic authoring with `auto_layout`. It arranges pipeline/workflow components from left to right, separates failure branches and reports remaining geometric crossings. Preview existing flows before applying; routing, execution settings and note positions remain unchanged. See [canvas layout](flow-layout.md) for examples, bounds and limitations.
 
-STDIO uses the native SDK 2.1.0 transport, including its concurrent-send correction. The SDK continues to own JSON-RPC encoding, STDIO I/O and session handling. A regression test sends 32 requests without waiting for their responses, mixes successful calls with schema errors, and verifies that the session remains usable. Timeout diagnostics are bounded and captured stdout is redacted before inclusion in test failures.
+STDIO uses the native SDK transport for JSON-RPC encoding, STDIO I/O and session handling. A regression test sends 32 requests without waiting for their responses, mixes successful calls with schema errors, and verifies that the session remains usable. Timeout diagnostics are bounded and captured stdout is redacted before inclusion in test failures.
 
 ```bash
 mvn -B clean verify
