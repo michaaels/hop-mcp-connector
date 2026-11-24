@@ -1,5 +1,7 @@
 # Changelog
 
+- Development 2.6.0. Add Live Sync and Result Only presentation modes, pair Hop Web agents using one-time links issued by the intended window, and revoke each UUID at disconnect. Remove public session discovery and show only the affected file on an edit conflict. Scope Web editor acknowledgements to the originating window.
+
 ## 2.4.0 - 2026-11-15
 
 - Rewrite the README around local MCP, Desktop Live Sync and Web Live Sync, with an illustrative animation, a reduced-motion alternative and short setup examples. Keep detailed documentation in docs/reference.md.

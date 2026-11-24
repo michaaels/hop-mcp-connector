@@ -1,5 +1,7 @@
 # Construcción guiada en el editor nativo de Hop
 
+Desde 2.6.0, abre **MCP Connect** y elige **Live Sync** para seguir la construcción o **Result Only** para abrir el resultado final. Para trabajar desde un agente remoto, sigue la [guía de conexión Web](remote-hop-web.md). El informe siguiente corresponde a la prueba original de noviembre de 2026.
+
 Implementación local de desarrollo, actualizada el 13 de noviembre de 2026. El único objetivo soportado es Hop 2.20.x, compilado contra 2.20.0. Requiere Java 21 y **MCP Live Sync** activado en Hop Desktop o Hop Web/RAP para el mismo proyecto del servidor. El servidor debe tener `--allow-mutation`; esta función no requiere `--allow-execution`.
 
 ## Experiencia

@@ -31,6 +31,10 @@ interface HopSemanticEventSink {
     return false;
   }
 
+  default String presentationDefault() {
+    return "instant";
+  }
+
   /** Returns transport-specific delivery state without exposing UI session identifiers. */
   default Map<String, Object> status(String transactionId) throws IOException {
     return Map.of(

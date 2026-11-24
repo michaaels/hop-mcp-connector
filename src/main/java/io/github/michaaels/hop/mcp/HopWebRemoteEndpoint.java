@@ -4,8 +4,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Semaphore;
 import org.eclipse.rap.rwt.RWT;
 import org.eclipse.rap.rwt.service.ServiceHandler;
@@ -14,8 +14,9 @@ import org.eclipse.rap.rwt.service.ServiceHandler;
 final class HopWebRemoteEndpoint implements ServiceHandler {
   private static final String ATTRIBUTE = HopWebRemoteEndpoint.class.getName();
   private static final int MAX_CONNECTIONS = 8;
-  private final Map<String, HopRemoteMcpConnection> connections = new HashMap<>();
+  private final List<HopRemoteMcpConnection> connections = new ArrayList<>();
   private final Semaphore permits = new Semaphore(8);
+  private final HopWebProjectWork work = new HopWebProjectWork();
 
   static HopWebRemoteEndpoint current() {
     var application = RWT.getApplicationContext();
@@ -32,12 +33,13 @@ final class HopWebRemoteEndpoint implements ServiceHandler {
   }
 
   synchronized void add(HopRemoteMcpConnection connection) {
-    connections.values().removeIf(HopRemoteMcpConnection::isClosed);
+    connections.removeIf(HopRemoteMcpConnection::isClosed);
     if (connections.size() >= MAX_CONNECTIONS) {
       connection.close();
       throw new IllegalStateException("The Hop Web MCP connection limit has been reached");
     }
-    connections.put(connection.id(), connection);
+    connection.registerWork(work);
+    connections.add(connection);
   }
 
   @Override
@@ -79,51 +81,28 @@ final class HopWebRemoteEndpoint implements ServiceHandler {
       response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
       return null;
     }
-    if (ids != null) {
-      var connection = connections.get(ids[0]);
-      if (connection != null && !connection.isClosed()) return connection;
-      response.setStatus(404);
-      return null;
-    }
     if (bound != null) {
+      String sessionId = ids == null ? null : ids[0];
       var connection =
-          connections.values().stream().filter(c -> c.ownsBinding(bound)).findFirst().orElse(null);
-      if (connection != null && !connection.isClosed()) return connection;
+          connections.stream()
+              .filter(c -> c.matchesBinding(bound, sessionId))
+              .findFirst()
+              .orElse(null);
+      if (connection != null) return connection;
       HopRemoteMcpConnection.error(
-          response, 404, "LIVE_SYNC_INACTIVE", "The Live Sync session ended");
+          response, 404, "AGENT_DISCONNECTED", "The agent connection is no longer available");
       return null;
     }
-    var active =
-        connections.values().stream()
-            .filter(connection -> !connection.isClosed())
-            .sorted(java.util.Comparator.comparing(HopRemoteMcpConnection::id))
-            .toList();
-    if (!active.isEmpty()) {
-      active = active.stream().filter(c -> c.trustedRequest(request)).toList();
-      if (active.isEmpty()) {
-        response.setStatus(403);
-        return null;
+    String pairing = request.getHeader(HopWebAgentSession.PAIRING_HEADER);
+    if (ids == null
+        && "POST".equals(request.getMethod())
+        && HopWebAgentSession.isPairingCode(pairing)) {
+      for (var connection : connections) {
+        if (connection.trustedRequest(request) && connection.acceptsPairing(pairing))
+          return connection;
       }
     }
-    if (active.size() == 1) return active.getFirst();
-    response.setStatus(
-        active.isEmpty()
-            ? HttpServletResponse.SC_SERVICE_UNAVAILABLE
-            : HttpServletResponse.SC_CONFLICT);
-    response.setContentType("application/json");
-    response
-        .getWriter()
-        .write(
-            JsonUtil.toJson(
-                Map.of(
-                    "code",
-                    active.isEmpty() ? "LIVE_SYNC_INACTIVE" : "SESSION_SELECTION_REQUIRED",
-                    "sessions",
-                    active.stream().map(HopRemoteMcpConnection::description).toList(),
-                    "error",
-                    active.isEmpty()
-                        ? "Activate MCP Live Sync in Hop Web before connecting the agent"
-                        : "Multiple Hop Web sessions are active; use the connection URL copied from the intended session")));
+    HopRemoteMcpConnection.pairingRequired(response);
     return null;
   }
 }

@@ -158,6 +158,48 @@ class HopCorrectionPlanManagerTest {
     }
   }
 
+  @Test
+  void resultOnlyOpensOnlyTheMainFlowAndAlsoRevealsAnUnchangedMainFlow() throws Exception {
+    var events = new java.util.ArrayList<HopSemanticEventSink.Event>();
+    HopSemanticEventSink sink = events::add;
+    var mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), new Variables(), new MemoryMetadataProvider(), sink);
+    var manager = new HopCorrectionPlanManager(mutator, sink);
+    for (String file : List.of("helper.hwf", "main.hwf")) {
+      var plan = manager.prepare(file, "workflow", workflowOperations(), "result_only", null);
+      assertTrue(events.isEmpty());
+      manager.apply(
+          (String) plan.get("plan_id"),
+          (String) plan.get("plan_sha256"),
+          null,
+          file.equals("main.hwf"));
+      assertTrue(Files.isRegularFile(project.resolve(file)));
+    }
+    assertEquals(
+        List.of("main.hwf"), events.stream().map(HopSemanticEventSink.Event::path).toList());
+    assertEquals("result_ready", events.getFirst().type());
+
+    var unchanged = manager.prepare("main.hwf", "workflow", List.of(), "result_only", null);
+    manager.apply((String) unchanged.get("plan_id"), (String) unchanged.get("plan_sha256"));
+    assertEquals(2, events.size());
+    assertEquals("result_ready", events.getLast().type());
+  }
+
+  @Test
+  void preservesAnExistingFileCreatedAfterThePlanWasPrepared() throws Exception {
+    var manager = manager();
+    var prepared = manager.prepare("race.hwf", "workflow", workflowOperations());
+    var independent = mutator().mutate("race.hwf", "workflow", workflowOperations(), null, true);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            manager.apply((String) prepared.get("plan_id"), (String) prepared.get("plan_sha256")));
+    assertEquals(
+        independent.get("new_sha256"),
+        ProjectFiles.sha256(Files.readAllBytes(project.resolve("race.hwf"))));
+  }
+
   private HopCorrectionPlanManager manager() throws Exception {
     return new HopCorrectionPlanManager(mutator());
   }

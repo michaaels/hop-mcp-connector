@@ -63,6 +63,19 @@ class HopLiveUiEventBrokerTest {
   }
 
   @Test
+  void desktopUsesTheActiveEditorsPresentationPreferenceWithoutUsingWebSessions() throws Exception {
+    var reader = new HopLiveUiEventBroker(projectRoot);
+    var gui = new HopLiveUiEventBroker(projectRoot);
+    try (var web = gui.openSession("web", "guided")) {
+      assertEquals("instant", reader.presentationDefault());
+      try (var desktop = gui.openSession("desktop", "result_only")) {
+        assertEquals("result_only", reader.presentationDefault());
+      }
+      assertEquals("instant", reader.presentationDefault());
+    }
+  }
+
+  @Test
   void keepsControlFilesOutOfProjectTools() throws Exception {
     HopLiveUiEventBroker broker = new HopLiveUiEventBroker(projectRoot);
     try (HopLiveUiEventBroker.LiveSession ignored = broker.openSession("desktop")) {
@@ -134,9 +147,17 @@ class HopLiveUiEventBrokerTest {
     try (var first = broker.openSession("web");
         var second = broker.openSession("web")) {
       var targeted = new HopLiveUiEventBroker(projectRoot, first.id());
-      assertTrue(targeted.publish(semanticEvent("private.hpl")));
+      var privateEvent = semanticEvent("private.hpl");
+      assertTrue(targeted.publish(privateEvent));
       assertEquals(1, broker.eventsSince(0, first.id()).size());
       assertTrue(broker.eventsSince(0, second.id()).isEmpty());
+      var published = broker.eventsSince(0, first.id()).getFirst();
+      broker.acknowledge(first, published, "opened", "First window");
+      var otherTarget = new HopLiveUiEventBroker(projectRoot, second.id());
+      assertEquals(1, targeted.status("").get("acknowledgement_count"));
+      assertEquals(0, otherTarget.status("").get("acknowledgement_count"));
+      assertEquals(
+          0, otherTarget.status(privateEvent.transactionId()).get("acknowledgement_count"));
       var graph = new HopGuidedPresentation.Graph(List.of(), List.of());
       var presentation =
           new HopGuidedPresentation(

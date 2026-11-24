@@ -49,6 +49,7 @@ final class HopDefinitionMutator {
   private final HopComponentAuthoring componentAuthoring;
   private final Consumer<Path> definitionInvalidator;
   private final Map<String, MutationRecord> transactions = new LinkedHashMap<>();
+  private HopWebProjectWork.Session webWork;
 
   HopDefinitionMutator(
       ProjectFiles files, IVariables variables, IHopMetadataProvider metadataProvider) {
@@ -85,6 +86,41 @@ final class HopDefinitionMutator {
       String expectedSha256,
       boolean apply)
       throws Exception {
+    return mutate(relative, requestedKind, operations, expectedSha256, apply, "mutation_applied");
+  }
+
+  void webWork(HopWebProjectWork.Session work) {
+    webWork = work;
+  }
+
+  Path target(String relative) throws IOException {
+    return files.resolveForWrite(relative);
+  }
+
+  synchronized Map<String, Object> mutate(
+      String relative,
+      String requestedKind,
+      List<Map<String, Object>> operations,
+      String expectedSha256,
+      boolean apply,
+      String eventType)
+      throws Exception {
+    Path target = target(relative);
+    try (var work = apply && webWork != null ? webWork.write(target) : null) {
+      return mutateTarget(
+          relative, requestedKind, operations, expectedSha256, apply, eventType, target);
+    }
+  }
+
+  private Map<String, Object> mutateTarget(
+      String relative,
+      String requestedKind,
+      List<Map<String, Object>> operations,
+      String expectedSha256,
+      boolean apply,
+      String eventType,
+      Path target)
+      throws Exception {
     requireRuntime();
     String kind = kind(relative, requestedKind);
     List<Map<String, Object>> requestedOperations =
@@ -93,7 +129,6 @@ final class HopDefinitionMutator {
       throw new IllegalArgumentException("operations cannot exceed " + MAX_OPERATIONS + " entries");
     }
 
-    Path target = files.resolveForWrite(relative);
     boolean existed = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
     byte[] previous = existed ? files.readBytes(target) : new byte[0];
     String oldHash = ProjectFiles.sha256(previous);
@@ -155,18 +190,21 @@ final class HopDefinitionMutator {
       backup = createBackup(transactionId, previous);
     }
 
+    boolean written = false;
     try {
-      boolean atomicReplaceUsed = atomicReplace(target, serialized);
+      boolean atomicReplaceUsed = commit(target, serialized, existed, oldHash);
+      written = true;
       validateFile(kind, target);
       definitionInvalidator.accept(target);
       result.put("atomic_replace_used", atomicReplaceUsed);
     } catch (Exception writeFailure) {
       try {
-        rollbackFailedWrite(target, backup, existed, transactionId, oldHash);
+        if (written) rollbackFailedWrite(target, backup, existed, transactionId, oldHash);
         if (backup != null) deleteBackupDirectory(transactionId);
       } catch (Exception recoveryFailure) {
         writeFailure.addSuppressed(recoveryFailure);
       }
+      if (!written) throw writeFailure;
       throw new IOException(
           "Native validation failed after write; recovery was attempted", writeFailure);
     }
@@ -190,15 +228,16 @@ final class HopDefinitionMutator {
     result.put("expires_at", createdAt.plus(TRANSACTION_TTL).toString());
     result.put(
         "semantic_event_published",
-        publishEvent(
-            new HopSemanticEventSink.Event(
-                "mutation_applied",
-                relative.replace('\\', '/'),
-                kind,
-                transactionId,
-                oldHash,
-                newHash,
-                changes)));
+        eventType != null
+            && publishEvent(
+                new HopSemanticEventSink.Event(
+                    eventType,
+                    relative.replace('\\', '/'),
+                    kind,
+                    transactionId,
+                    oldHash,
+                    newHash,
+                    changes)));
     return result;
   }
 
@@ -212,6 +251,14 @@ final class HopDefinitionMutator {
     if (record == null || record.rolledBack) {
       throw new IllegalArgumentException("Unknown or already rolled back mutation transaction");
     }
+    try (var work = webWork == null ? null : webWork.write(target(record.relative))) {
+      return rollbackTarget(record, expectedSha256);
+    }
+  }
+
+  private Map<String, Object> rollbackTarget(MutationRecord record, String expectedSha256)
+      throws Exception {
+    String transactionId = record.id;
     if (!Files.isRegularFile(record.target, LinkOption.NOFOLLOW_LINKS)
         || Files.isSymbolicLink(record.target)) {
       throw new IOException("Mutated definition is missing or no longer a regular file");
@@ -236,7 +283,7 @@ final class HopDefinitionMutator {
       if (!record.oldHash.equals(ProjectFiles.sha256(original))) {
         throw new IOException("Mutation backup integrity check failed");
       }
-      atomicReplaceUsed = atomicReplace(record.target, original);
+      atomicReplaceUsed = commit(record.target, original, true, currentHash);
       try {
         validateFile(record.kind, record.target);
         definitionInvalidator.accept(record.target);
@@ -251,6 +298,7 @@ final class HopDefinitionMutator {
         throw rollbackFailure;
       }
     } else {
+      requireCurrentSnapshot(record.target, currentHash);
       Files.delete(record.target);
       definitionInvalidator.accept(record.target);
     }
@@ -378,14 +426,43 @@ final class HopDefinitionMutator {
   }
 
   private static boolean atomicReplace(Path target, byte[] content) throws IOException {
+    return commit(target, content, true, null);
+  }
+
+  private static boolean commit(Path target, byte[] content, boolean existed, String previousSha)
+      throws IOException {
     Path temporary =
         Files.createTempFile(target.getParent(), "." + target.getFileName() + ".mcp-", ".tmp");
     try {
       Files.write(temporary, content, StandardOpenOption.TRUNCATE_EXISTING);
-      boolean atomicMoveUsed = move(temporary, target);
-      return atomicMoveUsed;
+      if (!existed) {
+        try {
+          Files.move(temporary, target);
+        } catch (FileAlreadyExistsException conflict) {
+          throw McpException.conflict(
+              "DEFINITION_ALREADY_EXISTS", "A definition already exists at the target.");
+        }
+        return false;
+      }
+      if (previousSha != null) requireCurrentSnapshot(target, previousSha);
+      return move(temporary, target);
     } finally {
       Files.deleteIfExists(temporary);
+    }
+  }
+
+  private static void requireCurrentSnapshot(Path target, String expected) throws IOException {
+    if (!expected.equals(ProjectFiles.sha256(readSnapshot(target))))
+      throw McpException.precondition(
+          "STALE_SHA256", "Definition changed before saving. Refresh it and retry.", true);
+  }
+
+  private static byte[] readSnapshot(Path target) throws IOException {
+    try (var input = Files.newInputStream(target, LinkOption.NOFOLLOW_LINKS)) {
+      return input.readNBytes((int) ProjectFiles.MAX_READ_BYTES + 1);
+    } catch (java.nio.file.NoSuchFileException missing) {
+      throw McpException.precondition(
+          "STALE_SHA256", "Definition disappeared before saving.", true);
     }
   }
 

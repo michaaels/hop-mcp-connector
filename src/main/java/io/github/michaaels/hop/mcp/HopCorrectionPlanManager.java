@@ -22,6 +22,7 @@ final class HopCorrectionPlanManager {
   private final HopDefinitionMutator mutator;
   private final HopSemanticEventSink eventSink;
   private final LinkedHashMap<String, Plan> plans = new LinkedHashMap<>();
+  private HopWebProjectWork.Session webWork;
 
   HopCorrectionPlanManager(HopDefinitionMutator mutator) {
     this(mutator, HopSemanticEventSink.NONE);
@@ -30,6 +31,10 @@ final class HopCorrectionPlanManager {
   HopCorrectionPlanManager(HopDefinitionMutator mutator, HopSemanticEventSink eventSink) {
     this.mutator = mutator;
     this.eventSink = eventSink;
+  }
+
+  void webWork(HopWebProjectWork.Session work) {
+    webWork = work;
   }
 
   synchronized Map<String, Object> prepare(
@@ -46,6 +51,27 @@ final class HopCorrectionPlanManager {
       throws Exception {
     expirePlans();
     Plan previous = previousPlanId == null ? null : requirePlan(previousPlanId);
+    if (previous != null) previous.requireCurrentAgent();
+    Instant createdAt = Instant.now();
+    var claim =
+        webWork == null ? null : webWork.prepare(mutator.target(path), createdAt.plus(PLAN_TTL));
+    try {
+      return prepareRevision(path, kind, operations, presentation, previous, createdAt, claim);
+    } catch (Exception failure) {
+      if (claim != null) claim.close();
+      throw failure;
+    }
+  }
+
+  private Map<String, Object> prepareRevision(
+      String path,
+      String kind,
+      List<Map<String, Object>> operations,
+      String presentation,
+      Plan previous,
+      Instant createdAt,
+      HopWebProjectWork.Claim claim)
+      throws Exception {
     List<Map<String, Object>> combined = new ArrayList<>();
     if (previous != null) {
       previous.requirePrepared();
@@ -72,7 +98,6 @@ final class HopCorrectionPlanManager {
           "STALE_DRAFT",
           "The definition changed while preparing the draft; prepare a new plan.",
           false);
-    Instant createdAt = Instant.now();
     String planId = UUID.randomUUID().toString();
     String planSha256 =
         digest(normalizedPath, normalizedKind, boundSha256, frozenOperations, createdAt.toString());
@@ -89,6 +114,7 @@ final class HopCorrectionPlanManager {
             createdAt,
             createdAt.plus(PLAN_TTL));
     plan.audit("prepared", "Semantic preview validated");
+    plan.claim = claim;
     plan.viewMode = mode;
     if (mode.equals("guided") || previous != null && previous.presentation != null) {
       var draft =
@@ -113,6 +139,7 @@ final class HopCorrectionPlanManager {
     if (previous != null) {
       previous.state = "superseded";
       previous.audit("superseded", "A newer immutable draft revision was prepared");
+      previous.releaseClaim();
     }
     retain(plan);
     return plan.preparedResult();
@@ -124,9 +151,15 @@ final class HopCorrectionPlanManager {
 
   synchronized Map<String, Object> apply(String planId, String planSha256, String presentation)
       throws Exception {
+    return apply(planId, planSha256, presentation, true);
+  }
+
+  synchronized Map<String, Object> apply(
+      String planId, String planSha256, String presentation, boolean showResult) throws Exception {
     expirePlans();
     Plan plan = requirePlan(planId);
     plan.requirePrepared();
+    plan.requireCurrentAgent();
     String mode = HopGuidedPresentation.mode(presentation == null ? plan.viewMode : presentation);
     String suppliedSha256 = required(planSha256, "plan_sha256").trim().toLowerCase(Locale.ROOT);
     if (!suppliedSha256.matches("[0-9a-f]{64}")) {
@@ -166,16 +199,29 @@ final class HopCorrectionPlanManager {
       }
       plan.viewMode = mode;
       publish(plan, "applying");
+      String event =
+          "result_only".equals(mode) ? (showResult ? "result_ready" : null) : "mutation_applied";
       Map<String, Object> mutation =
           mutator.mutate(
               plan.path,
               plan.kind,
               plan.operations,
               plan.targetExists ? plan.boundSha256 : null,
-              true);
+              true,
+              event);
+      if ("result_ready".equals(event) && !Boolean.TRUE.equals(mutation.get("changed"))) {
+        var sha = String.valueOf(mutation.get("new_sha256"));
+        plan.uiNotified =
+            eventSink.publish(
+                new HopSemanticEventSink.Event(
+                    event, plan.path, plan.kind, plan.planId, sha, sha, List.of()));
+      }
       plan.state = "applied";
       plan.audit("applied", "Correction plan applied through native semantic mutation");
-      plan.uiNotified = publish(plan);
+      plan.uiNotified =
+          publish(plan)
+              || plan.uiNotified
+              || Boolean.TRUE.equals(mutation.get("semantic_event_published"));
       Map<String, Object> result = new LinkedHashMap<>(plan.summary());
       result.put("mutation", mutation);
       return result;
@@ -184,6 +230,8 @@ final class HopCorrectionPlanManager {
       plan.audit("failed", HopXml.redact(String.valueOf(failure.getMessage())));
       plan.uiNotified = publish(plan);
       throw failure;
+    } finally {
+      plan.releaseClaim();
     }
   }
 
@@ -197,7 +245,9 @@ final class HopCorrectionPlanManager {
     Plan plan = requirePlan(planId);
     if (cancel) {
       plan.requirePrepared();
+      plan.requireCurrentAgent();
       plan.state = "cancelled";
+      plan.releaseClaim();
       plan.audit("cancelled", "Draft cancelled before application");
       plan.uiNotified = publish(plan);
     }
@@ -233,14 +283,21 @@ final class HopCorrectionPlanManager {
 
   private void retain(Plan plan) {
     while (plans.size() >= MAX_PLANS) {
-      plans.remove(plans.keySet().iterator().next());
+      plans.remove(plans.keySet().iterator().next()).releaseClaim();
     }
     plans.put(plan.planId, plan);
   }
 
   private void expirePlans() {
     Instant now = Instant.now();
-    plans.entrySet().removeIf(entry -> !now.isBefore(entry.getValue().expiresAt));
+    plans
+        .values()
+        .removeIf(
+            plan -> {
+              if (now.isBefore(plan.expiresAt)) return false;
+              plan.releaseClaim();
+              return true;
+            });
   }
 
   private Plan requirePlan(String planId) {
@@ -328,6 +385,16 @@ final class HopCorrectionPlanManager {
   }
 
   private static final class Plan {
+    private HopWebProjectWork.Claim claim;
+
+    private void requireCurrentAgent() throws McpException {
+      if (claim != null) claim.requireCurrentAgent();
+    }
+
+    private void releaseClaim() {
+      if (claim != null) claim.close();
+    }
+
     private final String planId;
     private final String planSha256;
     private final String path;

@@ -161,7 +161,7 @@ final class HopMcpServer implements AutoCloseable {
         a -> service.capabilities());
     add(
         "hop_live_ui_status",
-        "Show active live-UI sessions and recent delivery acknowledgements without exposing session identifiers.",
+        "Show live-UI delivery and other MCP sessions' confirmed work on the same Web project. Check it before authoring.",
         schema(
             Map.of(
                 "transaction_id",
@@ -873,7 +873,7 @@ final class HopMcpServer implements AutoCloseable {
                 "operations",
                 operationsSchema(),
                 "presentation",
-                enumStr("guided", "instant"),
+                enumStr("guided", "instant", "result_only"),
                 "previous_plan_id",
                 boundedString(
                     36,
@@ -896,11 +896,16 @@ final class HopMcpServer implements AutoCloseable {
                 "plan_sha256",
                 boundedString(64, "SHA-256 returned when the plan was prepared"),
                 "presentation",
-                enumStr("guided", "instant")),
+                enumStr("guided", "instant", "result_only"),
+                "show_result",
+                bool("In Result Only, set false for auxiliary flows and true for the main flow")),
             List.of("plan_id", "plan_sha256")),
         a ->
             service.applyCorrectionPlan(
-                s(a, "plan_id"), s(a, "plan_sha256"), sDefault(a, "presentation", null)));
+                s(a, "plan_id"),
+                s(a, "plan_sha256"),
+                sDefault(a, "presentation", null),
+                !Boolean.FALSE.equals(a.get("show_result"))));
     add(
         "hop_correction_plan_status",
         "Inspect a retained correction plan; cancel=true cancels an unapplied draft and prevents its application.",
@@ -1147,7 +1152,9 @@ final class HopMcpServer implements AutoCloseable {
         fields(
             "version", boundedString(64, "Connector version"),
             "project_root", boundedString(4096, "Canonical configured project root"),
+            "project_name", boundedString(200, "Project bound to this Hop Web session"),
             "transport", enumStr("stdio", "streamable_http"),
+            "presentation_default", enumStr("guided", "instant", "result_only"),
             "read_only",
                 bool("Whether mutation, execution, deep checks and web requests are all disabled"),
             "definition_write_enabled", bool("Whether native definition writes are enabled"),
@@ -2796,6 +2803,8 @@ final class HopMcpServer implements AutoCloseable {
             "adapter", enumStr("none", "project_event_bridge"),
             "active_sessions", boundedInteger(0, 100, "Active live-UI sessions"),
             "active_clients", activeClients,
+            "active_file", boundedString(4096, "Open file in the connected Web editor"),
+            "other_edit_in_progress", bool("A different agent is editing within this project"),
             "transaction_id", boundedString(64, "Optional filtered mutation transaction ID"),
             "acknowledgements", arrayOf(acknowledgement, 100),
             "acknowledgement_count", boundedInteger(0, 100, "Acknowledgements returned"),
@@ -3613,7 +3622,7 @@ final class HopMcpServer implements AutoCloseable {
     return schema(
         fields(
             "mode",
-            enumStr("guided", "instant"),
+            enumStr("guided", "instant", "result_only"),
             "async",
             bool("The model need not wait for GUI playback"),
             "ui_notified",

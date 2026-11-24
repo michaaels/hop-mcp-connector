@@ -9,10 +9,15 @@ import java.util.function.LongSupplier;
 /** One revocable agent lease per Web editor. Heartbeats renew presence without signalling work. */
 final class HopWebAgentSession {
   static final Duration TTL = Duration.ofSeconds(45);
+  static final Duration PAIRING_TTL = Duration.ofMinutes(2);
+  static final String PAIRING_HEADER = "Hop-Mcp-Pairing";
+  private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
   private final LongSupplier clock;
   private final Map<String, Work> active = new LinkedHashMap<>();
-  private final java.util.Set<String> revoked = new java.util.LinkedHashSet<>();
+  private byte[] pairing;
+  private long pairingExpires;
   private String binding;
+  private String sessionId;
   private String agent = "No informado", version = "";
   private long contacted, connectedAt, lastActivity, lastDuration, pulseUntil;
 
@@ -24,15 +29,39 @@ final class HopWebAgentSession {
     this.clock = clock;
   }
 
-  synchronized String connect(String name, String reportedVersion) {
+  synchronized String createPairing() {
     expire();
     if (binding != null || !active.isEmpty()) return null;
+    byte[] secret = new byte[32];
+    RANDOM.nextBytes(secret);
+    pairing = secret;
+    pairingExpires = clock.getAsLong() + PAIRING_TTL.toMillis();
+    return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+  }
+
+  static boolean isPairingCode(String code) {
+    return code != null && code.matches("[A-Za-z0-9_-]{43}");
+  }
+
+  synchronized boolean acceptsPairing(String code) {
+    if (pairing != null && clock.getAsLong() >= pairingExpires) pairing = null;
+    return pairing != null
+        && isPairingCode(code)
+        && java.security.MessageDigest.isEqual(
+            pairing, java.util.Base64.getUrlDecoder().decode(code));
+  }
+
+  synchronized Lease connect(String code, String name, String reportedVersion) {
+    expire();
+    if (binding != null || !active.isEmpty() || !acceptsPairing(code)) return null;
+    pairing = null;
     binding = UUID.randomUUID().toString();
+    sessionId = UUID.randomUUID().toString();
     agent = label(name, "No informado");
     version = label(reportedVersion, "");
     contacted = connectedAt = clock.getAsLong();
     lastActivity = lastDuration = pulseUntil = 0;
-    return binding;
+    return new Lease(binding, sessionId);
   }
 
   synchronized boolean accepts(String id) {
@@ -40,30 +69,41 @@ final class HopWebAgentSession {
     return id != null && id.equals(binding);
   }
 
-  synchronized boolean touch(String id) {
-    if (!accepts(id)) return false;
+  synchronized String currentBinding() {
+    expire();
+    return binding;
+  }
+
+  synchronized String sessionId() {
+    expire();
+    return sessionId == null ? "" : sessionId;
+  }
+
+  synchronized boolean matches(String id, String selectedSession) {
+    return accepts(id) && (selectedSession == null || selectedSession.equals(sessionId));
+  }
+
+  synchronized Lease touch(String id, String selectedSession) {
+    if (!matches(id, selectedSession)) return null;
     contacted = clock.getAsLong();
-    return true;
+    return new Lease(binding, sessionId);
   }
 
   synchronized void disconnect() {
-    if (binding != null) revoked.add(binding);
-    while (revoked.size() > 16) revoked.remove(revoked.iterator().next());
+    pairing = null;
     binding = null;
+    sessionId = null;
     pulseUntil = 0;
   }
 
-  synchronized boolean disconnect(String expectedBinding) {
-    if (expectedBinding == null || !expectedBinding.equals(binding)) return false;
+  synchronized boolean disconnect(String expectedBinding, String selectedSession) {
+    if (!matches(expectedBinding, selectedSession)) return false;
     disconnect();
     return true;
   }
 
-  synchronized boolean owns(String id) {
-    return accepts(id) || revoked.contains(id);
-  }
-
   synchronized long connectedSince() {
+    expire();
     return binding == null ? 0 : connectedAt;
   }
 
@@ -132,4 +172,6 @@ final class HopWebAgentSession {
   }
 
   private record Work(String operation, long started) {}
+
+  record Lease(String binding, String sessionId) {}
 }

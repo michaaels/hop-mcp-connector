@@ -20,6 +20,8 @@ Project reads are limited to 4 MiB per file. Scans are bounded to 50,000 visited
 
 Hop Desktop and Hop Web live synchronization is disabled until a user starts it from the Tools menu. The bridge stores bounded project-local control events under `.hop-mcp/`, protects dirty tabs, and opens no network listener. Subscribed UI sessions trust the same project filesystem.
 
+The Hop Web MCP endpoint uses the existing RAP servlet. A session owner issues a random single-use pairing grant from that editor. Issuing a replacement revokes the previous grant. A grant expires after two minutes and is redeemed during MCP initialization. The public UUID is assigned to the resulting connection and is independent of the revocable credential. Unpaired HTTP requests do not enumerate editors. Conflict responses disclose only the affected file. Pairing proves possession of the copied link. The deployment controls access to Hop Web itself, including any access available through the native UI.
+
 Optional Hop Web access is read-only: only GET and HEAD are accepted. Requests stay under an administrator-configured base URL, redirects are disabled, caller-provided authorization headers are rejected, response reads are limited to 4 MiB, returned bodies to 64 KiB, and sensitive response data is redacted before truncation.
 
 The native deep checker is disabled by default because some plugins may resolve fields or contact configured external systems during checking.

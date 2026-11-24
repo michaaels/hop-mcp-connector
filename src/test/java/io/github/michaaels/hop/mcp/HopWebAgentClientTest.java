@@ -7,6 +7,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -24,8 +25,7 @@ class HopWebAgentClientTest {
   }
 
   @Test
-  void offersProjectAndOpenFileChoicesAndDoesNotSelectAnEditorUntilTheUserChooses()
-      throws Exception {
+  void acceptsOnlyTheCopiedLinkAndReportsOnlyTheConnectedEditorsOpenFile() throws Exception {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var client = new HopWebAgentClient(null)) {
       var service =
@@ -41,23 +41,104 @@ class HopWebAgentClientTest {
               new HopLiveUiEventBroker(root));
       try (var other = HopRemoteMcpConnection.open(service, fixture.uri.resolve("/mcp"))) {
         fixture.registry.add(other);
-        fixture.connection.editor("Proyecto A", "primero.hpl");
-        other.editor("Proyecto B", "segundo.hwf");
+        fixture.connection.editorFile("primero.hpl");
+        other.editorFile("segundo.hwf");
         var choices = client.connect(fixture.uri.resolve("/mcp").toString());
-        assertEquals("ambiguous", choices.get("state"));
-        var sessions = (java.util.List<?>) choices.get("sessions");
-        assertEquals(2, sessions.size());
-        assertTrue(JsonUtil.toJson(sessions).contains("primero.hpl"));
-        assertTrue(JsonUtil.toJson(sessions).contains("segundo.hwf"));
+        assertEquals("pairing_required", choices.get("state"));
+        assertFalse(choices.containsKey("sessions"));
         assertFalse(fixture.connection.activity().connected());
         assertFalse(other.activity().connected());
         client.agentInfo(new io.modelcontextprotocol.spec.McpSchema.Implementation("Codex", "1"));
-        var chosen = client.connect(fixture.uri.resolve("/mcp").toString(), other.id());
+        var chosen = client.connect(other.createPairingLink());
         assertEquals(true, chosen.get("connected"), () -> JsonUtil.toJson(chosen));
         assertTrue(other.activity().connected());
         assertEquals("Codex", other.activity().agent());
         assertFalse(fixture.connection.activity().connected());
         assertEquals(true, client.status().get("connected"));
+        var live = (Map<?, ?>) client.call("hop_live_ui_status", Map.of()).structuredContent();
+        assertEquals("segundo.hwf", live.get("active_file"));
+        assertFalse(JsonUtil.toJson(live).contains("primero.hpl"));
+      }
+    }
+  }
+
+  @Test
+  void browserLinksBindTwoEditorsAndOnlyTheOwnerCanApplyAReservedDefinition() throws Exception {
+    String path = "shared.hwf";
+    try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
+        var first = new HopWebAgentClient(null);
+        var second = new HopWebAgentClient(null)) {
+      var service =
+          new HopMcpService(
+              new ProjectFiles(root),
+              new org.apache.hop.core.variables.Variables(),
+              new org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider(),
+              false,
+              false,
+              true,
+              false,
+              null,
+              new HopLiveUiEventBroker(root));
+      service.webPresentation("result_only", "TEST_PROJECT");
+      try (var other = HopRemoteMcpConnection.open(service, fixture.uri.resolve("/mcp"))) {
+        fixture.registry.add(other);
+        assertEquals(true, first.connect(fixture.connection.createPairingLink()).get("connected"));
+        var connected = second.connect(other.createPairingLink());
+        assertEquals(other.id(), connected.get("session_id"));
+        assertEquals(
+            fixture.uri.resolve("/mcp") + "?session=" + other.id(), connected.get("ui_url"));
+        assertEquals("result_only", connected.get("presentation_default"));
+        assertEquals("TEST_PROJECT", connected.get("project_name"));
+        var before = second.call("hop_live_ui_status", Map.of());
+        assertFalse(before.isError(), before.toString());
+        assertEquals(false, ((Map<?, ?>) before.structuredContent()).get("other_edit_in_progress"));
+        assertFalse(((Map<?, ?>) before.structuredContent()).containsKey("active_sessions"));
+
+        var prepared =
+            first.call(
+                "hop_prepare_correction_plan", Map.of("path", path, "operations", List.of()));
+        assertFalse(prepared.isError(), prepared.toString());
+        var during = second.call("hop_live_ui_status", Map.of());
+        assertFalse(during.isError(), during.toString());
+        assertEquals(true, ((Map<?, ?>) during.structuredContent()).get("other_edit_in_progress"));
+        assertFalse(JsonUtil.toJson(during.structuredContent()).contains(path));
+        var rejected =
+            second.call(
+                "hop_prepare_correction_plan", Map.of("path", path, "operations", List.of()));
+        assertTrue(rejected.isError(), rejected.toString());
+        assertTrue(JsonUtil.toJson(rejected.structuredContent()).contains("DEFINITION_IN_USE"));
+        String conflict = JsonUtil.toJson(rejected.structuredContent());
+        assertTrue(conflict.contains(path));
+        assertFalse(conflict.contains(fixture.connection.id().substring(0, 8)));
+        assertEquals(new HopWebProjectWork.ConflictNotice(path), other.takeConflict());
+        assertNull(fixture.connection.takeConflict());
+        assertTrue(
+            second
+                .call("hop_prepare_correction_plan", Map.of("path", path, "operations", List.of()))
+                .isError());
+        assertNull(other.takeConflict(), "Retries do not reopen the same conflict alert");
+        var otherPath =
+            second.call(
+                "hop_prepare_correction_plan",
+                Map.of("path", "other.hwf", "operations", List.of()));
+        assertFalse(otherPath.isError(), otherPath.toString());
+
+        fixture.connection.disconnectAgent();
+        var replacement =
+            second.call(
+                "hop_prepare_correction_plan", Map.of("path", path, "operations", List.of()));
+        assertFalse(replacement.isError(), replacement.toString());
+        assertEquals(true, first.connect(fixture.connection.createPairingLink()).get("connected"));
+        var stale =
+            first.call(
+                "hop_apply_correction_plan",
+                Map.of(
+                    "plan_id",
+                    ((Map<?, ?>) prepared.structuredContent()).get("plan_id"),
+                    "plan_sha256",
+                    ((Map<?, ?>) prepared.structuredContent()).get("plan_sha256")));
+        assertTrue(stale.isError(), stale.toString());
+        assertTrue(JsonUtil.toJson(stale.structuredContent()).contains("STALE_AGENT_PLAN"));
       }
     }
   }
@@ -66,7 +147,7 @@ class HopWebAgentClientTest {
   void iconDisconnectRevokesTheOldBindingButTheSameEditorCanReconnect() throws Exception {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var client = new HopWebAgentClient(null)) {
-      String url = fixture.uri.resolve("/mcp").toString();
+      String url = fixture.connection.createPairingLink();
       assertEquals(true, client.connect(url).get("connected"));
       String editor = (String) client.status().get("session_id");
       client.call("hop_config", Map.of());
@@ -76,10 +157,14 @@ class HopWebAgentClientTest {
       assertFalse(fixture.connection.activity().working());
       assertEquals(activity, fixture.connection.activity().lastActivityMillis());
       fixture.connection.disconnectAgent();
+      assertEquals("", fixture.connection.id());
       assertFalse(fixture.connection.isClosed());
       assertEquals("disconnected", client.status().get("state"));
       assertThrows(IllegalStateException.class, () -> client.call("hop_catalog", Map.of()));
-      assertEquals(true, client.connect(url, editor).get("connected"));
+      assertEquals("pairing_required", client.connect(url).get("state"));
+      var replacement = client.connect(fixture.connection.createPairingLink());
+      assertEquals(true, replacement.get("connected"));
+      assertNotEquals(editor, replacement.get("session_id"));
       assertTrue(fixture.connection.activity().connected());
     }
   }
@@ -89,22 +174,24 @@ class HopWebAgentClientTest {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var first = new HopWebAgentClient(null);
         var second = new HopWebAgentClient(null)) {
-      String url = fixture.uri.resolve("/mcp").toString();
+      String url = fixture.connection.createPairingLink();
       assertEquals(true, first.connect(url).get("connected"));
-      assertEquals("busy", second.connect(url).get("state"));
+      assertEquals("pairing_required", second.connect(url).get("state"));
+      assertEquals(
+          "pairing_required", second.connect((String) first.status().get("ui_url")).get("state"));
       assertEquals(true, first.status().get("connected"));
       first.close();
       assertFalse(fixture.connection.activity().connected());
       assertFalse(fixture.connection.isClosed());
-      assertEquals(true, second.connect(url).get("connected"));
+      assertEquals(true, second.connect(fixture.connection.createPairingLink()).get("connected"));
     }
   }
 
   @Test
-  void userSuppliesOnlyTheWebUrlAndDiscoversNativeToolsWithoutLocalProjectSetup() throws Exception {
+  void discoversNativeToolsWithoutLocalProjectSetup() throws Exception {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var client = new HopWebAgentClient(null)) {
-      var connected = client.connect(fixture.uri.resolve("/mcp").toString());
+      var connected = client.connect(fixture.connection.createPairingLink());
       assertEquals(true, connected.get("connected"));
       assertEquals(root.toRealPath().toString(), connected.get("project_root"));
       assertEquals(true, connected.get("allow_mutation"));
@@ -128,17 +215,16 @@ class HopWebAgentClientTest {
   }
 
   @Test
-  void inactiveLiveSyncIsReportedWithoutFallingBackToLocalFiles() throws Exception {
+  void stoppedEditorIsReportedWithoutFallingBackToLocalFiles() throws Exception {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var client = new HopWebAgentClient(null)) {
-      assertEquals(true, client.connect(fixture.uri.toString()).get("connected"));
+      assertEquals(true, client.connect(fixture.connection.createPairingLink()).get("connected"));
       fixture.connection.close();
-      assertEquals("inactive", client.status().get("state"));
+      assertEquals("disconnected", client.status().get("state"));
       assertThrows(IllegalStateException.class, () -> client.call("hop_catalog", Map.of()));
       var inactive = client.connect(fixture.uri.toString());
       assertEquals(false, inactive.get("connected"));
-      assertEquals("inactive", inactive.get("state"));
-      assertTrue(String.valueOf(inactive.get("message")).contains("no está activo"));
+      assertEquals("pairing_required", inactive.get("state"));
     }
   }
 
@@ -146,7 +232,7 @@ class HopWebAgentClientTest {
   void remoteNativeValidationErrorsDoNotCorruptTheConnection() throws Exception {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var client = new HopWebAgentClient(null)) {
-      client.connect(fixture.uri.toString());
+      client.connect(fixture.connection.createPairingLink());
       var rejected = client.call("hop_read_text", Map.of("path", "../outside.hpl"));
       assertTrue(rejected.isError());
       assertEquals(true, client.status().get("connected"));
@@ -186,8 +272,8 @@ class HopWebAgentClientTest {
     http.start();
     try (var client = new HopWebAgentClient(null)) {
       String base = "http://127.0.0.1:" + http.getAddress().getPort();
-      assertEquals(false, client.connect(base + "/large").get("connected"));
-      assertEquals(false, client.connect(base + "/redirect").get("connected"));
+      assertEquals(false, client.connect(base + "/large" + TEST_PAIRING).get("connected"));
+      assertEquals(false, client.connect(base + "/redirect" + TEST_PAIRING).get("connected"));
       assertEquals(0, followed.get());
     } finally {
       http.stop(0);
@@ -219,7 +305,8 @@ class HopWebAgentClientTest {
           Duration.ofSeconds(2),
           () -> {
             var result =
-                client.connect("http://127.0.0.1:" + http.getAddress().getPort() + "/slow");
+                client.connect(
+                    "http://127.0.0.1:" + http.getAddress().getPort() + "/slow" + TEST_PAIRING);
             assertEquals(false, result.get("connected"));
           });
     } finally {
@@ -241,4 +328,6 @@ class HopWebAgentClientTest {
       assertThrows(IllegalArgumentException.class, () -> HopWebAgentClient.endpoint(url));
     }
   }
+
+  private static final String TEST_PAIRING = "#pair=" + "a".repeat(43);
 }

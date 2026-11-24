@@ -1,20 +1,16 @@
 # Sesiones y agentes de Hop Web
 
-Desarrollo 2.4.0, exclusivamente Hop 2.20.x y Java 21. El agente usa el perfil `--remote-ui` y la URL normal de Hop Web; no necesita la carpeta compartida del proyecto.
+Para Hop 2.20.x con Java 21, el perfil `--remote-ui` se empareja con una sola ventana a la vez.
 
-1. Activar **Herramientas → MCP Live Sync** en la ventana deseada. El icono gris indica disponibilidad. El diálogo muestra un identificador corto de esa sesión.
-2. Llamar `hop_web_connect` con `url`. Si solo hay una sesión disponible, se conecta a ella.
-3. Si hay varias, la respuesta `state: ambiguous` contiene hasta ocho candidatos con `session_id`, proyecto, archivo activo y agente conectado. El agente debe presentar las opciones y preguntar al usuario cuál desea usar; nunca debe adivinar.
-4. Llamar de nuevo con la misma `url` y el `session_id` elegido. El icono de esa ventana queda negro. Una sesión ocupada informa `SESSION_BUSY`; no se sustituye al agente conectado.
+1. En Hop Web, selecciona el proyecto y activa **MCP Connect** con **Live Sync** o **Result Only**. El icono gris indica que puedes emparejar un agente con esa ventana.
+2. Abre el icono y pulsa **Connect Agent**. Pasa al agente el enlace copiado. Vence a los dos minutos y admite un solo uso. Volver a pulsar **Connect Agent** invalida el enlace anterior.
+3. El icono pasa a negro al establecerse la conexión. El UUID aparece en la URL, en el tooltip y en el panel. Conserva el mismo valor al abrir otra definición o cambiar el proyecto visible.
+4. **Disconnect Agent** revoca la credencial y retira el UUID. El icono vuelve a gris y el panel vuelve a ofrecer **Connect Agent**. La próxima conexión genera otro UUID. En el menú, **MCP Disconnect** apaga el servicio de la ventana.
 
-El archivo es una ruta relativa al proyecto vinculado al activar el servicio. Puede estar vacío si no hay un editor de archivo activo. Los borradores internos no se publican como archivos del usuario. El identificador corto ayuda a distinguir ventanas con el mismo proyecto y archivo. Cambiar el proyecto visible no reasigna silenciosamente el proyecto del servicio: apagar y activar Live Sync para cambiar su vínculo.
+La URL general y la URL del navegador con el UUID muestran la misma instrucción de emparejamiento. Para cambiar el proyecto autorizado, apagar y volver a activar el MCP en el nuevo proyecto. La ventana se elige al copiar su enlace.
 
-El identificador estable de la ventana y el vínculo revocable del agente son distintos. Clic en el icono revoca solo el vínculo y vuelve a gris; el servicio sigue aceptando una conexión explícita nueva. El vínculo anterior no puede volver a usar herramientas. El menú vuelve a apagar el servicio entero. Cerrar el agente libera su vínculo cuando el cliente puede enviar el cierre.
+El cliente renueva presencia cada diez segundos. La conexión vence después de 45 segundos de inactividad sin renovación. Si el agente se desconecta durante una escritura admitida, la ventana conserva la reserva hasta que termine la operación. El agente que se conecte después debe volver a preparar sus propios planes.
 
-El cliente ligero renueva presencia cada 10 segundos, sin pulsar el icono. La concesión vence tras 45 segundos sin renovación; la siguiente consulta del estado actualiza esa situación. Las operaciones activas admitidas antes de la desconexión terminan conforme al ciclo de vida existente; no se acepta otro agente hasta que finalicen. Las peticiones pendientes de despacho comprueban nuevamente su vínculo antes de invocar herramientas. No se promete cancelar una escritura nativa ya iniciada.
+Las ventanas de una misma instancia de Hop Web comparten los archivos del servidor. El campo `other_edit_in_progress` indica si otro agente tiene una reserva en el proyecto. Cuando dos agentes intentan editar el mismo archivo, el chat y la ventana que quedó bloqueada muestran la ruta relativa afectada. El estado Web ofrece `active_file` de la propia ventana y su enlace de conexión nunca forma parte de las respuestas MCP.
 
-Los eventos MCP y las presentaciones guiadas Web se dirigen al identificador de su ventana. Dos sesiones que apuntan al mismo proyecto **siguen compartiendo los mismos archivos del servidor**; la separación de presentaciones no crea copias ni aislamiento de datos. Los eventos locales antiguos sin destinatario conservan su comportamiento previo.
-
-El tooltip muestra agente/versión, operación, tiempo y última actividad. La identidad procede de `initialize.params.clientInfo` del cliente MCP y puede faltar: no acredita identidad ni sustituye los controles del sitio. El perfil ligero la transmite al servicio. Las decisiones de acceso siguen dependiendo del despliegue Web, HTTPS y validaciones de origen/host.
-
-Se mantienen cuatro herramientas ligeras: `hop_web_connect`, `hop_web_status`, `hop_web_tools` y `hop_web_call`. El catálogo nativo se descubre por páginas. Las escrituras conservan preview, planes con SHA-256, backups protegidos, recarga nativa y rollback. Esta conexión no habilita ejecución ETL, comprobaciones profundas ni proxy Web.
+El tooltip muestra agente, versión, operación, tiempo y última actividad. El nombre viene declarado por el cliente MCP y sirve como etiqueta. El enlace de un solo uso demuestra que quien se empareja dispone de la autorización copiada desde la ventana. Los controles de acceso a la interfaz de Hop Web los define el sitio.

@@ -47,6 +47,7 @@ abstract class HopLiveUiSync implements AutoCloseable {
   private HopLiveIndicator indicator;
   private long uiActivityUntil;
   private volatile long acceptSince;
+  private String presentationMode = HopMcpSessionDialog.LIVE;
 
   HopLiveUiSync(HopGui hopGui, Path projectRoot, String clientType, Runnable closedCallback)
       throws IOException {
@@ -79,10 +80,12 @@ abstract class HopLiveUiSync implements AutoCloseable {
 
     boolean started = false;
     try {
-      session = broker.openSession(clientType);
+      session = broker.openSession(clientType, presentationMode);
       startUiDispatch();
       uiDispatchStarted = true;
-      indicator = new HopLiveIndicator(hopGui, this::indicatorActivity, this::disconnectAgent);
+      indicator =
+          new HopLiveIndicator(
+              hopGui, this::indicatorActivity, this::indicatorSessionId, this::showSessionDetails);
       scheduler.scheduleWithFixedDelay(
           this::pollSafely, 0L, EVENT_POLL_MILLISECONDS, TimeUnit.MILLISECONDS);
       scheduler.scheduleWithFixedDelay(
@@ -120,6 +123,21 @@ abstract class HopLiveUiSync implements AutoCloseable {
     return clientType;
   }
 
+  void presentationMode(String mode) {
+    presentationMode = mode;
+  }
+
+  String presentationMode() {
+    return presentationMode;
+  }
+
+  void showSessionDetails() {
+    var box = new org.eclipse.swt.widgets.MessageBox(hopGui.getShell(), org.eclipse.swt.SWT.OK);
+    box.setText("MCP");
+    box.setMessage(HopLiveIndicator.describe(indicatorActivity()) + "\n\n" + projectRoot);
+    box.open();
+  }
+
   /** Starts platform-specific support while still on the owning UI session thread. */
   protected void startUiDispatch() {}
 
@@ -145,8 +163,8 @@ abstract class HopLiveUiSync implements AutoCloseable {
     return HopAgentActivity.disconnected();
   }
 
-  protected void disconnectAgent() {
-    closeQuietly();
+  protected String indicatorSessionId() {
+    return "";
   }
 
   protected boolean receiveAgentEvents() {
@@ -178,11 +196,12 @@ abstract class HopLiveUiSync implements AutoCloseable {
     try {
       var current = session;
       if (current == null) return;
-      long since = Math.max(acceptSince, eventEpoch());
-      pollPresentations(since, current.id());
+      long epoch = eventEpoch();
+      long since = Math.max(acceptSince, epoch);
+      pollPresentations(since, current.id(), epoch);
       for (HopLiveUiEventBroker.LiveEvent event : broker.eventsSince(since, current.id())) {
         if (remember(event.eventId())) {
-          dispatch(event);
+          dispatch(event, epoch);
         }
       }
     } catch (Exception e) {
@@ -190,7 +209,7 @@ abstract class HopLiveUiSync implements AutoCloseable {
     }
   }
 
-  private void pollPresentations(long since, String receiver) throws IOException {
+  private void pollPresentations(long since, String receiver, long epoch) throws IOException {
     for (var presentation : broker.presentationsSince(since, receiver)) {
       String key =
           "visual:"
@@ -215,8 +234,7 @@ abstract class HopLiveUiSync implements AutoCloseable {
             .getDisplay()
             .asyncExec(
                 () -> {
-                  if (!closed.get() && receiveAgentEvents() && !hopGui.getShell().isDisposed())
-                    showPresentation(presentation, draft);
+                  if (canPresent(epoch)) showPresentation(presentation, draft);
                 });
       }
     }
@@ -240,14 +258,21 @@ abstract class HopLiveUiSync implements AutoCloseable {
     return seenEventIds.add(eventId);
   }
 
-  private void dispatch(HopLiveUiEventBroker.LiveEvent event) {
+  private boolean canPresent(long epoch) {
+    return !closed.get()
+        && receiveAgentEvents()
+        && eventEpoch() == epoch
+        && !hopGui.getShell().isDisposed();
+  }
+
+  private void dispatch(HopLiveUiEventBroker.LiveEvent event, long epoch) {
     Display display = hopGui.getShell().getDisplay();
     if (display == null || display.isDisposed()) {
       return;
     }
     display.asyncExec(
         () -> {
-          if (!closed.get() && receiveAgentEvents() && !hopGui.getShell().isDisposed()) {
+          if (canPresent(epoch)) {
             applyToUi(event);
           }
         });
@@ -265,9 +290,15 @@ abstract class HopLiveUiSync implements AutoCloseable {
       Path definition = resolveDefinition(event.path());
       ExplorerPerspective perspective = ExplorerPerspective.getInstance();
       IHopFileTypeHandler handler = findOpenHandler(perspective, definition);
+      boolean finalResult = "result_ready".equals(event.type());
 
       if (handler != null && handler.hasChanged()) {
         acknowledge(event, "skipped_dirty", "The open tab has unsaved changes");
+        return;
+      }
+      var active = perspective.getActiveFileTypeHandler();
+      if (finalResult && active != null && active.hasChanged()) {
+        acknowledge(event, "skipped_dirty", "The active tab has unsaved changes");
         return;
       }
 
@@ -283,6 +314,7 @@ abstract class HopLiveUiSync implements AutoCloseable {
 
       if (handler != null) {
         handler.reload();
+        if (finalResult) perspective.setActiveFileTypeHandler(handler);
         acknowledge(event, "reloaded", "The open definition was reloaded from disk");
         return;
       }
@@ -312,6 +344,13 @@ abstract class HopLiveUiSync implements AutoCloseable {
   private void showNativePresentation(HopGuidedPresentation presentation, HopNativeDraft draft)
       throws Exception {
     HopGuidedView view = guidedViews.get(presentation.id());
+    if ("result_only".equals(presentation.mode())) {
+      if (view != null) {
+        guidedViews.remove(presentation.id());
+        view.close();
+      }
+      return;
+    }
     if (view == null) {
       if (!presentation.mode().equals("guided")) return;
       while (guidedViews.size() >= 4) {
