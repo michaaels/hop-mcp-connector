@@ -14,10 +14,10 @@ crear pipelines y workflows, y trabajar en el editor que ya conoces.
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/mcp-demo.png">
-  <img src="docs/images/mcp-demo.gif" alt="El asistente envía instrucciones al conector MCP: consulta un proyecto local, construye un flujo en Desktop o edita una sesión Web por URL.">
+  <img src="docs/images/mcp-demo.gif" alt="El asistente consulta un proyecto local, construye un flujo en Desktop y edita un proyecto de Hop Web mediante MCP.">
 </picture>
 
-*Ilustración animada de los tres modos de uso.*
+*Ilustración de los tres modos de uso. En 2.6.0, copia el enlace para el modo Web con **Connect Agent**.*
 [Ver imagen estática](docs/images/mcp-demo.png).
 
 ## Qué puedes hacer
@@ -38,12 +38,13 @@ crear pipelines y workflows, y trabajar en el editor que ya conoces.
 | Modo | Qué te ofrece | Cómo empezar |
 | --- | --- | --- |
 | **MCP normal** | Trabaja sobre un proyecto local desde tu cliente MCP, sin abrir el editor. Consulta por defecto; edición y ejecución opcionales. | `hop mcp --root <proyecto>` |
-| **Live Sync Desktop** | Abre o actualiza los flujos en Hop Desktop y muestra la construcción guiada en su editor nativo. | Activa **Herramientas → MCP Live Sync** y conecta el MCP local al mismo proyecto. Para editar, añade `--allow-mutation`. |
-| **Live Sync Web** | Trabaja en el proyecto de una sesión de Hop Web desde su URL, sin compartir carpetas con el agente. | Activa **MCP Live Sync** en Hop Web y usa el perfil `--remote-ui` o un cliente MCP compatible con HTTPS. |
+| **Live Sync Desktop** | Sigue los cambios en el editor nativo o muestra el flujo terminado. | Abre **MCP Connect** y elige **Live Sync** o **Result Only**. Conecta el MCP local al mismo proyecto y añade `--allow-mutation` para editar. |
+| **Live Sync Web** | Trabaja en el proyecto de tu ventana de Hop Web. | Abre **MCP Connect**, elige el modo de presentación y pulsa **Connect Agent** en el panel del icono MCP. Pasa el enlace copiado al agente `--remote-ui`. |
 
-La conexión Web usa Streamable HTTP sobre HTTPS. Activar Live Sync
-permite consultar y editar el proyecto de esa sesión. La ejecución de ETL y las comprobaciones profundas permanecen
-deshabilitadas. Si hay varias sesiones, el agente solicita cuál utilizar.
+La conexión Web usa Streamable HTTP sobre HTTPS. El enlace autoriza a un
+agente en la ventana que lo generó y vence a los dos minutos. El agente
+puede consultar y editar ese proyecto. El perfil Web mantiene deshabilitadas
+la ejecución de ETL y las comprobaciones profundas.
 
 [Guía de Desktop y construcción guiada](docs/guided-desktop-authoring.md)
 · [Guía de conexión Web](docs/remote-hop-web.md)
@@ -57,7 +58,7 @@ deshabilitadas. Si hay varias sesiones, el agente solicita cuál utilizar.
 
 > Revisa los cambios antes de aplicarlos y ordena el lienzo.
 
-> Conéctate a Hop Web en https://hop.example.org/hop_web/ui.
+> Conéctate a mi ventana de Hop Web con el enlace que copié desde Connect Agent.
 
 Las funciones disponibles dependen de los plugins instalados en Hop,
 las propiedades que exponen y los permisos habilitados.
@@ -66,8 +67,8 @@ las propiedades que exponen y los permisos habilitados.
 
 Necesitas **Apache Hop 2.20.x**, **Java 21** y un cliente compatible con MCP.
 
-1. Descarga `hop-mcp-connector-2.4.0.zip` desde
-   [Releases](https://github.com/michaaels/hop-mcp-connector/releases/latest).
+1. Descarga el ZIP del plugin desde [Releases](https://github.com/michaaels/hop-mcp-connector/releases/latest)
+   o genera `target/hop-mcp-connector-2.6.0.zip` con `mvn -B clean verify`.
 2. Cierra Hop y el proceso MCP. En Web, detén Tomcat antes de sustituir
    el plugin. Extrae el ZIP en la raíz de la instalación de Hop:
    quedará en `plugins/misc/hop-mcp-connector/`.
@@ -110,7 +111,7 @@ consulta; añade `--allow-mutation` a `args` para permitir edición.
 
 Para el agente remoto de Hop Web, registra otro servidor con los argumentos
 `mcp --remote-ui`, sin `--root` ni permisos locales. Instala también el
-plugin en el Hop del servidor Web. Consulta la
+plugin de la misma versión en el Hop del servidor Web. Consulta la
 [guía Web](docs/remote-hop-web.md) para HTTPS y configuración completa.
 
 </details>

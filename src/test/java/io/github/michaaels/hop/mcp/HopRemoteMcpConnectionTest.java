@@ -40,34 +40,42 @@ class HopRemoteMcpConnectionTest {
   }
 
   @Test
-  void urlOnlyConnectionRequiresAnActiveSessionAndRejectsCrossOriginAndGet() throws Exception {
-    try (var fixture = new Fixture(root, false)) {
-      String initialize =
-          request(
-              "initialize",
-              Map.of(
-                  "protocolVersion",
-                  "2025-11-25",
-                  "capabilities",
-                  Map.of(),
-                  "clientInfo",
-                  Map.of("name", "remote-test", "version", "1")));
-      assertEquals(409, fixture.send(initialize, null, null).statusCode());
-      assertEquals(200, fixture.send(initialize, fixture.session, null).statusCode());
+  void publicUrlHasTheSameResponseWithZeroOneOrSeveralSessions() throws Exception {
+    try (var fixture = new Fixture(root, false, false);
+        var other =
+            HopRemoteMcpConnection.open(
+                new HopMcpService(
+                    new ProjectFiles(root), new Variables(), new MemoryMetadataProvider(), false),
+                fixture.uri.resolve("/mcp"))) {
+      String initialize = initialize("paired-client");
+      var onlyOne = fixture.send(initialize, null, null);
+      assertEquals(403, onlyOne.statusCode());
+      assertTrue(onlyOne.body().contains("PAIRING_REQUIRED"));
+      assertFalse(onlyOne.body().contains("sessions"));
+      fixture.registry.add(other);
+      var several = fixture.send(initialize, null, null);
+      assertEquals(onlyOne.statusCode(), several.statusCode());
+      assertEquals(onlyOne.body(), several.body());
+      String link = fixture.connection.createPairingLink();
+      for (String origin : List.of("https://untrusted.example", "null", "https:invalid")) {
+        assertEquals(403, fixture.sendPairing(initialize, link, origin).statusCode());
+      }
+      var accepted = fixture.sendPairing(initialize, link, null);
+      assertEquals(200, accepted.statusCode());
       assertEquals(
-          "url-only-client",
+          "paired-client",
           fixture.connection.activity().agent(),
           "Direct MCP clients are identified from standard initialize.clientInfo");
       assertEquals(404, fixture.send(initialize, "unknown-session", null).statusCode());
-      for (String origin : List.of("https://untrusted.example", "null", "https:invalid")) {
-        assertEquals(403, fixture.send(initialize, fixture.session, origin).statusCode());
-      }
+      assertEquals(403, fixture.sendPairing(initialize, link, null).statusCode());
       var get = HttpRequest.newBuilder(fixture.uri).timeout(Duration.ofSeconds(5)).GET().build();
       assertEquals(
           405, fixture.client.send(get, HttpResponse.BodyHandlers.ofString()).statusCode());
       fixture.connection.close();
-      assertEquals(404, fixture.send(initialize, fixture.session, null).statusCode());
-      assertEquals(503, fixture.send(initialize, null, null).statusCode());
+      other.close();
+      var none = fixture.send(initialize, null, null);
+      assertEquals(onlyOne.statusCode(), none.statusCode());
+      assertEquals(onlyOne.body(), none.body());
     }
   }
 
@@ -173,7 +181,8 @@ class HopRemoteMcpConnectionTest {
   }
 
   @Test
-  void multipleActiveSessionsRequireExplicitSelectionAndKeepExistingCallsBound() throws Exception {
+  void multipleActiveSessionsRequireTheirOwnPairingLinkAndKeepExistingCallsBound()
+      throws Exception {
     Path otherRoot = Files.createDirectory(root.resolve("other-project"));
     try (var fixture = new Fixture(root, false)) {
       var service =
@@ -183,25 +192,8 @@ class HopRemoteMcpConnectionTest {
         fixture.registry.add(other);
         String configRequest =
             request("tools/call", Map.of("name", "hop_config", "arguments", Map.of()));
-        assertEquals(409, fixture.send(configRequest, null, null).statusCode());
-        var selected =
-            fixture.client.send(
-                HttpRequest.newBuilder(URI.create(other.sessionEndpoint()))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json, text/event-stream")
-                    .POST(
-                        HttpRequest.BodyPublishers.ofString(
-                            request(
-                                "initialize",
-                                Map.of(
-                                    "protocolVersion",
-                                    "2025-11-25",
-                                    "capabilities",
-                                    Map.of(),
-                                    "clientInfo",
-                                    Map.of("name", "selected", "version", "1")))))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+        assertEquals(403, fixture.send(configRequest, null, null).statusCode());
+        var selected = fixture.sendPairing(initialize("selected"), other.createPairingLink(), null);
         assertEquals(200, selected.statusCode());
         String binding = selected.headers().firstValue("mcp-session-id").orElseThrow();
         var response = fixture.send(configRequest, binding, null);
@@ -211,6 +203,35 @@ class HopRemoteMcpConnectionTest {
         assertEquals(otherRoot.toRealPath().toString(), config.get("project_root"));
         assertEquals(
             root.toRealPath().toString(), fixture.call("hop_config", Map.of()).get("project_root"));
+        var otherEndpoint = URI.create(fixture.uri + "&session=" + other.id());
+        for (String wrongBinding : List.of(fixture.session, other.id())) {
+          var misroutedRead =
+              HttpRequest.newBuilder(otherEndpoint)
+                  .header("Mcp-Session-Id", wrongBinding)
+                  .header("Content-Type", "application/json")
+                  .header("Accept", "application/json, text/event-stream")
+                  .POST(HttpRequest.BodyPublishers.ofString(configRequest))
+                  .build();
+          assertEquals(
+              404,
+              fixture
+                  .client
+                  .send(misroutedRead, HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+          var misroutedDisconnect =
+              HttpRequest.newBuilder(otherEndpoint)
+                  .header("Mcp-Session-Id", wrongBinding)
+                  .DELETE()
+                  .build();
+          assertEquals(
+              404,
+              fixture
+                  .client
+                  .send(misroutedDisconnect, HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+        }
+        assertTrue(other.acceptsBinding(binding));
+        assertTrue(fixture.connection.acceptsBinding(fixture.session));
         fixture.connection.close();
         assertEquals(404, fixture.send(configRequest, fixture.session, null).statusCode());
       }
@@ -315,10 +336,47 @@ class HopRemoteMcpConnectionTest {
     try (var fixture = new Fixture(root, true, false)) {
       String tooLarge =
           "{\"padding\":\"" + "x".repeat(HopRemoteMcpConnection.MAX_REQUEST_BYTES) + "\"}";
-      assertEquals(413, fixture.send(tooLarge, null, null).statusCode());
+      String link = fixture.connection.createPairingLink();
+      assertEquals(413, fixture.sendPairing(tooLarge, link, null).statusCode());
       assertFalse(fixture.connection.activity().connected());
-      assertEquals(400, fixture.send("{", null, null).statusCode());
+      assertEquals(400, fixture.sendPairing("{", link, null).statusCode());
       assertFalse(fixture.connection.activity().connected());
+      assertEquals(200, fixture.sendPairing(initialize("agent"), link, null).statusCode());
+    }
+  }
+
+  @Test
+  void neitherUiUuidNorASecretWithoutInitializationCanAuthorizeAWrite() throws Exception {
+    try (var fixture = new Fixture(root, true, false)) {
+      var operation =
+          request(
+              "tools/call",
+              Map.of(
+                  "name",
+                  "hop_mutate_definition",
+                  "arguments",
+                  Map.of("path", "unconnected.hpl", "operations", List.of(), "apply", true)));
+      String link = fixture.connection.createPairingLink();
+      assertEquals(200, fixture.sendPairing(initialize("first"), link, null).statusCode());
+      String oldId = fixture.connection.id();
+      fixture.connection.disconnectAgent();
+      var request =
+          HttpRequest.newBuilder(URI.create(fixture.uri + "&session=" + oldId))
+              .header("Content-Type", "application/json")
+              .header("Accept", "application/json, text/event-stream")
+              .header("Hop-Mcp-Agent", "eyJuYW1lIjoiQWdlbnQifQ")
+              .POST(HttpRequest.BodyPublishers.ofString(operation))
+              .build();
+      var denied = fixture.client.send(request, HttpResponse.BodyHandlers.ofString());
+      assertEquals(403, denied.statusCode());
+      assertTrue(denied.body().contains("PAIRING_REQUIRED"));
+      assertTrue(denied.headers().firstValue("Mcp-Session-Id").isEmpty());
+      var uninitialized =
+          fixture.sendPairing(operation, fixture.connection.createPairingLink(), null);
+      assertEquals(400, uninitialized.statusCode());
+      assertTrue(uninitialized.body().contains("MCP_INITIALIZE_REQUIRED"));
+      assertFalse(fixture.connection.activity().connected());
+      assertFalse(Files.exists(root.resolve("unconnected.hpl")));
     }
   }
 
@@ -354,7 +412,7 @@ class HopRemoteMcpConnectionTest {
       socket.getOutputStream().flush();
       fixture.connection.disconnectAgent();
       next.agentInfo(new io.modelcontextprotocol.spec.McpSchema.Implementation("New agent", "1"));
-      assertEquals(true, next.connect(fixture.uri.resolve("/mcp").toString()).get("connected"));
+      assertEquals(true, next.connect(fixture.connection.createPairingLink()).get("connected"));
       socket.getOutputStream().write(body.substring(1).getBytes(StandardCharsets.UTF_8));
       socket.getOutputStream().flush();
       String response = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -390,6 +448,15 @@ class HopRemoteMcpConnectionTest {
 
   private static String request(String method, Map<String, Object> params) {
     return JsonUtil.toJson(Map.of("jsonrpc", "2.0", "id", 1, "method", method, "params", params));
+  }
+
+  private static String initialize(String agent) {
+    return request(
+        "initialize",
+        Map.of(
+            "protocolVersion", "2025-11-25",
+            "capabilities", Map.of(),
+            "clientInfo", Map.of("name", agent, "version", "1")));
   }
 
   @SuppressWarnings("unchecked")
@@ -443,25 +510,18 @@ class HopRemoteMcpConnectionTest {
               service,
               URI.create("http://127.0.0.1:" + tomcat.getConnector().getLocalPort() + "/mcp"));
       connection = opened;
-      uri = URI.create(connection.endpoint());
+      uri =
+          URI.create(
+              "http://127.0.0.1:"
+                  + tomcat.getConnector().getLocalPort()
+                  + "/mcp?servicehandler=hop-mcp");
       registry.add(connection);
       if (!initialize) {
         session = null;
         return;
       }
       var initialized =
-          send(
-              request(
-                  "initialize",
-                  Map.of(
-                      "protocolVersion",
-                      "2025-11-25",
-                      "capabilities",
-                      Map.of(),
-                      "clientInfo",
-                      Map.of("name", "url-only-client", "version", "1"))),
-              null,
-              null);
+          sendPairing(initialize("paired-client"), connection.createPairingLink(), null);
       assertEquals(200, initialized.statusCode());
       session = initialized.headers().firstValue("mcp-session-id").orElseThrow();
     }
@@ -476,6 +536,15 @@ class HopRemoteMcpConnectionTest {
     }
 
     HttpResponse<String> send(String body, String suppliedSession, String origin) throws Exception {
+      return send(body, suppliedSession, origin, null);
+    }
+
+    HttpResponse<String> sendPairing(String body, String link, String origin) throws Exception {
+      return send(body, null, origin, URI.create(link).getRawFragment().substring(5));
+    }
+
+    private HttpResponse<String> send(
+        String body, String suppliedSession, String origin, String pairing) throws Exception {
       var request =
           HttpRequest.newBuilder(uri)
               .timeout(Duration.ofSeconds(10))
@@ -484,6 +553,7 @@ class HopRemoteMcpConnectionTest {
               .header("MCP-Protocol-Version", "2025-11-25");
       if (suppliedSession != null) request.header("Mcp-Session-Id", suppliedSession);
       if (origin != null) request.header("Origin", origin);
+      if (pairing != null) request.header(HopWebAgentSession.PAIRING_HEADER, pairing);
       return client.send(
           request.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
           HttpResponse.BodyHandlers.ofString());

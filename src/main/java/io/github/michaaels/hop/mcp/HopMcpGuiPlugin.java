@@ -5,17 +5,26 @@ import java.nio.file.Path;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.extension.ExtensionPoint;
+import org.apache.hop.core.extension.IExtensionPoint;
 import org.apache.hop.core.gui.plugin.GuiPlugin;
 import org.apache.hop.core.gui.plugin.menu.GuiMenuElement;
+import org.apache.hop.core.logging.ILogChannel;
+import org.apache.hop.core.variables.IVariables;
 import org.apache.hop.ui.hopgui.HopGui;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.MessageBox;
 
 /** Hop Desktop and Hop Web entry point for explicit, session-scoped MCP live synchronization. */
 @GuiPlugin
-public class HopMcpGuiPlugin {
+@ExtensionPoint(
+    id = "HopMcpMenuState",
+    extensionPointId = "HopGuiStart",
+    description = "Initialize the MCP actions for this Hop GUI session")
+public class HopMcpGuiPlugin implements IExtensionPoint<HopGui> {
   public static final String MENU_ID = "40250-menu-tools-hop-mcp-connector";
-  public static final String DISPLAY_NAME = "MCP Live Sync";
+  static final String DISCONNECT_MENU_ID = "40251-menu-tools-hop-mcp-disconnect";
+  public static final String DISPLAY_NAME = "MCP Connect…";
 
   private static final Map<HopGui, HopLiveUiSync> LIVE_SYNCS = new IdentityHashMap<>();
 
@@ -23,41 +32,50 @@ public class HopMcpGuiPlugin {
       root = HopGui.ID_MAIN_MENU,
       id = MENU_ID,
       label = DISPLAY_NAME,
-      toolTip = "Start or stop live synchronization for semantic MCP changes",
+      toolTip = "Choose how to present MCP changes and enable the session",
       parentId = HopGui.ID_MAIN_MENU_TOOLS_PARENT_ID,
       separator = true)
   public void toggleLiveSynchronization() {
     HopGui hopGui = HopGui.getInstance();
     synchronized (HopMcpGuiPlugin.class) {
       HopLiveUiSync liveSync = LIVE_SYNCS.get(hopGui);
-      if (liveSync != null && liveSync.isRunning()) {
-        stopLiveSynchronization(hopGui, liveSync);
-      } else {
-        startLiveSynchronization(hopGui);
-      }
+      if (liveSync != null && liveSync.isRunning()) return;
     }
+    HopMcpSessionDialog.chooseMode(hopGui, mode -> startLiveSynchronization(hopGui, mode));
   }
 
-  private static void startLiveSynchronization(HopGui hopGui) {
+  @GuiMenuElement(
+      root = HopGui.ID_MAIN_MENU,
+      id = DISCONNECT_MENU_ID,
+      label = "MCP Disconnect",
+      toolTip = "Disable the MCP service for this Hop session",
+      parentId = HopGui.ID_MAIN_MENU_TOOLS_PARENT_ID,
+      separator = true)
+  public void disconnectLiveSynchronization() {
+    HopGui hopGui = HopGui.getInstance();
+    HopLiveUiSync liveSync;
+    synchronized (HopMcpGuiPlugin.class) {
+      liveSync = LIVE_SYNCS.get(hopGui);
+    }
+    if (liveSync != null && liveSync.isRunning()) stopLiveSynchronization(hopGui, liveSync);
+  }
+
+  @Override
+  public void callExtensionPoint(ILogChannel log, IVariables variables, HopGui hopGui) {
+    refreshMenu(hopGui, false);
+  }
+
+  private static synchronized void startLiveSynchronization(HopGui hopGui, String mode) {
+    if (LIVE_SYNCS.containsKey(hopGui)) return;
     try {
       Path projectRoot = determineProjectRoot(hopGui);
       HopLiveUiSync candidate =
           HopLiveUiSyncFactory.create(hopGui, projectRoot, () -> removeLiveSynchronization(hopGui));
+      candidate.presentationMode(mode);
       candidate.start();
       LIVE_SYNCS.put(hopGui, candidate);
-      if (candidate instanceof HopWebLiveSync web) {
-        web.showConnectionDialog();
-        return;
-      }
-      showInformation(
-          hopGui,
-          DISPLAY_NAME,
-          "Live synchronization for "
-              + clientLabel(candidate)
-              + " is running for:\n\n"
-              + projectRoot
-              + "\n\nSemantic MCP changes will open or refresh Hop definitions. "
-              + "Tabs with unsaved changes are never overwritten.");
+      refreshMenu(hopGui, true);
+      candidate.showSessionDetails();
     } catch (Exception e) {
       hopGui.getLog().logError("Unable to start MCP Live Sync", e);
       showError(
@@ -80,11 +98,21 @@ public class HopMcpGuiPlugin {
           hopGui,
           DISPLAY_NAME,
           "Live synchronization could not be stopped cleanly. See the Hop log for details.");
+    } finally {
+      if (!hopGui.getShell().isDisposed()) refreshMenu(hopGui, false);
     }
   }
 
   private static synchronized void removeLiveSynchronization(HopGui hopGui) {
     LIVE_SYNCS.remove(hopGui);
+  }
+
+  private static void refreshMenu(HopGui hopGui, boolean connected) {
+    var menu = hopGui.getMainMenuWidgets();
+    menu.enableMenuItem(MENU_ID, !connected);
+    menu.enableMenuItem(DISCONNECT_MENU_ID, connected);
+    menu.setMenuItemVisible(MENU_ID, !connected);
+    menu.setMenuItemVisible(DISCONNECT_MENU_ID, connected);
   }
 
   private static String clientLabel(HopLiveUiSync liveSync) {

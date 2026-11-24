@@ -22,19 +22,21 @@ final class HopMcpInitialRequest extends HttpServletRequestWrapper {
     return body.length > HopRemoteMcpConnection.MAX_REQUEST_BYTES;
   }
 
-  Map<String, String> identity() {
+  Map<String, String> initializer() {
     try {
       var envelope = new JacksonMcpJsonMapperSupplier().get().readValue(body, Map.class);
-      if (!"initialize".equals(envelope.get("method"))
+      if (!"2.0".equals(envelope.get("jsonrpc"))
+          || !"initialize".equals(envelope.get("method"))
+          || !(envelope.get("id") instanceof String || envelope.get("id") instanceof Number)
           || !(envelope.get("params") instanceof Map<?, ?> params)
-          || !(params.get("clientInfo") instanceof Map<?, ?> info)) return Map.of();
+          || !(params.get("clientInfo") instanceof Map<?, ?> info)) return null;
       return Map.of(
           "name",
           info.get("name") instanceof String value ? value : "No informado",
           "version",
           info.get("version") instanceof String value ? value : "");
     } catch (Exception invalid) {
-      return Map.of();
+      return null;
     }
   }
 

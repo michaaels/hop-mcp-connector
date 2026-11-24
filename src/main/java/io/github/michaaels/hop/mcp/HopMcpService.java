@@ -39,6 +39,10 @@ final class HopMcpService implements AutoCloseable {
   private final HopDefinitionMutator definitionMutator;
   private final HopCorrectionPlanManager correctionPlans;
   private final HopSemanticEventSink semanticEventSink;
+  private String webPresentationDefault;
+  private String webProjectName;
+  private volatile String webEditorFile = "";
+  private HopWebProjectWork.Session webWork;
 
   HopMcpService(
       ProjectFiles files,
@@ -127,11 +131,38 @@ final class HopMcpService implements AutoCloseable {
     return config("stdio");
   }
 
+  Path projectRoot() {
+    return files.root();
+  }
+
+  void webWork(HopWebProjectWork.Session work) {
+    webWork = work;
+    correctionPlans.webWork(work);
+    definitionMutator.webWork(work);
+  }
+
+  void webPresentation(String mode, String projectName) {
+    webPresentationDefault = mode;
+    webProjectName = projectName;
+  }
+
+  void webEditorFile(String path) {
+    webEditorFile = path.substring(0, Math.min(path.length(), 4096));
+  }
+
+  private String presentationDefault() {
+    return webPresentationDefault == null
+        ? semanticEventSink.presentationDefault()
+        : webPresentationDefault;
+  }
+
   Map<String, Object> config(String transport) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("version", HopMcpVersion.current());
     result.put("project_root", files.root().toString());
     result.put("transport", transport);
+    result.put("presentation_default", presentationDefault());
+    if (webProjectName != null) result.put("project_name", webProjectName);
     result.put("read_only", !(allowMutation || allowExecution || allowDeepCheck || allowWebApi));
     result.put("definition_write_enabled", allowMutation);
     result.put("allow_deep_check", allowDeepCheck);
@@ -663,7 +694,14 @@ final class HopMcpService implements AutoCloseable {
   }
 
   Map<String, Object> liveUiStatus(String transactionId) throws Exception {
-    return semanticEventSink.status(transactionId);
+    var result = new LinkedHashMap<>(semanticEventSink.status(transactionId));
+    if (webWork != null) {
+      result.remove("active_sessions");
+      result.remove("active_clients");
+      result.put("active_file", webEditorFile);
+      result.put("other_edit_in_progress", webWork.otherEditInProgress());
+    }
+    return result;
   }
 
   Map<String, Object> mutateDefinition(
@@ -690,7 +728,9 @@ final class HopMcpService implements AutoCloseable {
       String previousPlanId)
       throws Exception {
     requireMutation();
-    return correctionPlans.prepare(path, kind, operations, presentation, previousPlanId);
+    String requested =
+        presentation == null && previousPlanId == null ? presentationDefault() : presentation;
+    return correctionPlans.prepare(path, kind, operations, requested, previousPlanId);
   }
 
   Map<String, Object> applyCorrectionPlan(String planId, String planSha256) throws Exception {
@@ -699,8 +739,13 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> applyCorrectionPlan(String planId, String planSha256, String presentation)
       throws Exception {
+    return applyCorrectionPlan(planId, planSha256, presentation, true);
+  }
+
+  Map<String, Object> applyCorrectionPlan(
+      String planId, String planSha256, String presentation, boolean showResult) throws Exception {
     requireMutation();
-    return correctionPlans.apply(planId, planSha256, presentation);
+    return correctionPlans.apply(planId, planSha256, presentation, showResult);
   }
 
   Map<String, Object> correctionPlanStatus(String planId) {

@@ -1,8 +1,19 @@
-# MCP Connector for Apache Hop 2.4.0
+# MCP Connector for Apache Hop
+
+## 2.6.0 development candidate
+
+- Use MCP Java SDK 2.2.0 with protocol revision 2025-11-25.
+
+- **MCP Connect** offers **Live Sync** and **Result Only** for native authoring. **MCP Disconnect** turns off the service in the window.
+- **Connect Agent** pairs one agent with a Web window using a two-minute, single-use link. The UUID belongs to the active connection and disappears when the agent disconnects.
+- Unpaired requests receive a single instruction to copy a link. Conflict notices show only the affected file, and Web editor acknowledgements remain scoped to the requesting window.
+- Update the Web plugin and the agent's remote profile together. See the [2.6.0 handoff](docs/handoff-mcp-2.6.0.md).
+
+## Previous version 2.4.0
 
 Version 2.4.0 connects your MCP client to Apache Hop through local STDIO, Live Sync in Hop Desktop, or remote Live Sync in Hop Web. It targets Apache Hop 2.20.x exclusively and requires Java 21. The MCP Java SDK is 2.1.0; the protocol baseline remains 2025-11-25.
 
-## Get started
+### Get started
 
 Download `hop-mcp-connector-2.4.0.zip`, stop Hop/MCP (or Tomcat for Web), and extract it into the Hop installation root. Restart Hop and configure your MCP client.
 
@@ -12,7 +23,7 @@ Download `hop-mcp-connector-2.4.0.zip`, stop Hop/MCP (or Tomcat for Web), and ex
 
 See the [README](https://github.com/michaaels/hop-mcp-connector#readme) for an illustrative animation and simple setup, and the [Web guide](https://github.com/michaaels/hop-mcp-connector/blob/main/docs/remote-hop-web.md) for HTTPS and session selection.
 
-## Changes
+### Changes
 
 - Introduce a concise README organized around local MCP, Desktop Live Sync and Web Live Sync, with a lightweight illustrative GIF, a static reduced-motion alternative, example requests and installation steps. Retain detailed technical guidance in `docs/reference.md`.
 
@@ -24,7 +35,7 @@ See the [README](https://github.com/michaaels/hop-mcp-connector#readme) for an i
 - Add semantic canvas layout and named-parameter authoring, improve native field injection and routing diagnostics, and preserve preview, SHA-256 preconditions, protected backups, native reload validation and rollback.
 - Compact component output schemas, separate schema-discovery limits from mutation limits, protect STDIO from cached Log4j console appenders, and resolve definition references in the native file context while retaining path confinement and response bounds.
 
-## Verification and scope
+### Verification and scope
 
 The ordinary `mvn -B clean verify` build now targets Hop 2.20.0 and includes native component and JDBC tests without a snapshot compatibility profile. CI is configured for Linux verification, Windows junction security, checksum-verified clean Hop 2.20.0 installation and native acceptance, and the frozen MCP 2025-11-25 conformance regression baseline. A configured workflow is not evidence that a particular run passed.
 

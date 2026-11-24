@@ -285,16 +285,18 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
             ? ""
             : requireUuid(transactionId, "transaction_id");
     List<String> matchingEventIds = new ArrayList<>();
-    if (!normalizedTransactionId.isBlank()) {
+    boolean includeAll = targetSession.isEmpty() && normalizedTransactionId.isBlank();
+    if (!includeAll) {
       for (LiveEvent event : eventsSince(0L)) {
-        if (normalizedTransactionId.equals(event.transactionId())) {
+        if ((targetSession.isEmpty() || targetSession.equals(event.targetSession()))
+            && (normalizedTransactionId.isBlank()
+                || normalizedTransactionId.equals(event.transactionId()))) {
           matchingEventIds.add(event.eventId());
         }
       }
     }
 
-    List<Map<String, Object>> acknowledgements =
-        readAcknowledgements(matchingEventIds, normalizedTransactionId.isBlank());
+    List<Map<String, Object>> acknowledgements = readAcknowledgements(matchingEventIds, includeAll);
     Map<String, Object> result = new LinkedHashMap<>();
     Map<String, Integer> activeClients = activeSessionsByClient();
     int activeSessions = activeClients.values().stream().mapToInt(Integer::intValue).sum();
@@ -310,12 +312,18 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   }
 
   synchronized LiveSession openSession(String clientType) throws IOException {
+    return openSession(clientType, "instant");
+  }
+
+  synchronized LiveSession openSession(String clientType, String presentation) throws IOException {
     String normalizedType = normalizeClientType(clientType);
     ensureDirectories();
     cleanupControlFiles(sessionsDirectory, ".session", SESSION_TTL, MAX_SESSION_FILES - 1);
     String sessionId = UUID.randomUUID().toString();
     Path marker = sessionsDirectory.resolve(sessionId + ".session");
-    LiveSession session = new LiveSession(sessionId, normalizedType, marker);
+    LiveSession session =
+        new LiveSession(
+            sessionId, normalizedType, marker, HopGuidedPresentation.mode(presentation));
     heartbeat(session);
     return session;
   }
@@ -326,6 +334,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     values.setProperty("format", "1");
     values.setProperty("session_id", session.id());
     values.setProperty("client_type", session.clientType());
+    values.setProperty("presentation", session.presentation);
     values.setProperty("heartbeat_at", Long.toString(System.currentTimeMillis()));
     writeProperties(session.marker(), values);
   }
@@ -388,12 +397,35 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   }
 
   private Map<String, Integer> activeSessionsByClient() throws IOException {
+    Map<String, Integer> active = new LinkedHashMap<>();
+    for (Properties marker : activeSessionMarkers())
+      active.merge(marker.getProperty("client_type"), 1, Integer::sum);
+    return Map.copyOf(active);
+  }
+
+  @Override
+  public synchronized String presentationDefault() {
+    try {
+      var desktop =
+          activeSessionMarkers().stream()
+              .filter(marker -> "desktop".equals(marker.getProperty("client_type")))
+              .map(marker -> marker.getProperty("presentation", "instant"))
+              .distinct()
+              .toList();
+      if (desktop.size() == 1) return HopGuidedPresentation.mode(desktop.getFirst());
+    } catch (IOException | IllegalArgumentException ignored) {
+      // An absent or invalid GUI preference does not change the programmatic default.
+    }
+    return "instant";
+  }
+
+  private List<Properties> activeSessionMarkers() throws IOException {
     if (!isSecureDirectory(sessionsDirectory)) {
-      return Map.of();
+      return List.of();
     }
     cleanupControlFiles(sessionsDirectory, ".session", SESSION_TTL, MAX_SESSION_FILES);
     long newestAllowed = System.currentTimeMillis() - SESSION_TTL.toMillis();
-    Map<String, Integer> active = new LinkedHashMap<>();
+    List<Properties> active = new ArrayList<>();
     try (Stream<Path> paths = Files.list(sessionsDirectory)) {
       for (Path path :
           paths
@@ -406,7 +438,8 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
             Properties values = readProperties(path, ".session");
             String clientType = normalizeClientType(values.getProperty("client_type"));
             requireUuid(values.getProperty("session_id"), "session_id");
-            active.merge(clientType, 1, Integer::sum);
+            values.setProperty("client_type", clientType);
+            active.add(values);
           } catch (RuntimeException | IOException ignored) {
             // Invalid session markers never make the bridge available.
           }
@@ -415,7 +448,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
         }
       }
     }
-    return Map.copyOf(active);
+    return active;
   }
 
   private List<Map<String, Object>> readAcknowledgements(
@@ -437,7 +470,9 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
       try {
         Properties values = readProperties(file, ".ack");
         String eventId = requireUuid(values.getProperty("event_id"), "event_id");
-        if (!includeAll && !matchingEventIds.contains(eventId)) {
+        if ((!includeAll && !matchingEventIds.contains(eventId))
+            || (!targetSession.isEmpty()
+                && !targetSession.equals(values.getProperty("session_id")))) {
           continue;
         }
         Map<String, Object> acknowledgement = new LinkedHashMap<>();
@@ -596,7 +631,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
 
   private static String requireEventType(String value) {
     return switch (value == null ? "" : value) {
-      case "mutation_applied", "mutation_rolled_back" -> value;
+      case "mutation_applied", "mutation_rolled_back", "result_ready" -> value;
       default -> throw new IllegalArgumentException("Unsupported live UI event type");
     };
   }
@@ -690,12 +725,14 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     private final String id;
     private final String clientType;
     private final Path marker;
+    private final String presentation;
     private boolean closed;
 
-    private LiveSession(String id, String clientType, Path marker) {
+    private LiveSession(String id, String clientType, Path marker, String presentation) {
       this.id = id;
       this.clientType = clientType;
       this.marker = marker;
+      this.presentation = presentation;
     }
 
     String id() {

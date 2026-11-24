@@ -122,8 +122,8 @@ record HopGuidedPresentation(
   }
 
   static String mode(String mode) {
-    if (!Set.of("guided", "instant").contains(mode == null ? "" : mode))
-      throw new IllegalArgumentException("presentation must be guided or instant");
+    if (!Set.of("guided", "instant", "result_only").contains(mode == null ? "" : mode))
+      throw new IllegalArgumentException("presentation must be guided, instant or result_only");
     return mode;
   }
 

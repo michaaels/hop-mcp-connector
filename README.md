@@ -14,10 +14,10 @@ create pipelines and workflows, and work in the editor you already know.
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/mcp-demo-en.png">
-  <img src="docs/images/mcp-demo-en.gif" alt="An assistant sends instructions through the MCP connector to inspect a local project, build a flow in Desktop, or edit a Web session by URL.">
+  <img src="docs/images/mcp-demo-en.gif" alt="An assistant inspects a local project, builds a Desktop flow, and edits a Hop Web project through MCP.">
 </picture>
 
-*An animated illustration of the three ways to connect.*
+*An illustration of the three connection modes. In 2.6.0, use **Connect Agent** to copy the link for the Web mode.*
 [View static image](docs/images/mcp-demo-en.png).
 
 ## What you can do
@@ -38,13 +38,13 @@ create pipelines and workflows, and work in the editor you already know.
 | Mode | What it offers | Get started |
 | --- | --- | --- |
 | **Local MCP** | Work on a local project from your MCP client without opening the editor. Inspection by default; editing and execution are optional. | `hop mcp --root <project>` |
-| **Desktop Live Sync** | Open or refresh flows in Hop Desktop and follow guided construction in its native editor. | Enable **Tools → MCP Live Sync** and connect local MCP to the same project. Add `--allow-mutation` to edit. |
-| **Web Live Sync** | Work on a Hop Web session's project by URL, without sharing folders with the agent. | Enable **MCP Live Sync** in Hop Web and use the `--remote-ui` profile or an HTTPS-capable MCP client. |
+| **Desktop Live Sync** | Watch changes in the native editor or show the completed flow. | Open **MCP Connect** and choose **Live Sync** or **Result Only**. Connect local MCP to the same project and add `--allow-mutation` to edit. |
+| **Web Live Sync** | Work on the project open in your Hop Web window. | Open **MCP Connect**, choose a display mode, then use **Connect Agent** in the MCP status panel. Give the copied link to the `--remote-ui` agent. |
 
-The Web connection uses Streamable HTTP over HTTPS. Enabling Live Sync
-allows inspection and editing of that session's project. ETL execution
-and deep checks stay disabled. If multiple sessions are available, the
-agent asks which one to use.
+The Web connection uses Streamable HTTP over HTTPS. The link authorizes one
+agent in the window that issued it and expires after two minutes. The agent
+can inspect and edit that project. The Web profile keeps ETL execution and
+deep checks disabled.
 
 [Desktop and guided construction](docs/guided-desktop-authoring.md)
 · [Web connection guide](docs/remote-hop-web.md)
@@ -58,7 +58,7 @@ agent asks which one to use.
 
 > Review the changes before applying them and arrange the canvas.
 
-> Connect to Hop Web at https://hop.example.org/hop_web/ui.
+> Connect to my Hop Web window using the link I copied with Connect Agent.
 
 Available features depend on the plugins installed in Hop, the properties
 they expose, and the permissions you enable.
@@ -67,8 +67,8 @@ they expose, and the permissions you enable.
 
 You need **Apache Hop 2.20.x**, **Java 21**, and an MCP-compatible client.
 
-1. Download `hop-mcp-connector-2.4.0.zip` from
-   [Releases](https://github.com/michaaels/hop-mcp-connector/releases/latest).
+1. Download the plugin ZIP from [Releases](https://github.com/michaaels/hop-mcp-connector/releases/latest)
+   or build `target/hop-mcp-connector-2.6.0.zip` with `mvn -B clean verify`.
 2. Close Hop and the MCP process. For Web, stop Tomcat before replacing
    the plugin. Extract the ZIP into your Hop installation root:
    it will create `plugins/misc/hop-mcp-connector/`.
@@ -111,7 +111,7 @@ inspection; add `--allow-mutation` to `args` to allow editing.
 
 For the remote Hop Web agent, register another server with the arguments
 `mcp --remote-ui`, without `--root` or local permission flags. Also install
-the plugin in the Web server's Hop installation. See the
+the same plugin version in the Web server's Hop installation. See the
 [Web guide](docs/remote-hop-web.md) for HTTPS and complete configuration.
 
 </details>

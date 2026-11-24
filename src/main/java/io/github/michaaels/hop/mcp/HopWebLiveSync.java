@@ -4,12 +4,16 @@ import java.io.IOException;
 import java.nio.file.Path;
 import org.apache.hop.ui.hopgui.HopGui;
 import org.apache.hop.ui.hopgui.ServerPushSessionFacade;
+import org.eclipse.swt.widgets.Shell;
 
 /** Owns one explicitly enabled RAP session and its remote MCP service. */
 final class HopWebLiveSync extends HopLiveUiSync {
   private final HopGui hopGui;
   private final String projectName;
   private HopRemoteMcpConnection remote;
+  private Shell details;
+  private Shell conflictDialog;
+  private String addressId = "";
 
   HopWebLiveSync(HopGui hopGui, Path projectRoot, Runnable closedCallback) throws IOException {
     super(hopGui, projectRoot, "web", closedCallback);
@@ -18,8 +22,25 @@ final class HopWebLiveSync extends HopLiveUiSync {
         hopGui.getVariables().getVariable("HOP_PROJECT_NAME", projectRoot.getFileName().toString());
   }
 
-  void showConnectionDialog() {
-    new HopWebConnectionDialog(hopGui, remote).open();
+  @Override
+  void showSessionDetails() {
+    if (remote == null) return;
+    if (details != null && !details.isDisposed()) {
+      details.forceActive();
+      return;
+    }
+    details =
+        HopMcpSessionDialog.details(
+            hopGui,
+            this::indicatorActivity,
+            this::indicatorSessionId,
+            remote::createPairingLink,
+            this::disconnectAgent);
+  }
+
+  @Override
+  protected String indicatorSessionId() {
+    return remote == null ? "" : remote.id();
   }
 
   @Override
@@ -31,6 +52,16 @@ final class HopWebLiveSync extends HopLiveUiSync {
   protected HopAgentActivity indicatorActivity() {
     if (remote == null) return HopAgentActivity.disconnected();
     var state = remote.activity();
+    updateAddress(state.connected() ? remote.id() : "");
+    if (!state.connected()) {
+      closeConflictDialog();
+      remote.editorFile("");
+      return state;
+    }
+    if (conflictDialog == null || conflictDialog.isDisposed()) {
+      var conflict = remote.takeConflict();
+      if (conflict != null) conflictDialog = HopMcpSessionDialog.conflict(hopGui, conflict);
+    }
     var handler =
         org.apache.hop.ui.hopgui.perspective.explorer.ExplorerPerspective.getInstance()
             .getActiveFileTypeHandler();
@@ -48,8 +79,8 @@ final class HopWebLiveSync extends HopLiveUiSync {
       }
     }
     if (file.startsWith(HopLiveUiEventBroker.CONTROL_DIRECTORY + "/")) file = "";
-    remote.editor(projectName, file);
-    if (state.connected() && state.operation().equals("En espera") && isPresenting())
+    remote.editorFile(file);
+    if (state.operation().equals("En espera") && isPresenting())
       return new HopAgentActivity(
           true,
           true,
@@ -71,10 +102,26 @@ final class HopWebLiveSync extends HopLiveUiSync {
     return remote == null ? 0 : remote.connectedSince();
   }
 
-  @Override
-  protected void disconnectAgent() {
-    if (remote != null) remote.disconnectAgent();
-    clearAgentDrafts();
+  private void disconnectAgent() {
+    if (remote != null) {
+      remote.disconnectAgent();
+      remote.editorFile("");
+    }
+    updateAddress("");
+    closeConflictDialog();
+  }
+
+  private void updateAddress(String id) {
+    if (id.equals(addressId)) return;
+    if (!addressId.isEmpty()) clearAgentDrafts();
+    if (id.isEmpty()) HopWebSessionUrl.remove();
+    else HopWebSessionUrl.install(id);
+    addressId = id;
+  }
+
+  private void closeConflictDialog() {
+    if (conflictDialog != null && !conflictDialog.isDisposed()) conflictDialog.close();
+    conflictDialog = null;
   }
 
   @Override
@@ -92,9 +139,10 @@ final class HopWebLiveSync extends HopLiveUiSync {
               false,
               null,
               agentEvents());
-      remote = HopRemoteMcpConnection.open(service, HopWebConnectionDialog.publicUi(hopGui));
-      remote.editor(projectName, "");
+      service.webPresentation(presentationMode(), projectName);
+      remote = HopRemoteMcpConnection.open(service, HopWebSessionUrl.publicUi(hopGui));
       HopWebRemoteEndpoint.current().add(remote);
+      HopWebSessionUrl.remove();
     } catch (Exception failure) {
       if (remote != null) remote.close();
       ServerPushSessionFacade.stop();
@@ -105,6 +153,11 @@ final class HopWebLiveSync extends HopLiveUiSync {
   @Override
   protected void stopUiDispatch() {
     if (remote != null) remote.close();
+    if (!hopGui.getShell().isDisposed()) {
+      if (details != null && !details.isDisposed()) details.close();
+      closeConflictDialog();
+      HopWebSessionUrl.remove();
+    }
     ServerPushSessionFacade.stop();
   }
 }

@@ -28,6 +28,7 @@ final class HopLiveIndicator implements AutoCloseable {
   private final SwtUniversalImage logo;
   private final SwtUniversalImage disconnectedLogo;
   private final Supplier<HopAgentActivity> activity;
+  private final Supplier<String> sessionId;
   private final Runnable tick = this::frame;
   private final boolean web = EnvironmentUtils.getInstance().isWeb();
   private String description;
@@ -37,8 +38,13 @@ final class HopLiveIndicator implements AutoCloseable {
   private boolean closed;
   private HopAgentActivity state = HopAgentActivity.disconnected();
 
-  HopLiveIndicator(HopGui gui, Supplier<HopAgentActivity> activity, Runnable stop) {
+  HopLiveIndicator(
+      HopGui gui,
+      Supplier<HopAgentActivity> activity,
+      Supplier<String> sessionId,
+      Runnable showDetails) {
     this.activity = activity;
+    this.sessionId = sessionId;
     toolbar = gui.getStatusToolbar();
     if (toolbar == null || !(toolbar.getLayoutData() instanceof FormData layout)) {
       throw new IllegalStateException("Hop status toolbar is unavailable");
@@ -83,14 +89,14 @@ final class HopLiveIndicator implements AutoCloseable {
     control.addListener(
         SWT.MouseUp,
         event -> {
-          if (event.button == 1) stop.run();
+          if (event.button == 1) showDetails.run();
         });
     control.addListener(
         SWT.KeyDown,
         event -> {
           if (event.keyCode == SWT.CR || event.character == ' ') {
             event.doit = false;
-            stop.run();
+            showDetails.run();
           }
         });
     control.addListener(
@@ -107,7 +113,7 @@ final class HopLiveIndicator implements AutoCloseable {
             new AccessibleAdapter() {
               @Override
               public void getName(AccessibleEvent event) {
-                event.result = "Desactivar MCP Live Sync";
+                event.result = "Mostrar actividad de MCP";
               }
 
               @Override
@@ -166,28 +172,36 @@ final class HopLiveIndicator implements AutoCloseable {
   }
 
   private void updateTooltip(HopAgentActivity state) {
+    String text = describe(state, state.connected() ? sessionId.get() : "");
+    if (text.equals(description)) return;
+    description = text;
+    control.setToolTipText(web ? HopWebIndicatorTooltip.markup(description) : description);
+  }
+
+  static String describe(HopAgentActivity state) {
+    return describe(state, "");
+  }
+
+  static String describe(HopAgentActivity state, String sessionId) {
     boolean processing = state.connected() && !state.operation().equals("En espera");
     String age =
         state.lastActivityMillis() == 0
             ? "Sin actividad"
             : "hace "
                 + duration(Math.max(0, System.currentTimeMillis() - state.lastActivityMillis()));
-    String text =
-        "MCP Live Sync · "
-            + (!state.connected() ? "Disponible" : processing ? "Procesando" : "Conectado")
-            + "\nAgente: "
-            + state.agent()
-            + (state.version().isBlank() ? "" : " · " + state.version())
-            + "\nOperación: "
-            + state.operation()
-            + "\n"
-            + (processing ? "Tiempo transcurrido: " : "Duración última operación: ")
-            + (state.lastActivityMillis() == 0 ? "—" : duration(state.elapsedMillis()))
-            + "\nÚltima actividad: "
-            + age;
-    if (text.equals(description)) return;
-    description = text;
-    control.setToolTipText(web ? HopWebIndicatorTooltip.markup(description) : description);
+    return "MCP · "
+        + (!state.connected() ? "Disponible" : processing ? "Procesando" : "Conectado")
+        + (sessionId.isEmpty() ? "" : "\nSession: " + sessionId)
+        + "\nAgente: "
+        + state.agent()
+        + (state.version().isBlank() ? "" : " · " + state.version())
+        + "\nOperación: "
+        + state.operation()
+        + "\n"
+        + (processing ? "Tiempo transcurrido: " : "Duración última operación: ")
+        + (state.lastActivityMillis() == 0 ? "—" : duration(state.elapsedMillis()))
+        + "\nÚltima actividad: "
+        + age;
   }
 
   private static String duration(long millis) {

@@ -18,9 +18,10 @@ final class HopAuthoringGuidance {
           + " Finish new flows with the auto_layout semantic operation: left-to-right stages, aligned branches and separated workflow failure lanes."
           + " For existing flows preview layout first; preserve routing and execution settings, review notes and remaining crossings, and never add dummy components merely to bend hops."
           + " If auto_layout reports review_required, inspect the remaining geometry before describing the canvas as finished; never change business logic just to improve a drawing."
-          + " For visible Desktop or Hop Web authoring with MCP Live Sync connected, prepare with presentation=guided, initially operations=[] to announce preparation, then append small blocks with previous_plan_id."
+          + " Before preparing each new pipeline or workflow, announce its destination in chat: the Hop Web URL, project and relative path, or the full physical path in Hop Desktop. Read hop_config for project_root and presentation_default. In Web, query hop_live_ui_status and mention confirmed work by other sessions on the same project. Distinguish a present session from an edit. If another session works on the same file or DEFINITION_IN_USE is returned, wait for coordination. Work on other files can continue."
+          + " Respect presentation_default unless the user chooses a mode for this task. For guided presentation, start with operations=[] and append small blocks with previous_plan_id."
           + " Preparation returns without waiting for GUI playback: continue planning the next block, then apply the final immutable plan."
-          + " Use presentation=instant when the user requests immediate changes; keep ordinary nonvisual authoring compatible."
+          + " For Result Only, use presentation=result_only. Apply auxiliary definitions with show_result=false, then apply the main definition with show_result=true. Use instant for legacy immediate presentation. End with a chat summary of what was created, how flows connect, and actual validation results."
           + " Formatting warnings are advisory; never rewrite or execute scripts automatically.";
 
   private static final Set<String> SCRIPT_PLUGINS = Set.of("ScriptValueMod", "EVAL", "JavaScript");

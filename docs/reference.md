@@ -29,6 +29,7 @@ The plugin uses Hop's `@HopCommand`, plugin registry, `PipelineMeta`, `WorkflowM
 - Transactional semantic mutation with preview, SHA-256 preconditions, protected backups, temporary-file replacement, native reload validation, automatic recovery, and explicit rollback. The result reports whether the filesystem supported an atomic move.
 - Bounded inputs, scans, results, execution and logs; project-root confinement; secure XML parsing; sensitive-data redaction.
 - Optional Hop Desktop and Hop Web live synchronization, explicitly started from the UI. Desktop uses project-local events; Hop Web reuses RAP's existing servlet without opening another port.
+- Development 2.6.0. **MCP Connect** offers **Live Sync** and **Result Only**. **Connect Agent** pairs the intended Web window using a one-time link. Unpaired requests receive a single pairing instruction, and Web conflict notices identify only the affected file. See [Web pairing and deployment](handoff-mcp-2.6.0.md).
 - Development 2.4.0: compact native MCP icon, grey when available and black when an agent is connected, with a subtle activity pulse and agent/operation/timing tooltip. Clicking the Web icon disconnects only the agent; the MCP Live Sync menu stops the service. Multiple Web sessions return project/open-file choices for explicit user selection. See [Live Sync indicator](live-sync-indicator.md) and [Web agent sessions](web-agent-sessions.md).
 - Development 2.3.0: [remote Hop Web](remote-hop-web.md) by URL while MCP Live Sync is active, using HTTPS through RAP's servlet. The agent's `--remote-ui` profile exposes four small tools and needs no local/shared project. Activation permits native inspection and editing of the Web project; execution remains disabled. Direct HTTP MCP clients are also supported.
 - Optional [guided Desktop and Hop Web/RAP authoring](guided-desktop-authoring.md) in Hop's native pipeline/workflow editors, with asynchronous blocks, adjustable pacing, pause and instant application.
@@ -39,7 +40,7 @@ diagnostics changes, their response fields and verification scope.
 
 ## Security defaults
 
-For local `hop mcp`, inspection and structural validation are available by default. Deep checks, execution, authoring/mutation, and Hop Web tools are omitted from `tools/list` unless their respective flags are enabled. The service layer also checks authorization before deep checks, execution, writes, and web requests. In Hop Web, explicitly activating MCP Live Sync enables inspection and editing for that session through the site's existing access controls; execution, deep checks and the Web proxy remain disabled. See the [remote connection guide](remote-hop-web.md) for this distinct activation model.
+For local `hop mcp`, inspection and structural validation are available by default. Deep checks, execution, authoring/mutation, and Hop Web tools are omitted from `tools/list` unless their respective flags are enabled. The service layer also checks authorization before deep checks, execution, writes, and web requests. In Hop Web, a short-lived link from the enabled editor authorizes the paired agent to inspect and edit its project. Execution, deep checks and the Web proxy remain disabled. See the [remote connection guide](remote-hop-web.md).
 
 In `hop_config`, `read_only` is true only when all four opt-in groups are disabled. Enabling deep checks, execution, or read-only Hop Web access also makes it false; use `definition_write_enabled` and the individual `allow_*` fields to identify which capability is authorized.
 
@@ -63,7 +64,7 @@ See the [Hop 2.20-only target and verification](hop220-only-2026-11-12.md) for t
 
 - Java 21.
 - Apache Hop 2.20.x is the only supported runtime. Maven builds against 2.20.0 directly; no snapshot compatibility profile is needed.
-- MCP Java SDK 2.1.0; protocol baseline 2025-11-25 over STDIO and the optional Hop Web HTTP transport.
+- MCP Java SDK 2.2.0; protocol baseline 2025-11-25 over STDIO and the optional Hop Web HTTP transport.
 
 Released-version rows record their original targets; the current development target is exclusively Hop 2.20.x.
 
@@ -78,9 +79,9 @@ Released-version rows record their original targets; the current development tar
 | 2.2.4 (tag only; no release) | 2.19.0 target; Windows verification failed | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.5 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.6 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
-| Unreleased | 2.20.x only; compile baseline 2.20.0 | 21 | 2.1.0 | 2025-11-25 |
+| 2.6.0 development candidate | 2.20.x only; compile baseline 2.20.0 | 21 | 2.2.0 | 2025-11-25 |
 
-The MCP Java SDK 2.1.0 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not implemented here. Current development targets Apache Hop 2.20.0 with Java 21. CI is configured to verify the Hop 2.20.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise native STDIO acceptance. Installation through the published Hop Marketplace catalog requires post-release verification.
+The connector uses the SDK interfaces for protocol revision `2025-11-25`. The SDK provides a separate API for revision `2026-07-28`. Current development targets Apache Hop 2.20.0 with Java 21. CI is configured to verify the Hop 2.20.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise native STDIO acceptance. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Recent release history
 
@@ -112,7 +113,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for the full history, [RELEASE_NOTES.md](../
 
 ## Installation
 
-Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This development checkout builds `target/hop-mcp-connector-2.4.0.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
+Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This development checkout builds `target/hop-mcp-connector-2.6.0.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Extract the ZIP at the Hop installation root or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
 
 Hop runtime libraries (`hop-core`, `hop-engine`, and `hop-ui`) are provided by Hop and are not included in the ZIP. The ZIP includes the project license and notice.
 
@@ -254,7 +255,7 @@ See the [Hop 2.20.0 coverage audit](hop-2.20-coverage-2026-11-13.md) for the com
 
 For readable generated canvases, finish semantic authoring with `auto_layout`. It arranges pipeline/workflow components from left to right, separates failure branches and reports remaining geometric crossings. Preview existing flows before applying; routing, execution settings and note positions remain unchanged. See [canvas layout](flow-layout.md) for examples, bounds and limitations.
 
-STDIO uses the native SDK 2.1.0 transport, including its concurrent-send correction. The SDK continues to own JSON-RPC encoding, STDIO I/O and session handling. A regression test sends 32 requests without waiting for their responses, mixes successful calls with schema errors, and verifies that the session remains usable. Timeout diagnostics are bounded and captured stdout is redacted before inclusion in test failures.
+STDIO uses the native SDK transport for JSON-RPC encoding, STDIO I/O and session handling. A regression test sends 32 requests without waiting for their responses, mixes successful calls with schema errors, and verifies that the session remains usable. Timeout diagnostics are bounded and captured stdout is redacted before inclusion in test failures.
 
 ```bash
 mvn -B clean verify
@@ -284,7 +285,7 @@ The CI workflow also checks the Marketplace ZIP layout, license and notice files
 
 No official MCP Registry `server.json` is included: the registry's current package types do not include Apache Hop Marketplace ZIPs. MCPB is a separate package format and is not used to label this Marketplace artifact.
 
-Inspect the development package with `unzip -l target/hop-mcp-connector-2.4.0.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+Inspect the development package with `unzip -l target/hop-mcp-connector-2.6.0.zip`. It must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`. Hop provides its runtime JARs.
 
 ## Security reporting
 

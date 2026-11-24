@@ -48,11 +48,17 @@ class HopWebAgentServerTest {
   }
 
   @Test
-  void stdioConnectsByNormalUrlAndReportsWhenLiveSyncStops() throws Exception {
+  void stdioConnectsByCopiedLinkAndReportsWhenLiveSyncStops() throws Exception {
     try (var fixture = new HopRemoteMcpConnectionTest.Fixture(root, true, false);
         var session = new Session()) {
-      var connected =
+      var withoutLink =
           session.call("hop_web_connect", Map.of("url", fixture.uri.resolve("/mcp").toString()));
+      assertEquals(
+          "pairing_required",
+          map(map(withoutLink.get("result")).get("structuredContent")).get("state"));
+      String link = fixture.connection.createPairingLink();
+      var connected = session.call("hop_web_connect", Map.of("url", link));
+      assertFalse(JsonUtil.toJson(connected).contains(java.net.URI.create(link).getRawFragment()));
       assertEquals(
           true, map(map(connected.get("result")).get("structuredContent")).get("connected"));
       assertNotEquals(
@@ -68,7 +74,7 @@ class HopWebAgentServerTest {
       var stopped = session.call("hop_web_status", Map.of());
       var state = map(map(stopped.get("result")).get("structuredContent"));
       assertEquals(false, state.get("connected"));
-      assertEquals("inactive", state.get("state"));
+      assertEquals("disconnected", state.get("state"));
       var rejected =
           session.call("hop_web_call", Map.of("name", "hop_catalog", "arguments", Map.of()));
       assertEquals(true, map(rejected.get("result")).get("isError"));

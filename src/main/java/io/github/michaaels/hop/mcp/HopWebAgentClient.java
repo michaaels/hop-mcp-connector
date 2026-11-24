@@ -29,6 +29,8 @@ import javax.net.ssl.X509TrustManager;
 /** URL-based MCP client. It never opens a local or shared Hop project. */
 final class HopWebAgentClient implements AutoCloseable {
   private static final int MAX_BYTES = 512 * 1024;
+  private static final String PAIRING_MESSAGE =
+      "Usa Connect Agent para copiar un enlace nuevo desde la ventana de Hop Web que quieres usar.";
   private final Duration timeout;
   private final HttpClient http;
   private final McpJsonMapper mapper = new JacksonMcpJsonMapperSupplier().get();
@@ -80,17 +82,24 @@ final class HopWebAgentClient implements AutoCloseable {
   }
 
   synchronized Map<String, Object> connect(String webUrl) {
-    return connect(webUrl, null);
-  }
-
-  synchronized Map<String, Object> connect(String webUrl, String selectedSession) {
+    final URI link;
+    final URI target;
+    try {
+      link = parseUrl(webUrl);
+      target = endpoint(link);
+    } catch (IllegalArgumentException failure) {
+      return Map.of(
+          "connected", false, "state", "invalid_url", "message", "Usa una URL válida de Hop Web.");
+    }
+    String pairing = pairingCode(link);
+    if (pairing == null || !editorId(target).isEmpty()) {
+      return Map.of("connected", false, "state", "pairing_required", "message", PAIRING_MESSAGE);
+    }
     release();
-    endpoint = null;
+    endpoint = target;
     session = null;
     tools = List.of();
     try {
-      endpoint = endpoint(webUrl);
-      if (selectedSession != null) endpoint = select(endpoint, selectedSession);
       var initialized =
           rpc(
               "initialize",
@@ -100,7 +109,9 @@ final class HopWebAgentClient implements AutoCloseable {
                   "capabilities",
                   Map.of(),
                   "clientInfo",
-                  Map.of("name", "hop-web-agent", "version", HopMcpVersion.current())));
+                  Map.of("name", "hop-web-agent", "version", HopMcpVersion.current())),
+              timeout,
+              pairing);
       if (!"2025-11-25".equals(initialized.get("protocolVersion")))
         throw new IOException("Unsupported MCP protocol");
       if (!"hop-mcp-connector".equals(map(initialized.get("serverInfo")).get("name"))) {
@@ -112,22 +123,20 @@ final class HopWebAgentClient implements AutoCloseable {
       tools = list(rpc("tools/list", Map.of()).get("tools"));
       if (tools == null || tools.size() > 200) throw new IOException("Invalid remote tool catalog");
       state =
-          Map.of(
-              "session_id",
-              editorId(endpoint),
-              "connected",
-              true,
-              "state",
-              "connected",
-              "web_url",
-              endpoint.toASCIIString(),
-              "project_root",
-              config.get("project_root"),
-              "allow_mutation",
-              config.get("allow_mutation"),
-              "message",
-              "Conectado a Hop Web mediante MCP Live Sync");
+          Map.ofEntries(
+              Map.entry("ui_url", uiUrl(endpoint)),
+              Map.entry("project_name", config.getOrDefault("project_name", "")),
+              Map.entry(
+                  "presentation_default", config.getOrDefault("presentation_default", "guided")),
+              Map.entry("session_id", editorId(endpoint)),
+              Map.entry("connected", true),
+              Map.entry("state", "connected"),
+              Map.entry("web_url", endpoint.toASCIIString()),
+              Map.entry("project_root", config.get("project_root")),
+              Map.entry("allow_mutation", config.get("allow_mutation")),
+              Map.entry("message", "Conectado a Hop Web mediante MCP Live Sync"));
     } catch (Exception failure) {
+      release();
       disconnect(failure);
     }
     return state;
@@ -208,6 +217,12 @@ final class HopWebAgentClient implements AutoCloseable {
 
   private Map<String, Object> rpc(String method, Map<String, Object> params, Duration deadline)
       throws Exception {
+    return rpc(method, params, deadline, null);
+  }
+
+  private Map<String, Object> rpc(
+      String method, Map<String, Object> params, Duration deadline, String pairing)
+      throws Exception {
     if (endpoint == null) throw new IllegalStateException("MCP Live Sync no está conectado");
     byte[] body =
         JsonUtil.toJson(
@@ -227,6 +242,7 @@ final class HopWebAgentClient implements AutoCloseable {
             .encodeToString(
                 JsonUtil.toJson(agentInfo).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     if (session != null) request.header("Mcp-Session-Id", session);
+    if (pairing != null) request.header(HopWebAgentSession.PAIRING_HEADER, pairing);
     var pending =
         http.sendAsync(
             request.POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
@@ -250,13 +266,16 @@ final class HopWebAgentClient implements AutoCloseable {
     if (!contentType.startsWith("application/json"))
       throw new IOException("The URL did not return MCP JSON");
     String selected = response.headers().firstValue("Mcp-Session-Id").orElse(null);
-    if (session != null && selected != null && !session.equals(selected))
-      throw new IOException("The remote Web session changed");
-    if (selected != null) session = selected;
     String editor = response.headers().firstValue("Hop-Ui-Session-Id").orElse(null);
-    if (editor != null && !editorId(endpoint).isEmpty() && !editor.equals(editorId(endpoint)))
-      throw new IOException("The selected editor changed");
-    if (editor != null) endpoint = select(endpoint, editor);
+    if (pairing != null) {
+      if (selected == null || editor == null) throw new IOException("Missing MCP pairing response");
+      session = java.util.UUID.fromString(selected).toString();
+      endpoint = select(endpoint, editor);
+      if (!"true".equals(response.headers().firstValue("Hop-Mcp-Pairing-Used").orElse(null)))
+        throw new IOException("The remote Web server does not support one-time pairing");
+    } else if (!java.util.Objects.equals(session, selected) || !editorId(endpoint).equals(editor)) {
+      throw new IOException("The remote Web session changed");
+    }
     Map<String, Object> envelope = map(mapper.readValue(response.body(), Map.class));
     if (envelope.containsKey("error")) throw new IOException("Remote MCP protocol error");
     return map(envelope.get("result"));
@@ -272,6 +291,12 @@ final class HopWebAgentClient implements AutoCloseable {
     for (String part : endpoint.getRawQuery().split("&"))
       if (part.startsWith("session=")) return part.substring(8);
     return "";
+  }
+
+  private static String uiUrl(URI endpoint) {
+    String id = editorId(endpoint);
+    String base = endpoint.toASCIIString().split("\\?", 2)[0];
+    return id.isEmpty() ? base : base + "?session=" + id;
   }
 
   private static String bounded(String value, int length) {
@@ -294,14 +319,31 @@ final class HopWebAgentClient implements AutoCloseable {
     }
   }
 
-  static URI endpoint(String value) {
+  private static URI parseUrl(String value) {
     if (value == null || value.length() > 2048)
       throw new IllegalArgumentException("Supply the Hop Web URL");
-    URI ui = URI.create(value.trim());
+    return URI.create(value.trim());
+  }
+
+  private static String pairingCode(URI ui) {
+    String fragment = ui.getRawFragment();
+    if (fragment == null || !fragment.startsWith("pair=")) return null;
+    String code = fragment.substring(5);
+    return HopWebAgentSession.isPairingCode(code) ? code : null;
+  }
+
+  static URI endpoint(String value) {
+    return endpoint(parseUrl(value));
+  }
+
+  private static URI endpoint(URI ui) {
+    if (ui.getRawFragment() != null && pairingCode(ui) == null)
+      throw new IllegalArgumentException("Use the Hop Web UI URL or the copied connection link");
     String selected = null;
     if (ui.getRawQuery() != null) {
       for (String entry : ui.getRawQuery().split("&")) {
         if (entry.equals("servicehandler=hop-mcp")) continue;
+        if (entry.startsWith("project=") || entry.startsWith("file=")) continue;
         if (entry.startsWith("session=") && selected == null) {
           selected = java.util.UUID.fromString(entry.substring(8)).toString();
         } else throw new IllegalArgumentException("Use the Hop Web UI URL or its MCP session URL");
@@ -316,7 +358,7 @@ final class HopWebAgentClient implements AutoCloseable {
               ui.getPort(),
               ui.getPath(),
               null,
-              ui.getFragment());
+              null);
       HopWebUrl.requirePublicUi(clean);
       return URI.create(
           clean.toASCIIString()
@@ -346,16 +388,13 @@ final class HopWebAgentClient implements AutoCloseable {
                     ? "Hop Web desconectó al agente; puedes volver a conectarte"
                     : "MCP Live Sync no está activo o la sesión ya no está disponible";
           }
-          case 409 -> {
-            category = "SESSION_BUSY".equals(unavailable.detail.get("code")) ? "busy" : "ambiguous";
-            message =
-                category.equals("busy")
-                    ? "Esta sesión ya tiene un agente conectado"
-                    : "Hay varias sesiones de Hop Web; pregunta al usuario cuál desea usar y conecta con su session_id";
-          }
           case 401, 403 -> {
-            category = "access_denied";
-            message = "Hop Web rechazó el acceso; revisa la URL pública y la protección del sitio";
+            boolean pairing = "PAIRING_REQUIRED".equals(unavailable.detail.get("code"));
+            category = pairing ? "pairing_required" : "access_denied";
+            message =
+                pairing
+                    ? PAIRING_MESSAGE
+                    : "Hop Web rechazó el acceso; revisa la protección del sitio";
           }
           default -> {
             category = "protocol_error";
@@ -364,40 +403,7 @@ final class HopWebAgentClient implements AutoCloseable {
         }
       }
     }
-    var result = new java.util.LinkedHashMap<String, Object>();
-    result.put("connected", false);
-    result.put("state", category);
-    result.put("message", message);
-    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-      if (cause instanceof RemoteUnavailable remote
-          && remote.detail.get("sessions") instanceof List<?> options) {
-        var choices = new java.util.ArrayList<Map<String, Object>>();
-        for (Object option : options.stream().limit(8).toList()) {
-          if (!(option instanceof Map<?, ?>)) continue;
-          var item = map(option);
-          try {
-            String id =
-                java.util.UUID.fromString(String.valueOf(item.get("session_id"))).toString();
-            choices.add(
-                Map.of(
-                    "session_id",
-                    id,
-                    "project",
-                    bounded(String.valueOf(item.getOrDefault("project", "")), 200),
-                    "file",
-                    bounded(String.valueOf(item.getOrDefault("file", "")), 4096),
-                    "connected",
-                    Boolean.TRUE.equals(item.get("connected")),
-                    "agent",
-                    bounded(String.valueOf(item.getOrDefault("agent", "")), 100)));
-          } catch (IllegalArgumentException invalid) {
-            /* Do not return unusable selectors. */
-          }
-        }
-        result.put("sessions", List.copyOf(choices));
-      }
-    }
-    state = java.util.Collections.unmodifiableMap(result);
+    state = Map.of("connected", false, "state", category, "message", message);
     endpoint = null;
     session = null;
     tools = List.of();

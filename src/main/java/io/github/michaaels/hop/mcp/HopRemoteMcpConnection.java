@@ -7,7 +7,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URI;
-import java.util.UUID;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -16,8 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class HopRemoteMcpConnection implements AutoCloseable {
   static final int MAX_REQUEST_BYTES = 512 * 1024;
   static final String HANDLER = "hop-mcp";
-  private final String id = UUID.randomUUID().toString();
   private final URI publicUi;
+  private final HopMcpService service;
   private final HttpServletStatelessServerTransport transport;
   private final HopMcpServer server;
   private final Semaphore permits = new Semaphore(2);
@@ -27,8 +26,7 @@ final class HopRemoteMcpConnection implements AutoCloseable {
   private final java.util.concurrent.CompletableFuture<Void> disposal =
       new java.util.concurrent.CompletableFuture<>();
   private final HopWebAgentSession agent = new HopWebAgentSession();
-  private volatile String project;
-  private volatile String file = "";
+  private HopWebProjectWork.Session projectWork;
 
   static HopRemoteMcpConnection open(HopMcpService service, URI publicUi) {
     try {
@@ -42,10 +40,7 @@ final class HopRemoteMcpConnection implements AutoCloseable {
 
   private HopRemoteMcpConnection(HopMcpService service, URI publicUi) {
     this.publicUi = publicUi;
-    project =
-        java.nio.file.Path.of(String.valueOf(service.config().get("project_root")))
-            .getFileName()
-            .toString();
+    this.service = service;
     transport =
         HttpServletStatelessServerTransport.builder()
             .jsonMapper(new JacksonMcpJsonMapperSupplier().get())
@@ -65,19 +60,26 @@ final class HopRemoteMcpConnection implements AutoCloseable {
   }
 
   String id() {
-    return id;
+    return agent.sessionId();
   }
 
-  String endpoint() {
-    return publicUi.toASCIIString() + "?servicehandler=" + HANDLER;
+  void registerWork(HopWebProjectWork work) {
+    projectWork = work.register(service.projectRoot(), agent::currentBinding, this::isClosed);
+    service.webWork(projectWork);
   }
 
-  String webUrl() {
-    return publicUi.toASCIIString();
+  HopWebProjectWork.ConflictNotice takeConflict() {
+    return projectWork == null ? null : projectWork.takeConflict();
   }
 
-  String sessionEndpoint() {
-    return endpoint() + "&session=" + id;
+  String createPairingLink() {
+    if (closed.get()) return null;
+    String code = agent.createPairing();
+    return code == null ? null : publicUi.toASCIIString() + "#pair=" + code;
+  }
+
+  boolean acceptsPairing(String code) {
+    return !closed.get() && agent.acceptsPairing(code);
   }
 
   boolean isClosed() {
@@ -100,37 +102,16 @@ final class HopRemoteMcpConnection implements AutoCloseable {
     return !closed.get() && agent.accepts(binding);
   }
 
-  boolean ownsBinding(String binding) {
-    return agent.owns(binding);
+  boolean matchesBinding(String binding, String sessionId) {
+    return !closed.get() && agent.matches(binding, sessionId);
   }
 
   void disconnectAgent() {
     agent.disconnect();
   }
 
-  void editor(String name, String path) {
-    project = bounded(name, 200);
-    file = bounded(path, 4096);
-  }
-
-  java.util.Map<String, Object> description() {
-    var state = activity();
-    return java.util.Map.of(
-        "session_id",
-        id,
-        "project",
-        project,
-        "file",
-        file,
-        "connected",
-        state.connected(),
-        "agent",
-        state.connected() ? state.agent() : "");
-  }
-
-  private static String bounded(String text, int maximum) {
-    if (text == null) return "";
-    return text.substring(0, Math.min(text.length(), maximum));
+  void editorFile(String path) {
+    service.webEditorFile(path);
   }
 
   void service(HttpServletRequest request, HttpServletResponse response)
@@ -162,7 +143,7 @@ final class HopRemoteMcpConnection implements AutoCloseable {
       }
       String binding = request.getHeader("Mcp-Session-Id");
       if ("DELETE".equals(request.getMethod())) {
-        if (!agent.disconnect(binding)) {
+        if (!agent.disconnect(binding, request.getParameter("session"))) {
           error(response, 404, "AGENT_DISCONNECTED", "The agent connection is no longer available");
           return;
         }
@@ -180,46 +161,66 @@ final class HopRemoteMcpConnection implements AutoCloseable {
       throws IOException, ServletException {
     var accepted = bind(request, response);
     if (accepted == null) return;
-    response.setHeader("Mcp-Session-Id", accepted.binding());
-    response.setHeader("Hop-Ui-Session-Id", id);
-    accepted.request().setAttribute("hop_agent_binding", accepted.binding());
+    String binding = accepted.lease().binding();
+    response.setHeader("Mcp-Session-Id", binding);
+    response.setHeader("Hop-Ui-Session-Id", accepted.lease().sessionId());
+    if (accepted.created()) response.setHeader("Hop-Mcp-Pairing-Used", "true");
+    accepted.request().setAttribute("hop_agent_binding", binding);
     try {
       transport.service(accepted.request(), response);
     } catch (IOException | ServletException | RuntimeException failure) {
-      if (accepted.created()) agent.disconnect(accepted.binding());
+      if (accepted.created()) agent.disconnect(binding, null);
       throw failure;
     }
-    if (accepted.created() && response.getStatus() >= 400) agent.disconnect(accepted.binding());
+    if (accepted.created() && response.getStatus() >= 400) agent.disconnect(binding, null);
   }
 
   private BoundRequest bind(HttpServletRequest request, HttpServletResponse response)
       throws IOException {
     String binding = request.getHeader("Mcp-Session-Id");
     if (binding != null) {
-      if (agent.touch(binding)) return new BoundRequest(request, binding, false);
+      var lease = agent.touch(binding, request.getParameter("session"));
+      if (lease != null) return new BoundRequest(request, lease, false);
       error(
           response, 404, "AGENT_DISCONNECTED", "The editor disconnected this agent; connect again");
       return null;
     }
-    var identity = identity(request.getHeader("Hop-Mcp-Agent"));
-    if (request.getHeader("Hop-Mcp-Agent") == null) {
-      var initial = new HopMcpInitialRequest(request);
-      if (initial.oversized()) {
-        response.setStatus(413);
-        return null;
-      }
-      identity = initial.identity();
-      request = initial;
-    }
-    binding = agent.connect(identity.get("name"), identity.get("version"));
-    if (binding == null) {
-      error(response, 409, "SESSION_BUSY", "This editor already has a connected agent");
+    String code = request.getHeader(HopWebAgentSession.PAIRING_HEADER);
+    if (!agent.acceptsPairing(code)) {
+      pairingRequired(response);
       return null;
     }
-    return new BoundRequest(request, binding, true);
+    var initial = new HopMcpInitialRequest(request);
+    if (initial.oversized()) {
+      response.setStatus(413);
+      return null;
+    }
+    var identity = initial.initializer();
+    if (identity == null) {
+      error(
+          response, 400, "MCP_INITIALIZE_REQUIRED", "Initialize this MCP session before using it.");
+      return null;
+    }
+    var reported = identity(request.getHeader("Hop-Mcp-Agent"));
+    if (!reported.isEmpty()) identity = reported;
+    var lease = agent.connect(code, identity.get("name"), identity.get("version"));
+    if (lease == null) {
+      pairingRequired(response);
+      return null;
+    }
+    return new BoundRequest(initial, lease, true);
   }
 
-  private record BoundRequest(HttpServletRequest request, String binding, boolean created) {}
+  private record BoundRequest(
+      HttpServletRequest request, HopWebAgentSession.Lease lease, boolean created) {}
+
+  static void pairingRequired(HttpServletResponse response) throws IOException {
+    error(
+        response,
+        403,
+        "PAIRING_REQUIRED",
+        "Copy a new connection link from the Hop Web editor you want to use.");
+  }
 
   boolean trustedRequest(HttpServletRequest request) {
     // TLS termination is accepted only from a local reverse proxy, never from a remote peer.

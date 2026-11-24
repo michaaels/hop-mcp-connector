@@ -64,32 +64,18 @@ final class HopWebAgentServer implements AutoCloseable {
             .serverInfo("hop-web-agent", HopMcpVersion.current())
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
-                "When the user gives a Hop Web UI URL, call hop_web_connect with that URL. It resolves the MCP endpoint automatically. If state=ambiguous, show the sessions with their project and open file, ask the user which session to use, then call hop_web_connect with that URL and the chosen session_id. Never guess a session or select one automatically from an ambiguous list. A disconnected or inactive state must be reported without using a local project. Discover only the native tools needed with hop_web_tools, then invoke them through hop_web_call. Before editing inspect hop_config and the target definition. Use native correction plans with presentation=guided and small appended blocks, or instant when requested. Preserve SHA-256, protected backups and rollback. No ETL execution is exposed by the Web connection."
+                "Ask the user to copy a one-time link with Connect Agent in the intended Hop Web window. Use the supplied link without repeating it in chat. If unavailable, ask for a new link. A conflict identifies only the affected file, and only a new user-provided link can change the active window. Discover native tools through hop_web_tools and call them through hop_web_call. Use the connected ui_url and project_name when announcing work in chat. Preserve preview, SHA-256, backup and rollback. Hop Web authoring does not execute ETL."
                     + HopAuthoringGuidance.INSTRUCTIONS)
             .tools(
                 List.of(
                     tool(
                         "hop_web_connect",
-                        "Connect to Hop Web by URL. With multiple sessions returns project/file choices; ask the user and supply their chosen session_id. Never uses a project share.",
+                        "Connect using the one-time link copied through Connect Agent in the intended Hop Web window. Treat the link as a credential.",
                         schema(
-                            Map.of(
-                                "url",
-                                Map.of("type", "string", "maxLength", 2048),
-                                "session_id",
-                                Map.of(
-                                    "type",
-                                    "string",
-                                    "maxLength",
-                                    36,
-                                    "pattern",
-                                    "^[0-9a-fA-F-]{36}$")),
+                            Map.of("url", Map.of("type", "string", "maxLength", 2048)),
                             List.of("url")),
-                        true,
-                        args ->
-                            result(
-                                client.connect(
-                                    String.valueOf(args.get("url")),
-                                    (String) args.get("session_id")))),
+                        false,
+                        args -> result(client.connect(String.valueOf(args.get("url"))))),
                     tool(
                         "hop_web_status",
                         "Check whether the selected Hop Web session is still connected and MCP Live Sync remains active.",
