@@ -1,6 +1,6 @@
 # Conectar un agente a Hop Web
 
-Desarrollo **2.6.0**, para Apache Hop **2.20.x** y Java **21**.
+Versión **2.6.0**, para Apache Hop **2.20.x** y Java **21**.
 
 En la ventana de Hop Web que quieres usar, abre el icono MCP, pulsa **Connect Agent** y pasa el enlace copiado al agente. El MCP convierte ese enlace en la conexión con esa ventana y opera sobre el proyecto del servidor. La URL habitual del navegador lleva a la instrucción para copiar el enlace.
 
