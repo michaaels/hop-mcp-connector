@@ -29,7 +29,7 @@ The plugin uses Hop's `@HopCommand`, plugin registry, `PipelineMeta`, `WorkflowM
 - Transactional semantic mutation with preview, SHA-256 preconditions, protected backups, temporary-file replacement, native reload validation, automatic recovery, and explicit rollback. The result reports whether the filesystem supported an atomic move.
 - Bounded inputs, scans, results, execution and logs; project-root confinement; secure XML parsing; sensitive-data redaction.
 - Optional Hop Desktop and Hop Web live synchronization, explicitly started from the UI. Desktop uses project-local events; Hop Web reuses RAP's existing servlet without opening another port.
-- Development 2.6.0. **MCP Connect** offers **Live Sync** and **Result Only**. **Connect Agent** pairs the intended Web window using a one-time link. Unpaired requests receive a single pairing instruction, and Web conflict notices identify only the affected file. See [Web pairing and deployment](handoff-mcp-2.6.0.md).
+- **MCP Connect** offers **Live Sync** and **Result Only**. **Connect Agent** pairs the intended Web window using a one-time link. Unpaired requests receive a single pairing instruction, and Web conflict notices identify only the affected file. See [Web pairing and deployment](remote-hop-web.md).
 - Development 2.4.0: compact native MCP icon, grey when available and black when an agent is connected, with a subtle activity pulse and agent/operation/timing tooltip. Clicking the Web icon disconnects only the agent; the MCP Live Sync menu stops the service. Multiple Web sessions return project/open-file choices for explicit user selection. See [Live Sync indicator](live-sync-indicator.md) and [Web agent sessions](web-agent-sessions.md).
 - Development 2.3.0: [remote Hop Web](remote-hop-web.md) by URL while MCP Live Sync is active, using HTTPS through RAP's servlet. The agent's `--remote-ui` profile exposes four small tools and needs no local/shared project. Activation permits native inspection and editing of the Web project; execution remains disabled. Direct HTTP MCP clients are also supported.
 - Optional [guided Desktop and Hop Web/RAP authoring](guided-desktop-authoring.md) in Hop's native pipeline/workflow editors, with asynchronous blocks, adjustable pacing, pause and instant application.
@@ -79,7 +79,7 @@ Released-version rows record their original targets; the current development tar
 | 2.2.4 (tag only; no release) | 2.19.0 target; Windows verification failed | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.5 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.6 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
-| 2.6.0 development candidate | 2.20.x only; compile baseline 2.20.0 | 21 | 2.2.0 | 2025-11-25 |
+| 2.6.0 | 2.20.x only; compile baseline 2.20.0 | 21 | 2.2.0 | 2025-11-25 |
 
 The connector uses the SDK interfaces for protocol revision `2025-11-25`. The SDK provides a separate API for revision `2026-07-28`. Current development targets Apache Hop 2.20.0 with Java 21. CI is configured to verify the Hop 2.20.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise native STDIO acceptance. Installation through the published Hop Marketplace catalog requires post-release verification.
 

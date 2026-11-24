@@ -1,6 +1,8 @@
 # Changelog
 
-- Development 2.6.0. Add Live Sync and Result Only presentation modes, pair Hop Web agents using one-time links issued by the intended window, and revoke each UUID at disconnect. Remove public session discovery and show only the affected file on an edit conflict. Scope Web editor acknowledgements to the originating window.
+## 2.6.0 - 2026-11-24
+
+- Add Live Sync and Result Only presentation modes, pair Hop Web agents using one-time links issued by the intended window, and revoke each UUID at disconnect. Remove public session discovery and show only the affected file on an edit conflict. Scope Web editor acknowledgements to the originating window.
 - Update the MCP Java SDK to 2.2.0. The connector continues to use MCP protocol revision 2025-11-25.
 
 ## 2.4.0 - 2026-11-15
